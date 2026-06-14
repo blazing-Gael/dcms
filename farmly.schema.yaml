@@ -1,0 +1,407 @@
+# Farmly — reference e-commerce schema for LxCMS
+#
+# This is the canonical example used during Phase 1 development.
+# It covers the most common e-commerce patterns and exercises all Phase 1 field types.
+# Phase 2+ directives are included but commented out — uncomment as phases land.
+
+version: "1"
+
+meta:
+  name: farmly
+  description: "Farm-to-table marketplace — local food producers selling direct to customers"
+  base_url: /api/v1
+
+brand:
+  name: "Farmly"
+  tagline: "Farm to table, direct."
+  colors:
+    primary: "#2D6A4F"
+    accent: "#52B788"
+    background: "#F9FAF7"
+    text: "#1A1A1A"
+  fonts:
+    heading: "Fraunces"
+    body: "Inter"
+  logo_url: "https://cdn.farmly.com/logo.svg"
+  tone: "warm, honest, local"
+  rtl: false
+  locale: en
+
+# ── Auth (Phase 2) ──────────────────────────────────────────────────────
+# auth:
+#   provider: local
+#   jwt:
+#     algorithm: HS256
+#     secret: ${JWT_SECRET}
+#     access_ttl: 15m
+#     refresh_ttl: 7d
+#   roles:
+#     admin:
+#       label: "Administrator"
+#     vendor:
+#       label: "Farm / Vendor"
+#     customer:
+#       label: "Customer"
+
+collections:
+
+  # ── Categories ─────────────────────────────────────────────────────────
+  categories:
+    fields:
+      name:
+        type: string
+        required: true
+        max: 100
+        label: "Category name"
+      slug:
+        type: string
+        required: true
+        unique: true
+        pattern: "^[a-z0-9-]+$"
+        label: "URL slug"
+      description:
+        type: text
+        label: "Description"
+      # image:                      # Phase 3
+      #   type: media
+    timestamps: true
+    indexes: [slug]
+    # access:                       # Phase 2
+    #   read: public
+    #   create: [admin]
+    #   update: [admin]
+    #   delete: [admin]
+
+  # ── Products ───────────────────────────────────────────────────────────
+  products:
+    fields:
+      title:
+        type: string              # Phase 2: change to i18n
+        required: true
+        max: 200
+        label: "Product title"
+      slug:
+        type: string
+        required: true
+        unique: true
+        pattern: "^[a-z0-9-]+$"
+      description:
+        type: text                # Phase 2: change to i18n
+        label: "Full description"
+      short_description:
+        type: string
+        max: 300
+        label: "Short description (used in cards)"
+      price:
+        type: number
+        required: true
+        min: 0
+        label: "Price"
+      compare_at_price:
+        type: number
+        min: 0
+        label: "Original price (shown as struck-through)"
+      currency:
+        type: string
+        default: "BDT"
+        max: 3
+      stock:
+        type: integer
+        default: 0
+        min: 0
+        label: "Units in stock"
+      unit:
+        type: string
+        default: "item"
+        label: "Unit label (kg, litre, item, bunch)"
+      status:
+        type: enum
+        values: [draft, active, archived]
+        default: draft
+      category_id:
+        type: string              # Phase 2: change to relation
+        label: "Category"
+      vendor_id:
+        type: string              # Phase 2: change to relation
+        label: "Vendor"
+      origin_farm:
+        type: string
+        label: "Farm or origin name"
+      is_organic:
+        type: boolean
+        default: false
+        label: "Certified organic"
+      is_featured:
+        type: boolean
+        default: false
+        label: "Show on homepage"
+      weight_grams:
+        type: integer
+        label: "Weight in grams (for shipping)"
+      # images:                   # Phase 3
+      #   type: media
+      #   multiple: true
+      # location:                 # Phase 3
+      #   type: geo
+      # sale_price:               # Phase 3 (computed)
+      #   type: computed
+      #   expr: "price * (1 - discount)"
+    timestamps: true
+    indexes:
+      - status
+      - [category_id, status]
+      - is_featured
+      - vendor_id
+    # vectorize: [title, description, short_description]  # Phase 2
+    # draft: true                 # Phase 2
+    # i18n: [en, ar, bn]         # Phase 2
+    # access:                     # Phase 2
+    #   read: public
+    #   create: [admin, vendor]
+    #   update: [admin, vendor]
+    #   delete: [admin]
+    # hooks:                      # Phase 3
+    #   after_create: notify-inventory
+    #   after_update: reindex-vectors
+
+  # ── Vendors (farms) ────────────────────────────────────────────────────
+  vendors:
+    fields:
+      name:
+        type: string
+        required: true
+        max: 200
+      slug:
+        type: string
+        required: true
+        unique: true
+        pattern: "^[a-z0-9-]+$"
+      bio:
+        type: text
+        label: "About this farm"
+      location_text:
+        type: string
+        label: "Area / district (e.g. Mymensingh, Bangladesh)"
+      contact_email:
+        type: string
+        max: 255
+      contact_phone:
+        type: string
+        max: 20
+      is_active:
+        type: boolean
+        default: true
+      verified:
+        type: boolean
+        default: false
+        label: "Verified by Farmly team"
+      # logo:                     # Phase 3
+      #   type: media
+      # coordinates:              # Phase 3
+      #   type: geo
+    timestamps: true
+    indexes: [slug, is_active, verified]
+    # access:                     # Phase 2
+    #   read: public
+    #   create: [admin]
+    #   update: [admin, vendor]
+    #   delete: [admin]
+
+  # ── Customers ──────────────────────────────────────────────────────────
+  customers:
+    fields:
+      name:
+        type: string
+        required: true
+        max: 200
+      email:
+        type: string
+        required: true
+        unique: true
+        max: 255
+      phone:
+        type: string
+        max: 20
+      address_line1:
+        type: string
+        max: 300
+      address_line2:
+        type: string
+        max: 300
+      city:
+        type: string
+        max: 100
+      district:
+        type: string
+        max: 100
+        label: "District"
+      country:
+        type: string
+        default: "BD"
+        max: 2
+      is_active:
+        type: boolean
+        default: true
+    timestamps: true
+    indexes: [email, is_active]
+    # access:                     # Phase 2
+    #   read: [admin]
+    #   create: public            # self-registration
+    #   update: [admin, owner]
+    #   delete: [admin]
+
+  # ── Orders ─────────────────────────────────────────────────────────────
+  orders:
+    fields:
+      customer_id:
+        type: string              # Phase 2: relation to customers
+        required: true
+      status:
+        type: enum
+        values: [pending, confirmed, processing, shipped, delivered, cancelled, refunded]
+        default: pending
+      total_amount:
+        type: number
+        required: true
+        min: 0
+      currency:
+        type: string
+        default: "BDT"
+        max: 3
+      payment_method:
+        type: enum
+        values: [bkash, nagad, card, cod]
+      payment_status:
+        type: enum
+        values: [unpaid, paid, refunded]
+        default: unpaid
+      payment_reference:
+        type: string
+        label: "Payment gateway transaction ID"
+      shipping_address:
+        type: json
+        label: "Snapshot of delivery address at order time"
+      notes:
+        type: text
+        label: "Customer notes"
+      vendor_id:
+        type: string              # Phase 2: relation to vendors
+      # delivered_at:             # add manually when needed
+    timestamps: true
+    indexes:
+      - status
+      - customer_id
+      - payment_status
+      - [vendor_id, status]
+    # hooks:                      # Phase 3
+    #   after_create: send-order-confirmation
+    #   after_update: notify-status-change
+    # access:                     # Phase 2
+    #   read: [admin, owner]
+    #   create: authenticated
+    #   update: [admin]
+    #   delete: [admin]
+
+  # ── Order items ────────────────────────────────────────────────────────
+  order_items:
+    fields:
+      order_id:
+        type: string              # Phase 2: relation to orders, cascade: cascade
+        required: true
+      product_id:
+        type: string              # Phase 2: relation to products
+        required: true
+      quantity:
+        type: integer
+        required: true
+        min: 1
+      unit_price:
+        type: number
+        required: true
+        min: 0
+        label: "Price at time of order (snapshot)"
+      currency:
+        type: string
+        default: "BDT"
+        max: 3
+      product_snapshot:
+        type: json
+        label: "Full product record snapshot at order time"
+    timestamps: true
+    indexes:
+      - order_id
+      - product_id
+
+  # ── Stories (editorial content) ────────────────────────────────────────
+  stories:
+    fields:
+      headline:
+        type: string              # Phase 2: i18n
+        required: true
+        max: 300
+        label: "Headline"
+      slug:
+        type: string
+        required: true
+        unique: true
+        pattern: "^[a-z0-9-]+$"
+      content:
+        type: text                # Phase 2: i18n
+        label: "Story body (Markdown)"
+      excerpt:
+        type: string
+        max: 500
+        label: "Short excerpt for cards"
+      author:
+        type: string
+        max: 200
+        label: "Author display name"
+      status:
+        type: enum
+        values: [draft, published, archived]
+        default: draft
+      vendor_id:
+        type: string              # Phase 2: relation to vendors (optional)
+        label: "Related farm / vendor"
+      # cover_image:              # Phase 3
+      #   type: media
+    timestamps: true
+    indexes: [status, vendor_id]
+    # vectorize: [headline, content, excerpt]  # Phase 2
+    # draft: true                 # Phase 2
+    # access:                     # Phase 2
+    #   read: public
+    #   create: [admin, vendor]
+    #   update: [admin, vendor]
+    #   delete: [admin]
+
+  # ── Reviews ────────────────────────────────────────────────────────────
+  reviews:
+    fields:
+      product_id:
+        type: string              # Phase 2: relation to products
+        required: true
+      customer_id:
+        type: string              # Phase 2: relation to customers
+        required: true
+      rating:
+        type: integer
+        required: true
+        min: 1
+        max: 5
+      comment:
+        type: text
+      is_verified_purchase:
+        type: boolean
+        default: false
+      status:
+        type: enum
+        values: [pending, approved, rejected]
+        default: pending
+    timestamps: true
+    indexes: [product_id, customer_id, status]
+    # access:                     # Phase 2
+    #   read: public
+    #   create: authenticated
+    #   update: [admin]
+    #   delete: [admin]
