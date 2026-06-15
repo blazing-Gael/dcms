@@ -1,0 +1,26 @@
+# Binaries
+/bin/
+*.exe
+*.so
+*.dll
+
+# Local databases
+*.db
+*.db-shm
+*.db-wal
+
+# Env / secrets
+.env
+.env.*
+
+# Generated output
+/types/
+
+# Go
+*.test
+*.out
+vendor/
+
+# Editor
+.idea/
+.vscode/

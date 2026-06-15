@@ -5,16 +5,16 @@ Do not start Phase N+1 until Phase N criteria are all green.
 
 ---
 
-## Phase 1 — mql core + schema compiler + virtual endpoints
+## Phase 1 — store core + schema compiler + virtual endpoints
 
-**Goal:** A developer writes `lxcms.schema.yaml`, runs `lxcms dev`, and gets a fully working
+**Goal:** A developer writes `dcms.schema.yaml`, runs `dcms dev`, and gets a fully working
 CRUD HTTP API with typed TypeScript output. No auth. No vectors. No admin UI. Just the core loop.
 
-### 1.1 mql — SQLite adapter
+### 1.1 store — SQLite adapter
 
-- [ ] `mql.Adapter` interface defined in `/core/storage/mql/interface.go` exactly as
-      specified in `MQL_INTERFACE.md`
-- [ ] SQLite adapter at `/core/storage/sqlite/adapter.go` implementing `mql.Adapter`
+- [ ] `store.Adapter` interface defined in `/core/store/store.go` exactly as
+      specified in `STORE_INTERFACE.md`
+- [ ] SQLite adapter at `/core/store/sqlite/adapter.go` implementing `store.Adapter`
 - [ ] `Find` with limit, cursor (keyset), sort, fields, eq filters
 - [ ] `FindOne` returns `ErrNotFound` when missing
 - [ ] `Create` generates UUID v4 id, sets `created_at`/`updated_at` if schema has timestamps
@@ -32,14 +32,14 @@ CRUD HTTP API with typed TypeScript output. No auth. No vectors. No admin UI. Ju
 **Acceptance test:**
 ```go
 db, _ := sqlite.New(sqlite.Config{Path: ":memory:"})
-rec, err := db.Create(ctx, mql.WriteInput{
+rec, err := db.Create(ctx, store.WriteInput{
     Collection: "products",
-    Data: mql.Record{"title": "Honey", "price": 12.5},
+    Data: store.Record{"title": "Honey", "price": 12.5},
 })
 assert.NoError(t, err)
 assert.NotEmpty(t, rec["id"])
 
-page, err := db.Find(ctx, mql.Query{Collection: "products", Limit: 10})
+page, err := db.Find(ctx, store.Query{Collection: "products", Limit: 10})
 assert.Equal(t, 1, len(page.Data))
 ```
 
@@ -47,7 +47,7 @@ assert.Equal(t, 1, len(page.Data))
 
 ### 1.2 Schema compiler
 
-- [ ] Parser at `/core/schema/parser.go` reads `lxcms.schema.yaml` into `SchemaDefinition`
+- [ ] Parser at `/core/schema/parser.go` reads `dcms.schema.yaml` into `SchemaDefinition`
 - [ ] `SchemaDefinition` struct holds `[]CollectionDef`, each with `[]FieldDef` and directives
 - [ ] Phase 1 field types parsed: `string`, `text`, `number`, `integer`, `boolean`,
       `date`, `datetime`, `enum`, `json`
@@ -56,7 +56,7 @@ assert.Equal(t, 1, len(page.Data))
       no reserved collection names
 - [ ] Validation errors returned as a list with paths — not panics
 - [ ] On startup: compiler calls `Introspect` → `Diff` → `Migrate` to create/update tables
-- [ ] `CollectionDef` → `mql.CollectionMeta` translation for migration planning
+- [ ] `CollectionDef` → `store.CollectionMeta` translation for migration planning
 - [ ] Phase 2+ directives recognised but skipped with a `// TODO(phase-2)` comment —
       no error on unknown-but-valid directives
 
@@ -117,7 +117,7 @@ GET /api/v1/products/nonexistent
 ### 1.4 TypeScript codegen
 
 - [ ] Codegen at `/core/schema/codegen/typescript.go` using `text/template`
-- [ ] `lxcms codegen --lang ts --out ./types` generates one `.d.ts` file per collection
+- [ ] `dcms codegen --lang ts --out ./types` generates one `.d.ts` file per collection
 - [ ] Each file exports: a `Record` interface matching the schema fields,
       a `CreateInput` type (all fields, required ones non-optional),
       an `UpdateInput` type (all fields optional, id required)
@@ -150,17 +150,17 @@ export type UpdateProduct = Partial<CreateProduct> & { id: string };
 
 ### 1.5 CLI — Phase 1 commands
 
-- [ ] `lxcms dev [--schema path] [--port 3000] [--db path]`
+- [ ] `dcms dev [--schema path] [--port 3000] [--db path]`
   - Parses schema, runs migrations, starts HTTP server
   - Hot-reloads on schema file change (watches with `fsnotify`)
-  - Defaults: schema = `./lxcms.schema.yaml`, port = `3000`, db = `./lxcms.db`
-- [ ] `lxcms validate [--schema path]`
+  - Defaults: schema = `./dcms.schema.yaml`, port = `3000`, db = `./dcms.db`
+- [ ] `dcms validate [--schema path]`
   - Parses and validates schema, prints errors, exits non-zero on failure
-- [ ] `lxcms codegen --lang ts [--out ./types] [--schema path]`
+- [ ] `dcms codegen --lang ts [--out ./types] [--schema path]`
   - Generates TypeScript types for all collections
-- [ ] `lxcms migrate [--schema path] [--db path] [--dry-run]`
+- [ ] `dcms migrate [--schema path] [--db path] [--dry-run]`
   - Runs pending migrations, prints SQL when `--dry-run`
-- [ ] `lxcms version` — prints version string
+- [ ] `dcms version` — prints version string
 
 ---
 
@@ -171,11 +171,11 @@ Full auth, RBAC, semantic search, relation fields, draft/publish.
 
 ### 2.1 Postgres adapter
 
-- [ ] Postgres adapter at `/core/storage/postgres/adapter.go`
-- [ ] Same `mql.Adapter` interface — no changes to the interface
+- [ ] Postgres adapter at `/core/store/postgres/adapter.go`
+- [ ] Same `store.Adapter` interface — no changes to the interface
 - [ ] pgx/v5 connection pool with configurable min/max connections
 - [ ] pgvector extension support: `Adapter` embeds a `VectorDB` sub-interface
-      (separate from the core `mql.Adapter` — optional capability detection at runtime)
+      (separate from the core `store.Adapter` — optional capability detection at runtime)
 - [ ] `Ping` checks DB connectivity, `Close` drains the pool
 
 ### 2.2 Vector pipeline
@@ -248,22 +248,22 @@ Full auth, RBAC, semantic search, relation fields, draft/publish.
 
 ## Phase 3 — CLI + TypeScript SDK + media + Wasm plugins
 
-**Goal:** `lxcms new --template ecom` scaffolds a complete project in seconds.
+**Goal:** `dcms new --template ecom` scaffolds a complete project in seconds.
 Plugins work. Media pipeline works. Published npm package.
 
 ### 3.1 CLI scaffold
 
-- [ ] `lxcms new --template <name> [--dir <path>]`
+- [ ] `dcms new --template <name> [--dir <path>]`
   - Templates: `ecom`, `blog`, `news`, `dashboard`, `blank`
-  - Generates: `lxcms.schema.yaml`, `go.mod` stubs, TypeScript types, Next.js data fetchers,
+  - Generates: `dcms.schema.yaml`, `go.mod` stubs, TypeScript types, Next.js data fetchers,
     Postgres migration SQL, README
-- [ ] `lxcms build [--output ./bin/lxcms]` — compiles to single binary
-- [ ] `lxcms plugin add <path>` — validates and registers a `.wasm` plugin
+- [ ] `dcms build [--output ./bin/dcms]` — compiles to single binary
+- [ ] `dcms plugin add <path>` — validates and registers a `.wasm` plugin
 
-### 3.2 TypeScript SDK (@lxroot/cms-client)
+### 3.2 TypeScript SDK (@dcms/client)
 
 - [ ] npm package published from `/sdk/ts`
-- [ ] `lxcms({ url })` factory — works with HTTP URL or `unix://` socket path
+- [ ] `dcms({ url })` factory — works with HTTP URL or `unix://` socket path
 - [ ] Auto-generated typed methods per collection from schema codegen
 - [ ] `cms.{collection}.find(opts)` → typed `Page<T>`
 - [ ] `cms.{collection}.findOne(id)` → typed `T`
@@ -287,17 +287,17 @@ Plugins work. Media pipeline works. Published npm package.
 - [ ] Plugin host at `/core/runtime/host.go` using `wazero`
 - [ ] Hot-loads `.wasm` files from `/plugins` directory on startup
 - [ ] Stable host ABI v1 — functions exposed to plugins:
-  - `lxcms_find(collection_ptr, query_json_ptr) → result_json_ptr`
-  - `lxcms_find_one(collection_ptr, id_ptr) → record_json_ptr`
-  - `lxcms_create(collection_ptr, data_json_ptr) → record_json_ptr`
-  - `lxcms_update(collection_ptr, data_json_ptr) → record_json_ptr`
-  - `lxcms_delete(collection_ptr, id_ptr) → ok`
-  - `lxcms_log(msg_ptr)` — structured log from plugin
-  - `lxcms_http_get(url_ptr, headers_json_ptr) → response_json_ptr` (if network: true)
-  - `lxcms_http_post(url_ptr, body_ptr, headers_json_ptr) → response_json_ptr` (if network: true)
+  - `dcms_find(collection_ptr, query_json_ptr) → result_json_ptr`
+  - `dcms_find_one(collection_ptr, id_ptr) → record_json_ptr`
+  - `dcms_create(collection_ptr, data_json_ptr) → record_json_ptr`
+  - `dcms_update(collection_ptr, data_json_ptr) → record_json_ptr`
+  - `dcms_delete(collection_ptr, id_ptr) → ok`
+  - `dcms_log(msg_ptr)` — structured log from plugin
+  - `dcms_http_get(url_ptr, headers_json_ptr) → response_json_ptr` (if network: true)
+  - `dcms_http_post(url_ptr, body_ptr, headers_json_ptr) → response_json_ptr` (if network: true)
 - [ ] Plugins declared without `permissions.network: true` cannot call HTTP functions —
       call returns error, plugin receives no crash
-- [ ] Plugin manifests must declare `lxcms_min_version` — refuse to load if incompatible
+- [ ] Plugin manifests must declare `dcms_min_version` — refuse to load if incompatible
 
 ---
 
@@ -307,7 +307,7 @@ Plugins work. Media pipeline works. Published npm package.
 
 ### 4.1 Unix socket transport
 
-- [ ] `lxcms dev --socket /var/run/lxcms.sock` starts a Unix socket listener
+- [ ] `dcms dev --socket /var/run/dcms.sock` starts a Unix socket listener
 - [ ] Same HTTP API, different transport — no protocol change
 - [ ] TypeScript SDK detects `unix://` URL and uses Node.js `net.Socket`
 - [ ] Benchmark: latency < 0.5ms p99 for a simple FindOne on localhost
@@ -337,15 +337,15 @@ Plugins work. Media pipeline works. Published npm package.
 
 **Goal:** Multi-node, collaborative editing, MCP protocol, embedded library mode.
 
-- [ ] Couchbase mql adapter
+- [ ] Couchbase store adapter
 - [ ] CRDT/Yjs sync hub for collaborative editing (gorilla/websocket + server-authoritative merge)
-- [ ] MicroVM cluster mode (multiple lxcms instances behind a load balancer with shared Postgres)
+- [ ] MicroVM cluster mode (multiple dcms instances behind a load balancer with shared Postgres)
 - [ ] MCP server built-in — every collection exposed as a typed callable tool
 - [ ] SAML/SSO auth provider
 - [ ] CGO/FFI embedded library (`.so`/`.dll`) with N-API wrapper for Node.js
 - [ ] Compliance export: GDPR data export, audit log export
 - [ ] White-label admin UI
-- [ ] LxRoot one-click deploy integration (`lxcms deploy --target lxroot`)
+- [ ] One-click deploy integration (`dcms deploy`)
 
 ---
 
@@ -358,7 +358,7 @@ Run with `go test ./...`
 
 ### Integration tests
 `/tests/integration/` contains end-to-end HTTP tests.
-Spin up a real `lxcms dev` server against a temp SQLite file.
+Spin up a real `dcms dev` server against a temp SQLite file.
 Use `httptest.NewServer` to avoid real port binding.
 Run with `go test ./tests/integration/...`
 

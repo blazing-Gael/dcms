@@ -2,7 +2,7 @@
 
 Version: 0.1 (Phase 1 subset marked clearly)
 
-The schema file (`lxcms.schema.yaml`) is the single source of truth for an LxCMS project.
+The schema file (`dcms.schema.yaml`) is the single source of truth for a DCMS project.
 Everything — HTTP endpoints, database migrations, TypeScript types, OpenAPI spec, admin UI
 widgets, and dashboard layouts — is derived from this file automatically.
 
@@ -489,7 +489,7 @@ startup fails with a clear error message listing the missing variables.
 
 ## Schema validation
 
-LxCMS validates the schema on startup and on `lxcms dev` reload:
+DCMS validates the schema on startup and on `dcms dev` reload:
 
 - All `relation` targets must exist as collections in the same schema
 - All `vectorize` fields must be of type `string`, `text`, or `i18n`

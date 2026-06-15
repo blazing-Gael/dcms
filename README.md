@@ -1,11 +1,9 @@
-# LxCMS
+# DCMS
 
 **Schema-first. AI-native. Sovereign.**
 
 Define your data model in YAML. Get a production backend, typed SDKs, admin UI,
 semantic search, and one-click deploy — without writing a line of Go.
-
-Part of the [LxRoot](https://lxroot.io) ecosystem.
 
 ---
 
@@ -20,14 +18,14 @@ Building a backend from scratch takes weeks. Every existing CMS forces a choice:
 There's no option that says: *give me a schema, give me a production-grade backend,
 let me deploy it on my own infra*.
 
-LxCMS is that option.
+DCMS is that option.
 
 ---
 
 ## How it works
 
 ```yaml
-# lxcms.schema.yaml
+# dcms.schema.yaml
 version: "1"
 collections:
   products:
@@ -43,7 +41,7 @@ collections:
 ```
 
 ```bash
-lxcms dev
+dcms dev
 # → HTTP server on :3000
 # → GET/POST/PATCH/DELETE /api/v1/products
 # → GET /api/v1/search?q=organic+honey&collection=products
@@ -58,7 +56,7 @@ That's the whole setup.
 
 ## Features
 
-| | LxCMS | WordPress | Strapi | Payload | Sanity |
+| | DCMS | WordPress | Strapi | Payload | Sanity |
 |---|---|---|---|---|---|
 | Self-hosted | ✓ | ✓ | ✓ | ✓ | partial |
 | Schema as code | ✓ | ✗ | partial | ✓ | ✓ |
@@ -75,20 +73,19 @@ That's the whole setup.
 
 ```bash
 # Install
-brew install lxroot/tap/lxcms   # macOS
-# or: curl -fsSL https://get.lxroot.io/lxcms | sh
+curl -fsSL https://get.dcms.dev/dcms | sh
 
 # Scaffold a new project
-lxcms new --template ecom --dir ./mystore
+dcms new --template ecom --dir ./mystore
 
 # Start dev server (SQLite, hot-reload)
-cd mystore && lxcms dev
+cd mystore && dcms dev
 
 # Generate TypeScript types
-lxcms codegen --lang ts --out ./types
+dcms codegen --lang ts --out ./types
 
 # Migrate to Postgres
-lxcms migrate --db postgres://user:pass@localhost/mystore
+dcms migrate --db postgres://user:pass@localhost/mystore
 ```
 
 ---
@@ -98,9 +95,9 @@ lxcms migrate --db postgres://user:pass@localhost/mystore
 ### Next.js / Node.js
 
 ```typescript
-import { lxcms } from '@lxroot/cms-client'
+import { dcms } from '@dcms/client'
 
-const cms = lxcms({ url: 'unix:///var/run/lxcms.sock' })
+const cms = dcms({ url: 'unix:///var/run/dcms.sock' })
 
 const products = await cms.products.find({
   filter: { status: 'active' },
@@ -116,8 +113,8 @@ const results = await cms.search('organic honey', { collection: 'products' })
 
 ```html
 <script type="module">
-  import { lxcms } from 'https://cdn.lxroot.io/cms.js'
-  const cms = lxcms({ url: 'https://mystore.com' })
+  import { dcms } from 'https://cdn.dcms.dev/cms.js'
+  const cms = dcms({ url: 'https://mystore.com' })
   const { data } = await cms.products.find({ filter: { status: 'active' } })
   data.forEach(p => renderCard(p))
 </script>
@@ -126,12 +123,12 @@ const results = await cms.search('organic honey', { collection: 'products' })
 ### Web components (zero JS)
 
 ```html
-<lx-collection name="products" filter-status="active" realtime>
+<dcms-collection name="products" filter-status="active" realtime>
   <template>
-    <lx-field bind="title" />
-    <lx-field bind="price" format="currency" />
+    <dcms-field bind="title" />
+    <dcms-field bind="price" format="currency" />
   </template>
-</lx-collection>
+</dcms-collection>
 ```
 
 ### Raw HTTP (any language)
@@ -153,7 +150,7 @@ Write plugins in any language that compiles to WebAssembly:
 #[no_mangle]
 pub fn after_create_order(record_json: *const u8, len: usize) -> i32 {
     let record = parse_record(record_json, len);
-    lxcms_http_post(
+    dcms_http_post(
         "https://api.mystore.com/notify",
         &format!(r#"{{"order_id":"{}"}}"#, record["id"]),
         "{}",
@@ -176,12 +173,12 @@ Write in Rust, Python (Extism), JavaScript, C, Zig, or any language with a Wasm 
                     └────────────┬────────────────┘
                                  │ Unix socket / HTTP
                     ┌────────────▼────────────────┐
-                    │           LxCMS              │
+                    │           DCMS               │
                     │  ┌─────────────────────────┐ │
                     │  │     Schema compiler      │ │
                     │  │  YAML → routes → types   │ │
                     │  ├─────────────────────────┤ │
-                    │  │       mql ORM            │ │
+                    │  │      store layer         │ │
                     │  │  SQLite / Postgres / CB  │ │
                     │  ├─────────────────────────┤ │
                     │  │    Vector pipeline       │ │
@@ -201,7 +198,7 @@ Single binary. No PHP-FPM, no Varnish, no Solr. One config file.
 
 See [`CONTEXT.md`](./CONTEXT.md) for the full architecture and development guide.
 See [`SCHEMA_SPEC.md`](./SCHEMA_SPEC.md) for the complete schema language reference.
-See [`MQL_INTERFACE.md`](./MQL_INTERFACE.md) for the storage interface contract.
+See [`STORE_INTERFACE.md`](./STORE_INTERFACE.md) for the storage interface contract.
 See [`DEV_ROADMAP.md`](./DEV_ROADMAP.md) for the phased build plan.
 See [`examples/farmly.schema.yaml`](./examples/farmly.schema.yaml) for a real e-commerce schema.
 
@@ -212,10 +209,10 @@ See [`examples/farmly.schema.yaml`](./examples/farmly.schema.yaml) for a real e-
 **Open source core (this repo, MIT)**
 Everything in the feature table above. Community contributions welcome.
 
-**[AI Builder](https://lxroot.io/builder)** *(coming soon)*
-Brief → schema → deploy in minutes. Managed on LxRoot. Visual dashboard editor.
+**AI Builder** *(coming soon)*
+Brief → schema → deploy in minutes. Managed hosting. Visual dashboard editor.
 
-**[Enterprise](https://lxroot.io/enterprise)**
+**Enterprise**
 Multi-node cluster, Couchbase, CRDT collaborative editing, MCP server, SAML/SSO, SLA.
 
 ---
@@ -224,14 +221,10 @@ Multi-node cluster, Couchbase, CRDT collaborative editing, MCP server, SAML/SSO,
 
 Issues, PRs, and plugin submissions welcome.
 Read [`CONTEXT.md`](./CONTEXT.md) before opening a PR — especially the constraints section.
-The `mql` interface is locked; proposals to change it need a discussion issue first.
-
-Plugin authors: publish to the registry at [plugins.lxroot.io](https://plugins.lxroot.io).
+The `store` interface is locked; proposals to change it need a discussion issue first.
 
 ---
 
 ## License
 
 MIT — see [LICENSE](./LICENSE)
-
-Built by [LxRoot](https://lxroot.io) · Made in Bangladesh 🇧🇩

@@ -1,4 +1,6 @@
-# mql — Storage Interface Contract
+# store — Storage Interface Contract
+
+The `store` package is the storage abstraction layer for DCMS.
 
 **This interface is locked after Phase 1.**
 Every storage adapter (SQLite, PostgreSQL, Couchbase) implements it.
@@ -10,7 +12,7 @@ Do not add adapter-specific methods to this interface — extend via separate in
 ## Core types
 
 ```go
-package mql
+package store
 
 import (
     "context"
@@ -228,24 +230,24 @@ type Adapter interface {
 ## Sentinel errors
 
 ```go
-package mql
+package store
 
 import "errors"
 
 // Sentinel errors — use errors.Is() to check.
 var (
     // ErrNotFound is returned by FindOne and Delete when no record matches.
-    ErrNotFound = errors.New("mql: record not found")
+    ErrNotFound = errors.New("store: record not found")
 
     // ErrConflict is returned when a unique constraint is violated.
-    ErrConflict = errors.New("mql: unique constraint violation")
+    ErrConflict = errors.New("store: unique constraint violation")
 
     // ErrInvalidInput is returned when the caller provides malformed input
     // (e.g. unknown collection name, invalid field type in WriteInput).
-    ErrInvalidInput = errors.New("mql: invalid input")
+    ErrInvalidInput = errors.New("store: invalid input")
 
     // ErrTxAborted is returned when a transaction is rolled back.
-    ErrTxAborted = errors.New("mql: transaction aborted")
+    ErrTxAborted = errors.New("store: transaction aborted")
 )
 
 // ValidationError is returned when field-level validation fails.
@@ -266,13 +268,13 @@ Every adapter must export a `New` function with this signature:
 
 ```go
 // SQLite adapter
-func New(cfg SQLiteConfig) (mql.Adapter, error)
+func New(cfg SQLiteConfig) (store.Adapter, error)
 
 // Postgres adapter
-func New(cfg PostgresConfig) (mql.Adapter, error)
+func New(cfg PostgresConfig) (store.Adapter, error)
 
 // Couchbase adapter (Phase 3)
-func New(cfg CouchbaseConfig) (mql.Adapter, error)
+func New(cfg CouchbaseConfig) (store.Adapter, error)
 ```
 
 Config structs:
@@ -297,20 +299,20 @@ type PostgresConfig struct {
 
 ```go
 // In collection handler (simplified):
-func (h *Handler) CreateProduct(ctx context.Context, data mql.Record) (mql.Record, error) {
-    return h.db.Create(ctx, mql.WriteInput{
+func (h *Handler) CreateProduct(ctx context.Context, data store.Record) (store.Record, error) {
+    return h.db.Create(ctx, store.WriteInput{
         Collection: "products",
         Data:       data,
     })
 }
 
 // Transactional order creation:
-func (h *Handler) CreateOrder(ctx context.Context, orderData mql.Record) (mql.Record, error) {
-    var order mql.Record
+func (h *Handler) CreateOrder(ctx context.Context, orderData store.Record) (store.Record, error) {
+    var order store.Record
 
-    err := h.db.Tx(ctx, func(ctx context.Context, tx mql.DB) error {
+    err := h.db.Tx(ctx, func(ctx context.Context, tx store.DB) error {
         // 1. Create the order
-        created, err := tx.Create(ctx, mql.WriteInput{
+        created, err := tx.Create(ctx, store.WriteInput{
             Collection: "orders",
             Data:       orderData,
         })
@@ -328,9 +330,9 @@ func (h *Handler) CreateOrder(ctx context.Context, orderData mql.Record) (mql.Re
         if newStock < 0 {
             return errors.New("insufficient stock") // rolls back
         }
-        _, err = tx.Update(ctx, mql.WriteInput{
+        _, err = tx.Update(ctx, store.WriteInput{
             Collection: "products",
-            Data:       mql.Record{"id": product["id"], "stock": newStock},
+            Data:       store.Record{"id": product["id"], "stock": newStock},
         })
         return err // nil = commit, non-nil = rollback
     })

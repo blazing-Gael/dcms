@@ -1,22 +1,22 @@
-# LxCMS — Project Context
+# DCMS — Project Context
 
 ## What this is
 
-LxCMS is a schema-first, AI-native, headless content operating system written in Go.
-It is part of the LxRoot ecosystem — sovereign cloud infrastructure for the Global South.
+DCMS is a schema-first, AI-native, headless content operating system written in Go.
+It is sovereign by design — self-hostable on your own infrastructure, no platform lock-in.
 
 The core insight: every existing CMS forces a choice between managed-and-locked-in (Shopify, Sanity)
-or flexible-and-build-it-yourself (Strapi, raw Postgres). LxCMS fills the gap.
+or flexible-and-build-it-yourself (Strapi, raw Postgres). DCMS fills the gap.
 
 **One-line pitch:** Define your data model in YAML. Get a production backend, typed SDKs,
-admin UI, semantic search, and one-click LxRoot deploy — without writing a line of Go.
+admin UI, semantic search, and one-click deploy — without writing a line of Go.
 
 ---
 
 ## Guiding principles
 
 1. **Schema is the single source of truth.** Everything — endpoints, migrations, TypeScript types,
-   admin UI, OpenAPI spec — derives from `lxcms.schema.yaml` automatically.
+   admin UI, OpenAPI spec — derives from `dcms.schema.yaml` automatically.
 
 2. **Developers never touch Go.** The engine is Go. Developers use YAML, the CLI, SDKs, REST,
    and Wasm plugins. Go knowledge is never required.
@@ -26,7 +26,7 @@ admin UI, semantic search, and one-click LxRoot deploy — without writing a lin
 4. **AI-first.** Schema introspection endpoint, typed codegen, and MCP protocol support
    are first-class primitives, not plugins.
 
-5. **Sovereign.** Runs on a $5 VPS. Deploys to LxRoot. No platform fees, no vendor SLA required.
+5. **Sovereign.** Runs on a $5 VPS. Deploys to your own infra. No platform fees, no vendor SLA required.
 
 6. **Performance ceiling.** Single Go binary. Low memory. Sub-millisecond Unix socket IPC.
    pgvector inline. No PHP-FPM, no Varnish, no Solr.
@@ -37,10 +37,10 @@ admin UI, semantic search, and one-click LxRoot deploy — without writing a lin
 
 ```
 Tier 1 — Open Source Core (this repo, MIT)
-  schema engine · mql ORM · vector pipeline · Wasm runtime · RBAC · i18n
+  schema engine · store layer · vector pipeline · Wasm runtime · RBAC · i18n
   draft/publish · audit log · dashboard builder · CLI · SDKs · web components
 
-Tier 2 — AI Builder (paid, lxroot-hosted)
+Tier 2 — AI Builder (paid, managed hosting)
   brief → schema → deploy · UI generation · curated plugin library · managed hosting
 
 Tier 3 — Enterprise (contract)
@@ -56,7 +56,7 @@ Tier 2 and 3 features are closed-source and build on the open core.
 
 ### Deployment modes
 
-- **Mode A — Sidecar (default, ship first):** LxCMS binary runs alongside the app on the same
+- **Mode A — Sidecar (default, ship first):** DCMS binary runs alongside the app on the same
   server. Communication over Unix domain socket. Sub-millisecond overhead.
 
 - **Mode B — Standalone cluster:** HTTP/3 + gRPC binary, isolated process or MicroVM,
@@ -69,7 +69,7 @@ Tier 2 and 3 features are closed-source and build on the open core.
 
 ```
 /core/schema      YAML/JSON parser → CollectionDef structs → virtual router → OpenAPI + TS codegen
-/core/storage     mql ORM: repository interface + SQLite/Postgres/Couchbase adapters
+/core/store       store layer: repository interface + SQLite/Postgres/Couchbase adapters
 /core/ai          Vector ingestion goroutine, embedding pipeline, semantic search
 /core/gateway     JWT auth, RBAC enforcement, per-key rate limiting, request logging
 /core/media       Upload → resize → CDN URL pipeline
@@ -77,13 +77,13 @@ Tier 2 and 3 features are closed-source and build on the open core.
 /core/runtime     Wazero Wasm plugin sandbox
 /bindings/cgo     CGO export layer (Phase 5)
 /bindings/node    N-API wrapper (Phase 5)
-/sdk/ts           TypeScript SDK + codegen (@lxroot/cms-client)
+/sdk/ts           TypeScript SDK + codegen (@dcms/client)
 /sdk/flutter      Dart SDK
 /sdk/python       Async Python client
-/cmd/lxcms        CLI entrypoint
+/cmd/dcms        CLI entrypoint
 ```
 
-### Storage adapters (mql)
+### Storage adapters (store)
 
 | Adapter    | Profile              | Notes                                      |
 |------------|----------------------|--------------------------------------------|
@@ -91,18 +91,18 @@ Tier 2 and 3 features are closed-source and build on the open core.
 | PostgreSQL | Production default   | pgvector, ACID, full-text, migrations      |
 | Couchbase  | Enterprise           | Sub-document ops, high-write, SQL++        |
 
-Adapters are swapped via one config line. The mql interface is stable from Phase 1.
-**Do not change the mql interface after Phase 1 without a major version bump.**
+Adapters are swapped via one config line. The store interface is stable from Phase 1.
+**Do not change the store interface after Phase 1 without a major version bump.**
 
 ---
 
 ## Directory layout
 
 ```
-lxcms/
+dcms/
 ├── CONTEXT.md              ← you are here
 ├── SCHEMA_SPEC.md          ← full schema language reference
-├── MQL_INTERFACE.md        ← mql Go interface contract
+├── STORE_INTERFACE.md      ← store Go interface contract
 ├── DEV_ROADMAP.md          ← phased build plan with acceptance criteria
 ├── examples/
 │   └── farmly.schema.yaml  ← real-world e-commerce schema (reference implementation)
@@ -110,11 +110,11 @@ lxcms/
 ├── go.sum
 ├── Makefile
 ├── cmd/
-│   └── lxcms/
+│   └── dcms/
 │       └── main.go
 ├── core/
 │   ├── schema/
-│   ├── storage/
+│   ├── store/
 │   ├── ai/
 │   ├── gateway/
 │   ├── media/
@@ -133,8 +133,8 @@ lxcms/
 
 ## Key constraints Claude Code must respect
 
-1. **mql interface is locked after Phase 1.** Every adapter implements it. Never add methods
-   that break the interface without a major version. See `MQL_INTERFACE.md`.
+1. **store interface is locked after Phase 1.** Every adapter implements it. Never add methods
+   that break the interface without a major version. See `STORE_INTERFACE.md`.
 
 2. **HTTP response is never blocked by the embed goroutine.** The vector pipeline fires
    after write commit in a background goroutine. The client receives the response immediately.
@@ -143,12 +143,12 @@ lxcms/
    and admin UI widgets are all generated from the same parsed schema structs. Never hardcode
    field names in generated output.
 
-4. **Transactions from day one.** Every mql adapter must implement `Tx()`. Even if
+4. **Transactions from day one.** Every store adapter must implement `Tx()`. Even if
    a feature doesn't use transactions yet, the interface must be there. Oversell bugs
    from missing atomicity are silent and hard to debug.
 
 5. **Plugin ABI is stable from Phase 4.** Once the Wasm host API is defined, treat it
-   like a public API. Plugins must declare a minimum LxCMS version. Breaking changes
+   like a public API. Plugins must declare a minimum DCMS version. Breaking changes
    require a new ABI version, not a silent break.
 
 6. **RBAC is enforced at the gateway layer, not in collection handlers.** Collection
@@ -181,13 +181,13 @@ lxcms/
 ## What "done" looks like for Phase 1
 
 A developer can:
-1. Write a `lxcms.schema.yaml` with two collections (products, stories)
-2. Run `lxcms dev` and get a working HTTP server on `localhost:3000`
+1. Write a `dcms.schema.yaml` with two collections (products, stories)
+2. Run `dcms dev` and get a working HTTP server on `localhost:3000`
 3. `POST /api/v1/products` with a JSON body and get a `201` back
 4. `GET /api/v1/products` and get a paginated JSON list back
 5. `GET /api/v1/products/:id` and get a single record back
 6. `PATCH /api/v1/products/:id` and update a record
 7. `DELETE /api/v1/products/:id` and remove a record
-8. Run `lxcms codegen --lang ts` and get a `.d.ts` file with typed interfaces
+8. Run `dcms codegen --lang ts` and get a `.d.ts` file with typed interfaces
 
 No authentication required in Phase 1. No vectors. No admin UI. Just the core loop.
