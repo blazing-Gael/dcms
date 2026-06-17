@@ -1,8 +1,9 @@
 package sqlite
 
 import (
-	"crypto/rand"
 	"database/sql"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"reflect"
 	"regexp"
@@ -27,6 +28,51 @@ func safeIdent(name string) error {
 	return nil
 }
 
+// pageCursor is the opaque payload encoded into Page.NextCursor for keyset
+// pagination. It records the sort spec it was built for (so a cursor can't be
+// reused against a different sort) plus the last row's sort value and id —
+// enough to seek to "the row right after this one".
+type pageCursor struct {
+	Sort  string `json:"s"`           // the Query.Sort this cursor was produced for
+	Value any    `json:"v,omitempty"` // last row's value of the sort field (nil when sorting by id)
+	ID    string `json:"id"`          // last row's id — the unique tiebreaker
+}
+
+// encodeCursor serializes a cursor to a URL-safe base64 string. The contract
+// forbids exposing raw SQL values, so we wrap it in JSON+base64.
+func encodeCursor(c pageCursor) (string, error) {
+	b, err := json.Marshal(c)
+	if err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(b), nil
+}
+
+// decodeCursor parses a cursor string. A malformed cursor is caller error, so it
+// maps to ErrInvalidInput rather than an internal error.
+func decodeCursor(s string) (pageCursor, error) {
+	var c pageCursor
+	b, err := base64.RawURLEncoding.DecodeString(s)
+	if err != nil {
+		return c, fmt.Errorf("%w: malformed cursor", store.ErrInvalidInput)
+	}
+	if err := json.Unmarshal(b, &c); err != nil {
+		return c, fmt.Errorf("%w: malformed cursor", store.ErrInvalidInput)
+	}
+	return c, nil
+}
+
+// placeholderRe matches Postgres-style positional placeholders ($1, $2, …).
+var placeholderRe = regexp.MustCompile(`\$\d+`)
+
+// translatePlaceholders rewrites Postgres-style $1,$2,… placeholders to SQLite's
+// "?". The store contract requires callers to write RawQuery/RawExec SQL in the
+// Postgres style for portability; this is where the SQLite adapter honors that.
+// Placeholders are expected to appear in order ($1 then $2 …), matching the args.
+func translatePlaceholders(sql string) string {
+	return placeholderRe.ReplaceAllString(sql, "?")
+}
+
 // quote wraps a (validated) identifier in double quotes for use in SQL.
 func quote(ident string) string { return `"` + ident + `"` }
 
@@ -40,19 +86,6 @@ func mapWriteErr(err error) error {
 		return store.ErrConflict
 	}
 	return err
-}
-
-// uuidv4 returns a random RFC 4122 version-4 UUID string. We generate IDs in Go
-// (rather than relying on a DB default) so every adapter produces identical,
-// portable, exposable IDs — see STORE_INTERFACE.md → IDs.
-func uuidv4() (string, error) {
-	var b [16]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		return "", err
-	}
-	b[6] = (b[6] & 0x0f) | 0x40 // version 4
-	b[8] = (b[8] & 0x3f) | 0x80 // variant 10
-	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16]), nil
 }
 
 // nowRFC3339 is the canonical timestamp format we store in SQLite (TEXT, UTC).
@@ -186,7 +219,7 @@ func expandSlice(v any) (string, []any, error) {
 		return "", nil, fmt.Errorf("%w: in/nin requires a non-empty slice", store.ErrInvalidInput)
 	}
 	args := make([]any, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		args[i] = normalize(rv.Index(i).Interface())
 	}
 	return strings.TrimSuffix(strings.Repeat("?, ", n), ", "), args, nil
