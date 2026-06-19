@@ -27,31 +27,31 @@ const (
 
 // FieldDef is a single field within a collection.
 type FieldDef struct {
-	Name     string
-	Type     FieldType
-	Required bool
-	Default  any
-	Unique   bool
-	Min      *float64 // string: min length; number/integer: min value
-	Max      *float64 // string: max length; number/integer: max value
-	Pattern  string   // string: regex pattern
-	Values   []string // enum: allowed values
-	Label    string   // admin UI label
-	Hint     string   // admin UI helper text
+	Name     string    `json:"name"`
+	Type     FieldType `json:"type"`
+	Required bool      `json:"required,omitempty"`
+	Default  any       `json:"default,omitempty"`
+	Unique   bool      `json:"unique,omitempty"`
+	Min      *float64  `json:"min,omitempty"`     // string: min length; number/integer: min value
+	Max      *float64  `json:"max,omitempty"`     // string: max length; number/integer: max value
+	Pattern  string    `json:"pattern,omitempty"` // string: regex pattern
+	Values   []string  `json:"values,omitempty"`  // enum: allowed values
+	Label    string    `json:"label,omitempty"`   // admin UI label
+	Hint     string    `json:"hint,omitempty"`    // admin UI helper text
 }
 
 // Index describes a database index. Columns has one entry for a single-column
 // index, or several for a composite index.
 type Index struct {
-	Columns []string
+	Columns []string `json:"columns"`
 }
 
 // CollectionDef maps to a database table and a set of virtual HTTP endpoints.
 type CollectionDef struct {
-	Name       string
-	Fields     []FieldDef
-	Indexes    []Index
-	Timestamps bool
+	Name       string     `json:"name"`
+	Fields     []FieldDef `json:"fields"`
+	Indexes    []Index    `json:"indexes,omitempty"`
+	Timestamps bool       `json:"timestamps,omitempty"`
 
 	// TODO(phase-2): SoftDelete, Draft, I18n, Access, Vectorize
 	// TODO(phase-3): Hooks, Schedule
@@ -59,14 +59,14 @@ type CollectionDef struct {
 
 // Meta holds optional project metadata.
 type Meta struct {
-	Name        string
-	Description string
-	BaseURL     string // default: /api/v1
+	Name        string `yaml:"name" json:"name,omitempty"`
+	Description string `yaml:"description" json:"description,omitempty"`
+	BaseURL     string `yaml:"base_url" json:"base_url,omitempty"` // default: /api/v1
 }
 
 // SchemaDefinition is the fully parsed schema file.
 type SchemaDefinition struct {
-	Version     string
-	Meta        Meta
-	Collections []CollectionDef
+	Version     string          `json:"version"`
+	Meta        Meta            `json:"meta"`
+	Collections []CollectionDef `json:"collections"`
 }
