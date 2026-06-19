@@ -10,7 +10,6 @@ package gateway
 import (
 	"log/slog"
 	"net/http"
-	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -18,8 +17,6 @@ import (
 	"github.com/blazing-Gael/dcms/core/schema"
 	"github.com/blazing-Gael/dcms/core/store"
 )
-
-const defaultBaseURL = "/api/v1"
 
 // engineColTypes are the columns the engine adds to every collection; they are
 // valid for filtering/sorting even though they aren't declared in the schema.
@@ -66,7 +63,8 @@ func (s *Server) Handler() http.Handler {
 	r.Get("/__health", s.handleHealth)
 	r.Get("/__ready", s.handleReady)
 	r.Get("/__schema", s.handleSchema)
-	// TODO(phase-1.4): /__openapi — generated OpenAPI 3.1 spec.
+	r.Get("/__openapi", s.handleOpenAPI)
+	r.Get("/__docs", s.handleDocs)
 
 	// Virtual collection routes under the configured base URL.
 	r.Route(s.baseURL(), func(r chi.Router) {
@@ -80,17 +78,10 @@ func (s *Server) Handler() http.Handler {
 	return r
 }
 
-// baseURL returns the API base path: the schema's meta.base_url, sanitized, or
-// the default. chi requires a clean prefix with a leading and no trailing slash.
+// baseURL returns the API base path. Delegates to the schema so the router and
+// the generated OpenAPI spec always agree on the prefix.
 func (s *Server) baseURL() string {
-	b := strings.TrimSpace(s.schema.Meta.BaseURL)
-	if b == "" {
-		return defaultBaseURL
-	}
-	if !strings.HasPrefix(b, "/") {
-		b = "/" + b
-	}
-	return strings.TrimRight(b, "/")
+	return s.schema.BaseURL()
 }
 
 // knownCollection reports whether name is a collection declared in the schema.

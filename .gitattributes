@@ -1,0 +1,18 @@
+# Normalize line endings: LF in the repo, auto on checkout.
+* text=auto eol=lf
+
+# Go and common text formats are always LF.
+*.go    text eol=lf
+*.mod   text eol=lf
+*.sum   text eol=lf
+*.md    text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+*.json  text eol=lf
+
+# Binaries / databases are never normalized.
+*.db    binary
+*.wasm  binary
+*.png   binary
+*.jpg   binary
+*.svg   binary

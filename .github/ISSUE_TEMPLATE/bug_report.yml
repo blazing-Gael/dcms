@@ -1,0 +1,39 @@
+name: Bug report
+description: Something isn't working as expected
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for taking the time to file a bug! Please do not report security issues here — see SECURITY.md.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear description of the bug and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Ideally include a minimal schema snippet and the request/command.
+      placeholder: |
+        1. schema:
+        2. command / request:
+        3. observed vs expected:
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: DCMS version / commit
+      placeholder: "v0.1.0 or git sha (dcms version)"
+    validations:
+      required: true
+  - type: input
+    id: env
+    attributes:
+      label: OS / Go version
+      placeholder: "Windows 11, Go 1.25"
+    validations:
+      required: false

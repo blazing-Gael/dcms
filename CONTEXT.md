@@ -100,33 +100,33 @@ Adapters are swapped via one config line. The store interface is stable from Pha
 
 ```
 dcms/
-├── CONTEXT.md              ← you are here
-├── SCHEMA_SPEC.md          ← full schema language reference
-├── STORE_INTERFACE.md      ← store Go interface contract
-├── DEV_ROADMAP.md          ← phased build plan with acceptance criteria
+├── README.md
+├── CONTEXT.md              ← you are here (architecture overview)
+├── ROADMAP.md              ← outward-facing direction
+├── CHANGELOG.md
+├── LICENSE  CONTRIBUTING.md  CODE_OF_CONDUCT.md  SECURITY.md
+├── go.mod  go.sum  Makefile
+├── .github/                ← CI workflow, issue/PR templates
+├── docs/
+│   ├── SCHEMA_SPEC.md      ← full schema language reference
+│   ├── STORE_INTERFACE.md  ← store Go interface contract
+│   ├── DEV_ROADMAP.md      ← phased build plan with acceptance criteria
+│   └── adr/                ← architecture decision records (the "why")
 ├── examples/
-│   └── farmly.schema.yaml  ← real-world e-commerce schema (reference implementation)
-├── go.mod
-├── go.sum
-├── Makefile
+│   └── farmly.schema.yaml  ← real-world e-commerce schema (reference)
 ├── cmd/
-│   └── dcms/
-│       └── main.go
+│   └── dcms/               ← CLI entrypoint (dev, validate, migrate)
 ├── core/
-│   ├── schema/
-│   ├── store/
-│   ├── ai/
-│   ├── gateway/
-│   ├── media/
-│   ├── sync/
-│   └── runtime/
-├── bindings/
-│   ├── cgo/
-│   └── node/
-└── sdk/
-    ├── ts/
-    ├── flutter/
-    └── python/
+│   ├── schema/             ← parser, validation, OpenAPI, codegen
+│   ├── store/              ← storage interface + sqlite adapter (postgres, couchbase later)
+│   ├── gateway/            ← virtual HTTP router, validation, docs
+│   ├── engine/             ← composition: load · migrate · serve
+│   ├── ai/                 ← vector pipeline (Phase 2)
+│   ├── media/              ← upload pipeline (Phase 3)
+│   ├── sync/               ← CRDT hub (Phase 5)
+│   └── runtime/            ← Wasm plugin sandbox (Phase 3)
+├── bindings/               ← cgo / node (Phase 5)
+└── sdk/                    ← ts / flutter / python
 ```
 
 ---
@@ -134,7 +134,7 @@ dcms/
 ## Key constraints Claude Code must respect
 
 1. **store interface is locked after Phase 1.** Every adapter implements it. Never add methods
-   that break the interface without a major version. See `STORE_INTERFACE.md`.
+   that break the interface without a major version. See `docs/STORE_INTERFACE.md`.
 
 2. **HTTP response is never blocked by the embed goroutine.** The vector pipeline fires
    after write commit in a background goroutine. The client receives the response immediately.

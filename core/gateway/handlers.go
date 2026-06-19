@@ -26,7 +26,13 @@ func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleSchema(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("ETag", `"`+s.schema.ContractHash()+`"`)
 	writeJSON(w, http.StatusOK, s.schema)
+}
+
+func (s *Server) handleOpenAPI(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("ETag", `"`+s.schema.ContractHash()+`"`)
+	writeJSON(w, http.StatusOK, s.schema.OpenAPI())
 }
 
 func (s *Server) handleNotFound(w http.ResponseWriter, r *http.Request) {
@@ -72,6 +78,10 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnprocessableEntity, apiError{Code: "VALIDATION_ERROR", Message: err.Error()})
 		return
 	}
+	if errs := s.collections[collection].ValidateCreate(data); errs != nil {
+		writeError(w, http.StatusUnprocessableEntity, apiError{Code: "VALIDATION_ERROR", Message: "validation failed", Fields: errs})
+		return
+	}
 
 	rec, err := s.db.Create(r.Context(), store.WriteInput{Collection: collection, Data: data})
 	if err != nil {
@@ -110,6 +120,10 @@ func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	// The id comes from the URL, not the body — it is the source of truth.
 	data["id"] = chi.URLParam(r, "id")
+	if errs := s.collections[collection].ValidateUpdate(data); errs != nil {
+		writeError(w, http.StatusUnprocessableEntity, apiError{Code: "VALIDATION_ERROR", Message: "validation failed", Fields: errs})
+		return
+	}
 
 	rec, err := s.db.Update(r.Context(), store.WriteInput{Collection: collection, Data: data})
 	if err != nil {

@@ -111,6 +111,14 @@ func (s *SchemaDefinition) Validate() error {
 					seenVal[v] = true
 				}
 			}
+
+			// A pattern must be a compilable regex (so validation never fails at
+			// request time on a broken schema).
+			if f.Pattern != "" {
+				if _, err := regexp.Compile(f.Pattern); err != nil {
+					add("%s: invalid pattern: %v", fpath, err)
+				}
+			}
 		}
 
 		// Index columns must reference real columns.

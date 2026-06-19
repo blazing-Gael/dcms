@@ -5,10 +5,16 @@
 package main
 
 import (
+	"context"
 	"fmt"
+	"log/slog"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/spf13/cobra"
+
+	"github.com/blazing-Gael/dcms/core/engine"
 )
 
 // version is overridden at build time via -ldflags "-X main.version=...".
@@ -48,8 +54,27 @@ func newDevCmd() *cobra.Command {
 		Use:   "dev",
 		Short: "Parse the schema, run migrations, and start the dev HTTP server",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			// TODO(phase-1): parse schema, migrate, start server, hot-reload on change.
-			return fmt.Errorf("dev: not implemented yet (schema=%s port=%d db=%s)", schemaPath, port, dbPath)
+			def, err := engine.LoadSchema(schemaPath)
+			if err != nil {
+				return err
+			}
+			db, err := engine.OpenStore(dbPath)
+			if err != nil {
+				return err
+			}
+			defer db.Close()
+
+			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+			defer stop()
+
+			if err := engine.Apply(ctx, db, def); err != nil {
+				return err
+			}
+
+			logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+			fmt.Printf("dcms dev — %d collection(s) from %s\n", len(def.Collections), schemaPath)
+			fmt.Printf("listening on http://localhost:%d  (Ctrl+C to stop)\n", port)
+			return engine.Serve(ctx, def, db, fmt.Sprintf(":%d", port), logger)
 		},
 	}
 	cmd.Flags().StringVar(&schemaPath, "schema", "./dcms.schema.yaml", "path to the schema file")
@@ -64,8 +89,12 @@ func newValidateCmd() *cobra.Command {
 		Use:   "validate",
 		Short: "Parse and validate the schema, exit non-zero on failure",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			// TODO(phase-1): parse + Validate, print issues.
-			return fmt.Errorf("validate: not implemented yet (schema=%s)", schemaPath)
+			def, err := engine.LoadSchema(schemaPath)
+			if err != nil {
+				return err
+			}
+			fmt.Printf("schema OK — %d collection(s)\n", len(def.Collections))
+			return nil
 		},
 	}
 	cmd.Flags().StringVar(&schemaPath, "schema", "./dcms.schema.yaml", "path to the schema file")
@@ -102,8 +131,36 @@ func newMigrateCmd() *cobra.Command {
 		Use:   "migrate",
 		Short: "Run pending migrations (or print the SQL with --dry-run)",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			// TODO(phase-1): Introspect → Diff → Migrate (or print on dry-run).
-			return fmt.Errorf("migrate: not implemented yet (schema=%s db=%s dry-run=%v)", schemaPath, dbPath, dryRun)
+			def, err := engine.LoadSchema(schemaPath)
+			if err != nil {
+				return err
+			}
+			db, err := engine.OpenStore(dbPath)
+			if err != nil {
+				return err
+			}
+			defer db.Close()
+
+			ctx := context.Background()
+			if dryRun {
+				up, err := engine.Plan(ctx, db, def)
+				if err != nil {
+					return err
+				}
+				if len(up) == 0 {
+					fmt.Println("-- no migrations needed; schema and database are in sync")
+					return nil
+				}
+				for _, stmt := range up {
+					fmt.Println(stmt)
+				}
+				return nil
+			}
+			if err := engine.Apply(ctx, db, def); err != nil {
+				return err
+			}
+			fmt.Println("migrations applied")
+			return nil
 		},
 	}
 	cmd.Flags().StringVar(&schemaPath, "schema", "./dcms.schema.yaml", "path to the schema file")

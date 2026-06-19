@@ -95,6 +95,7 @@ func nowRFC3339() string { return time.Now().UTC().Format(time.RFC3339Nano) }
 // driver can bind, following STORE_INTERFACE.md's storage rules:
 //   - bool      → INTEGER 0/1
 //   - time.Time → TEXT in RFC3339 (UTC)
+//
 // everything else (string, float64, int64, []byte, nil) passes through.
 func normalize(v any) any {
 	switch t := v.(type) {

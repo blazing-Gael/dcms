@@ -1,0 +1,31 @@
+version: "1"
+
+meta:
+  name: shop
+  description: "Minimal example schema for `dcms dev`"
+  base_url: /api/v1
+
+collections:
+  products:
+    fields:
+      title:
+        type: string
+        required: true
+        max: 200
+      slug:
+        type: string
+        required: true
+        unique: true
+      price:
+        type: number
+        required: true
+        min: 0
+      stock:
+        type: integer
+        default: 0
+      status:
+        type: enum
+        values: [draft, active, archived]
+        default: draft
+    indexes:
+      - status

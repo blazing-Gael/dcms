@@ -194,13 +194,14 @@ Single binary. No PHP-FPM, no Varnish, no Solr. One config file.
 
 ---
 
-## Project structure
-
-See [`CONTEXT.md`](./CONTEXT.md) for the full architecture and development guide.
-See [`SCHEMA_SPEC.md`](./SCHEMA_SPEC.md) for the complete schema language reference.
-See [`STORE_INTERFACE.md`](./STORE_INTERFACE.md) for the storage interface contract.
-See [`DEV_ROADMAP.md`](./DEV_ROADMAP.md) for the phased build plan.
-See [`examples/farmly.schema.yaml`](./examples/farmly.schema.yaml) for a real e-commerce schema.
+- [`CONTEXT.md`](./CONTEXT.md) — architecture overview and engine constraints
+- [`ROADMAP.md`](./ROADMAP.md) — where the project is heading
+- [`docs/SCHEMA_SPEC.md`](./docs/SCHEMA_SPEC.md) — the complete schema language reference
+- [`docs/STORE_INTERFACE.md`](./docs/STORE_INTERFACE.md) — the storage interface contract
+- [`docs/DEV_ROADMAP.md`](./docs/DEV_ROADMAP.md) — the phased build plan with acceptance criteria
+- [`docs/adr/`](./docs/adr/) — architecture decision records (the "why")
+- [`examples/farmly.schema.yaml`](./examples/farmly.schema.yaml) — a real e-commerce schema
+- [`CONTRIBUTING.md`](./CONTRIBUTING.md) · [`SECURITY.md`](./SECURITY.md) · [`CHANGELOG.md`](./CHANGELOG.md)
 
 ---
 
@@ -219,9 +220,10 @@ Multi-node cluster, Couchbase, CRDT collaborative editing, MCP server, SAML/SSO,
 
 ## Contributing
 
-Issues, PRs, and plugin submissions welcome.
+Issues, PRs, and plugin submissions welcome — see [`CONTRIBUTING.md`](./CONTRIBUTING.md).
 Read [`CONTEXT.md`](./CONTEXT.md) before opening a PR — especially the constraints section.
 The `store` interface is locked; proposals to change it need a discussion issue first.
+By participating you agree to the [Code of Conduct](./CODE_OF_CONDUCT.md).
 
 ---
 

@@ -230,6 +230,29 @@ func TestErrors(t *testing.T) {
 	if st != http.StatusUnprocessableEntity {
 		t.Fatalf("bad json: got %d, want 422", st)
 	}
+
+	// Missing required field → 422 with field-level message.
+	st, body = do(t, http.MethodPost, base, `{"slug":"x"}`)
+	if st != http.StatusUnprocessableEntity {
+		t.Fatalf("missing required: got %d, want 422 (%v)", st, body)
+	}
+	errObj, _ := body["error"].(map[string]any)
+	fields, _ := errObj["fields"].(map[string]any)
+	if fields["title"] == nil {
+		t.Fatalf("expected field error for title: %v", body)
+	}
+
+	// Invalid enum value → 422.
+	st, _ = do(t, http.MethodPost, base, `{"title":"X","slug":"y","price":1,"status":"banana"}`)
+	if st != http.StatusUnprocessableEntity {
+		t.Fatalf("invalid enum: got %d, want 422", st)
+	}
+
+	// Wrong type (string for number) → 422.
+	st, _ = do(t, http.MethodPost, base, `{"title":"X","slug":"z","price":"lots"}`)
+	if st != http.StatusUnprocessableEntity {
+		t.Fatalf("wrong type: got %d, want 422", st)
+	}
 }
 
 func TestProbesAndSchema(t *testing.T) {
@@ -252,5 +275,57 @@ func TestProbesAndSchema(t *testing.T) {
 	cols, ok := body["collections"].([]any)
 	if !ok || len(cols) != 1 {
 		t.Fatalf("schema collections: %#v", body["collections"])
+	}
+}
+
+func TestOpenAPIEndpoint(t *testing.T) {
+	srv := newTestServer(t)
+
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/__openapi", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET /__openapi: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status: got %d, want 200", resp.StatusCode)
+	}
+	if etag := resp.Header.Get("ETag"); etag == "" {
+		t.Fatal("expected an ETag (contract hash) header")
+	}
+
+	var doc map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&doc); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if doc["openapi"] != "3.1.0" {
+		t.Fatalf("openapi version: %v", doc["openapi"])
+	}
+	paths, _ := doc["paths"].(map[string]any)
+	if _, ok := paths["/api/v1/products"]; !ok {
+		t.Fatalf("missing products path in served spec: %v", paths)
+	}
+}
+
+func TestDocsEndpoint(t *testing.T) {
+	srv := newTestServer(t)
+
+	resp, err := http.Get(srv.URL + "/__docs")
+	if err != nil {
+		t.Fatalf("GET /__docs: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status: got %d, want 200", resp.StatusCode)
+	}
+	if ct := resp.Header.Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
+		t.Fatalf("content-type: got %q, want text/html", ct)
+	}
+	b, _ := io.ReadAll(resp.Body)
+	body := string(b)
+	if !strings.Contains(body, "/__openapi") {
+		t.Fatalf("docs page should reference /__openapi: %s", body)
 	}
 }
