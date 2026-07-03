@@ -67,20 +67,27 @@ Tier 2 and 3 features are closed-source and build on the open core.
 
 ### Core packages
 
+The engine packages live under `/internal` — the Go compiler blocks importing them
+from outside the module. This is deliberate: DCMS's public surface is the **binary,
+the HTTP API, and the SDKs**, not its Go types. Nothing under `/internal` is a stable
+Go API yet, so we stay free to change signatures without a major version bump. When
+the embed path (Mode C) is blessed, a stable facade gets promoted out of `/internal`.
+
 ```
-/core/schema      YAML/JSON parser → CollectionDef structs → virtual router → OpenAPI + TS codegen
-/core/store       store layer: repository interface + SQLite/Postgres/Couchbase adapters
-/core/ai          Vector ingestion goroutine, embedding pipeline, semantic search
-/core/gateway     JWT auth, RBAC enforcement, per-key rate limiting, request logging
-/core/media       Upload → resize → CDN URL pipeline
-/core/sync        WebSocket hub + CRDT state sync (Phase 5)
-/core/runtime     Wazero Wasm plugin sandbox
-/bindings/cgo     CGO export layer (Phase 5)
-/bindings/node    N-API wrapper (Phase 5)
-/sdk/ts           TypeScript SDK + codegen (@dcms/client)
-/sdk/flutter      Dart SDK
-/sdk/python       Async Python client
-/cmd/dcms        CLI entrypoint
+/internal/config   layered settings resolution (flags > env > config file > defaults)
+/internal/schema   YAML/JSON parser → CollectionDef structs → virtual router → OpenAPI + TS codegen
+/internal/store    store layer: repository interface + SQLite/Postgres/Couchbase adapters
+/internal/ai       Vector ingestion goroutine, embedding pipeline, semantic search
+/internal/gateway  JWT auth, RBAC enforcement, per-key rate limiting, request logging
+/internal/media    Upload → resize → CDN URL pipeline
+/internal/sync     WebSocket hub + CRDT state sync (Phase 5)
+/internal/runtime  Wazero Wasm plugin sandbox
+/bindings/cgo      CGO export layer (Phase 5)
+/bindings/node     N-API wrapper (Phase 5)
+/sdk/ts            TypeScript SDK + codegen (@dcms/client)
+/sdk/flutter       Dart SDK
+/sdk/python        Async Python client
+/cmd/dcms          CLI entrypoint (the only externally-importable package)
 ```
 
 ### Storage adapters (store)
@@ -113,10 +120,13 @@ dcms/
 │   ├── DEV_ROADMAP.md      ← phased build plan with acceptance criteria
 │   └── adr/                ← architecture decision records (the "why")
 ├── examples/
-│   └── farmly.schema.yaml  ← real-world e-commerce schema (reference)
+│   ├── farmly.schema.yaml  ← real-world e-commerce schema (reference)
+│   ├── shop.schema.yaml    ← minimal schema (quick start)
+│   └── dcms.config.yaml    ← annotated example config file
 ├── cmd/
-│   └── dcms/               ← CLI entrypoint (dev, validate, migrate)
-├── core/
+│   └── dcms/               ← CLI entrypoint (dev, validate, migrate) — the public package
+├── internal/               ← engine internals; not importable from outside the module
+│   ├── config/             ← settings resolution: flags > env > file > defaults
 │   ├── schema/             ← parser, validation, OpenAPI, codegen
 │   ├── store/              ← storage interface + sqlite adapter (postgres, couchbase later)
 │   ├── gateway/            ← virtual HTTP router, validation, docs

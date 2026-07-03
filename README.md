@@ -90,6 +90,34 @@ dcms migrate --db postgres://user:pass@localhost/mystore
 
 ---
 
+## Configuration
+
+Every setting has a default, so `dcms dev` in a directory with a schema just works.
+When you need to pin things down — a container, a systemd unit — drop a
+`dcms.config.yaml` next to your schema instead of threading flags:
+
+```yaml
+# dcms.config.yaml
+schema: ./dcms.schema.yaml
+database:
+  driver: sqlite
+  path: ./dcms.db
+server:
+  port: 3000
+```
+
+Settings resolve in this order, **highest wins**:
+
+```
+flags  >  env vars (DCMS_SCHEMA, DCMS_DB, DCMS_DB_DRIVER, DCMS_PORT)  >  config file  >  defaults
+```
+
+So the file sets your baseline, an env var overrides one value for a given
+environment, and a flag wins for a one-off. The config file is picked up
+automatically as `./dcms.config.yaml`, or point at one with `--config path/to.yaml`.
+
+---
+
 ## Client integration
 
 ### Next.js / Node.js

@@ -1,0 +1,29 @@
+# Example DCMS config file.
+#
+# Every setting is optional — anything you omit falls back to a built-in default,
+# so the smallest valid config is an empty file. Values here can still be
+# overridden at launch by an env var (DCMS_SCHEMA, DCMS_DB, DCMS_DB_DRIVER,
+# DCMS_PORT) or a command-line flag, in that increasing order of precedence.
+#
+# Point the CLI at this file with:  dcms dev --config ./dcms.config.yaml
+# (or name it ./dcms.config.yaml in the working directory and it's picked up
+# automatically).
+
+# Path to the schema that defines your collections.
+schema: ./dcms.schema.yaml
+
+database:
+  # Phase 1 ships the "sqlite" driver. "postgres" and others land later.
+  driver: sqlite
+  # For sqlite this is the database file; it's created if missing.
+  path: ./dcms.db
+
+server:
+  # HTTP port the gateway listens on.
+  port: 3000
+  # Strict response validation: verify every record the server returns conforms
+  # to the schema, answering 500 instead of shipping non-conforming data. Guards
+  # against store/adapter drift. Defaults ON under `dcms dev`, OFF otherwise;
+  # set it explicitly here to override. (Response *shaping* — e.g. booleans as
+  # true/false — always happens regardless of this setting.)
+  # validate_responses: true

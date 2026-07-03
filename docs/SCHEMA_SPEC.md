@@ -124,16 +124,23 @@ Stored as VARCHAR. Validated on write. Admin UI renders as a select.
 #### Relation (Phase 2)
 
 ```yaml
-category:
+author:
   type: relation
-  collection: categories              # target collection name — must exist in schema
-  many: false                         # false = belongs-to (FK), true = has-many (join table)
-  cascade: nullify                    # nullify | restrict | cascade
-  # cascade options:
-  #   nullify  — set FK to NULL when target is deleted (default)
-  #   restrict — prevent deletion of target if references exist
-  #   cascade  — delete this record when target is deleted
+  target: users                       # target collection name — must exist in schema
+  many: false                         # false = belongs-to (FK column), true = many-to-many (join table)
+  on_delete: restrict                 # belongs-to only: restrict (default) | cascade | set null
+  # on_delete options (what happens to this record when its target is deleted):
+  #   restrict — block the target's deletion while references exist (default) → 409
+  #   cascade  — delete this record too
+  #   set null — clear this record's reference (requires the relation be nullable)
 ```
+
+Referential integrity is enforced in two layers (see ADR-0010): the gateway
+validates every referenced id exists before a write (field-named `422` on a
+miss), and the database carries a real foreign key as the backstop. A
+many-to-many relation's join rows always cascade when either endpoint is deleted
+(this is engine-managed and not configurable); `on_delete` therefore applies only
+to belongs-to relations.
 
 #### i18n (Phase 2)
 
