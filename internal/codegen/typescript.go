@@ -34,13 +34,14 @@ func tsType(f Field, record bool) string {
 				// Present only when expanded; the array holds target objects.
 				return f.Target + "[]"
 			}
-			return "string[]" // input: a list of target ids
+			// input: a list of target ids and/or inline records to create.
+			return "(string | Create" + f.Target + ")[]"
 		}
 		// belongs-to
 		if record {
 			return "string | " + f.Target // the id, or the expanded object
 		}
-		return "string" // input: the target id
+		return "string | Create" + f.Target // input: the id, or an inline record
 	}
 	return tsScalar(f)
 }

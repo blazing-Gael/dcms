@@ -27,38 +27,157 @@ func parseExpand(values url.Values) []string {
 }
 
 // expandRecord resolves each expand token against one record, mutating it in
-// place. A belongs-to token replaces the FK id with the fetched target object;
-// an inverse (has-many) token adds a new key holding the list of related
-// records. Unknown/ambiguous tokens are client errors (→ 422 via badRequest).
+// place. Tokens may be dotted paths ("author.company") for nested expansion: the
+// first segment is expanded here, then the remainder is applied recursively to
+// the expanded target(s). A belongs-to segment replaces the FK id with the
+// fetched object; an inverse (has-many or reverse many-to-many) segment adds a
+// key holding the list of related records. Unknown/ambiguous segments are client
+// errors (→ 422 via badRequest).
 //
 // Call this AFTER response validation: at validation time the FK is still the
-// string id the schema promises; expansion changes the shape afterward.
+// string id the schema promises; expansion changes the shape afterward. Nested
+// expansion is single-record only — lists reject dotted tokens (see
+// expandListRecords) to avoid multi-level N+1.
 func (s *Server) expandRecord(ctx context.Context, collection string, rec store.Record, tokens []string) error {
-	cd := s.collections[collection]
-	for _, tok := range tokens {
-		if target, ok := cd.BelongsTo(tok); ok {
-			if err := s.expandBelongsTo(ctx, target, rec, tok); err != nil {
-				return err
-			}
-			continue
-		}
-		if target, ok := cd.ManyToMany(tok); ok {
-			if err := s.expandM2M(ctx, collection, target, rec, tok); err != nil {
-				return err
-			}
-			continue
-		}
-		inv, err := s.inverseFor(collection, tok)
+	for seg, subs := range groupExpand(tokens) {
+		target, err := s.expandOne(ctx, collection, rec, seg)
 		if err != nil {
 			return err
 		}
-		list, err := s.findRelated(ctx, inv, fmt.Sprint(rec["id"]))
-		if err != nil {
-			return err
+		// Recurse for any non-leaf sub-paths, into whatever this segment produced.
+		var childPaths []string
+		for _, s := range subs {
+			if s != "" {
+				childPaths = append(childPaths, s)
+			}
 		}
-		rec[tok] = list
+		if len(childPaths) == 0 {
+			continue
+		}
+		switch v := rec[seg].(type) {
+		case store.Record:
+			if err := s.expandRecord(ctx, target, v, childPaths); err != nil {
+				return err
+			}
+		case []store.Record:
+			for _, child := range v {
+				if err := s.expandRecord(ctx, target, child, childPaths); err != nil {
+					return err
+				}
+			}
+		}
+		// A segment that resolved to a bare id (dangling ref) can't be recursed
+		// into; that's not an error, just nothing more to expand.
 	}
 	return nil
+}
+
+// groupExpand splits dotted expand tokens by their first segment, collecting the
+// remaining path of each. "author" → {"author": [""]}; "author.company" →
+// {"author": ["company"]}; both together → {"author": ["", "company"]}.
+func groupExpand(tokens []string) map[string][]string {
+	g := map[string][]string{}
+	for _, t := range tokens {
+		head, rest, _ := strings.Cut(t, ".")
+		g[head] = append(g[head], rest)
+	}
+	return g
+}
+
+// expandOne expands a single field on a record and returns the collection of the
+// expanded target (so the caller can recurse for nested paths). It handles
+// belongs-to, forward many-to-many, and inverse edges (has-many + reverse m2m).
+func (s *Server) expandOne(ctx context.Context, collection string, rec store.Record, field string) (string, error) {
+	cd := s.collections[collection]
+	if target, ok := cd.BelongsTo(field); ok {
+		return target, s.expandBelongsTo(ctx, target, rec, field)
+	}
+	if target, ok := cd.ManyToMany(field); ok {
+		return target, s.expandM2M(ctx, collection, target, rec, field)
+	}
+	return s.expandInverse(ctx, collection, rec, field)
+}
+
+// expandInverse resolves an inverse expand token (a source collection name) to
+// the single relation edge that justifies it — either a belongs-to pointing back
+// (has-many) or a many-to-many pointing back (reverse m2m) — and loads it. None
+// or more than one match across both kinds is a client error.
+func (s *Server) expandInverse(ctx context.Context, collection string, rec store.Record, field string) (string, error) {
+	var belongs []schema.Inverse
+	for _, inv := range s.schema.InverseRelations(collection) {
+		if inv.Source == field {
+			belongs = append(belongs, inv)
+		}
+	}
+	var many []schema.M2MInverse
+	for _, inv := range s.schema.InverseM2M(collection) {
+		if inv.Source == field {
+			many = append(many, inv)
+		}
+	}
+	switch total := len(belongs) + len(many); {
+	case total == 0:
+		return "", badRequest("expand", fmt.Sprintf("cannot expand %q on %q", field, collection))
+	case total > 1:
+		return "", badRequest("expand",
+			fmt.Sprintf("%q is ambiguous — %q relates to %q through more than one field; disambiguation is not supported yet", field, field, collection))
+	}
+
+	id := fmt.Sprint(rec["id"])
+	if len(belongs) == 1 {
+		list, err := s.findRelated(ctx, belongs[0], id)
+		if err != nil {
+			return "", err
+		}
+		rec[field] = list
+		return belongs[0].Source, nil
+	}
+	list, err := s.findRelatedM2M(ctx, many[0], id)
+	if err != nil {
+		return "", err
+	}
+	rec[field] = list
+	return many[0].Source, nil
+}
+
+// findRelatedM2M loads the source records linked to targetID through a reverse
+// many-to-many edge: read the join rows where target_id = targetID, then batch
+// fetch the source records.
+func (s *Server) findRelatedM2M(ctx context.Context, inv schema.M2MInverse, targetID string) ([]store.Record, error) {
+	table := schema.JoinTableName(inv.Source, inv.Field)
+	linkPage, err := s.db.Find(ctx, store.Query{
+		Collection: table,
+		Filters:    []store.Filter{{Field: "target_id", Operator: store.Eq, Value: targetID}},
+		Limit:      maxM2MExpand,
+	})
+	if err != nil {
+		return nil, err
+	}
+	var ids []any
+	for _, l := range linkPage.Data {
+		if sid, ok := l["source_id"].(string); ok {
+			ids = append(ids, sid)
+		}
+	}
+	if len(ids) == 0 {
+		return []store.Record{}, nil
+	}
+	page, err := s.db.Find(ctx, store.Query{
+		Collection: inv.Source,
+		Filters:    []store.Filter{{Field: "id", Operator: store.In, Value: ids}},
+		Limit:      len(ids),
+	})
+	if err != nil {
+		return nil, err
+	}
+	src := s.collections[inv.Source]
+	for _, r := range page.Data {
+		src.CoerceResponse(r)
+	}
+	if page.Data == nil {
+		return []store.Record{}, nil
+	}
+	return page.Data, nil
 }
 
 // expandBelongsTo fetches the single target of a belongs-to field and inlines it.
@@ -98,26 +217,6 @@ func (s *Server) findRelated(ctx context.Context, inv schema.Inverse, parentID s
 	return page.Data, nil
 }
 
-// inverseFor resolves a has-many expand token (a collection name) to the single
-// relation edge that justifies it, or a client error if there is none or the
-// token is ambiguous.
-func (s *Server) inverseFor(collection, tok string) (schema.Inverse, error) {
-	var matches []schema.Inverse
-	for _, inv := range s.schema.InverseRelations(collection) {
-		if inv.Source == tok {
-			matches = append(matches, inv)
-		}
-	}
-	switch len(matches) {
-	case 1:
-		return matches[0], nil
-	case 0:
-		return schema.Inverse{}, badRequest("expand", fmt.Sprintf("cannot expand %q on %q", tok, collection))
-	default:
-		return schema.Inverse{}, badRequest("expand",
-			fmt.Sprintf("%q is ambiguous — %q has multiple relations to %q; disambiguation is not supported yet", tok, tok, collection))
-	}
-}
 
 // expandListRecords expands a page of records. Only belongs-to tokens are
 // allowed on lists (has-many on a list is expensive and disallowed for now);
@@ -125,6 +224,9 @@ func (s *Server) inverseFor(collection, tok string) (schema.Inverse, error) {
 func (s *Server) expandListRecords(ctx context.Context, collection string, recs []store.Record, tokens []string) error {
 	cd := s.collections[collection]
 	for _, tok := range tokens {
+		if strings.Contains(tok, ".") {
+			return badRequest("expand", fmt.Sprintf("nested expansion (%q) is only supported on single-record reads, not lists", tok))
+		}
 		target, ok := cd.BelongsTo(tok)
 		if !ok {
 			return badRequest("expand", fmt.Sprintf("cannot expand %q on a list (only belongs-to relations are expandable in lists)", tok))

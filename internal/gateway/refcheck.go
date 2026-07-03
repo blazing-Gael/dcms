@@ -26,7 +26,7 @@ const refCheckBatch = 100
 // offending field, which the gateway maps to a 422. This layer owns user-facing
 // reference errors; the database foreign keys are a backstop only and must never
 // be the source of a user-facing error.
-func (s *Server) checkReferences(ctx context.Context, collection string, data store.Record) error {
+func (s *Server) checkReferences(ctx context.Context, db store.DB, collection string, data store.Record) error {
 	cd := s.collections[collection]
 
 	// field → (target collection, ids it references in this body).
@@ -82,7 +82,7 @@ func (s *Server) checkReferences(ctx context.Context, collection string, data st
 
 	present := make(map[string]map[string]bool, len(want))
 	for target, idset := range want {
-		found, err := s.existingIDs(ctx, target, idset)
+		found, err := s.existingIDs(ctx, db, target, idset)
 		if err != nil {
 			return err
 		}
@@ -114,7 +114,7 @@ func (s *Server) checkReferences(ctx context.Context, collection string, data st
 // existingIDs returns the subset of idset that exists in collection, fetched in
 // chunks of refCheckBatch so a set larger than the store's list limit is still
 // checked completely.
-func (s *Server) existingIDs(ctx context.Context, collection string, idset map[string]bool) (map[string]bool, error) {
+func (s *Server) existingIDs(ctx context.Context, db store.DB, collection string, idset map[string]bool) (map[string]bool, error) {
 	all := make([]any, 0, len(idset))
 	for id := range idset {
 		all = append(all, id)
@@ -126,7 +126,7 @@ func (s *Server) existingIDs(ctx context.Context, collection string, idset map[s
 			end = len(all)
 		}
 		chunk := all[start:end]
-		page, err := s.db.Find(ctx, store.Query{
+		page, err := db.Find(ctx, store.Query{
 			Collection: collection,
 			Filters:    []store.Filter{{Field: "id", Operator: store.In, Value: chunk}},
 			Fields:     []string{"id"},

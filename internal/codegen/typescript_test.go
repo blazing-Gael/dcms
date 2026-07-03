@@ -142,12 +142,13 @@ collections:
 		t.Errorf("tags in Posts should be 'Tags[]' and optional:\n%s", record)
 	}
 
-	// Input: belongs-to takes an id string; m2m takes a list of id strings.
-	if !strings.Contains(create, "author: string;") || strings.Contains(create, "author?:") {
-		t.Errorf("author in CreatePosts should be a required 'string' (the id):\n%s", create)
+	// Input: belongs-to takes an id or an inline record; m2m takes a list of
+	// ids and/or inline records (nested writes).
+	if !strings.Contains(create, "author: string | CreateUsers;") || strings.Contains(create, "author?:") {
+		t.Errorf("author in CreatePosts should be required 'string | CreateUsers':\n%s", create)
 	}
-	if !strings.Contains(create, "tags?: string[];") {
-		t.Errorf("tags in CreatePosts should be optional 'string[]' (ids):\n%s", create)
+	if !strings.Contains(create, "tags?: (string | CreateTags)[];") {
+		t.Errorf("tags in CreatePosts should be optional '(string | CreateTags)[]':\n%s", create)
 	}
 }
 

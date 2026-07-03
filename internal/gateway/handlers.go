@@ -79,11 +79,28 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnprocessableEntity, apiError{Code: "VALIDATION_ERROR", Message: err.Error()})
 		return
 	}
+
+	// Inline related objects → create the whole tree transactionally.
+	if s.hasInlineRelations(collection, data) {
+		var rec store.Record
+		err := s.db.Tx(r.Context(), func(ctx context.Context, tx store.DB) error {
+			var e error
+			rec, e = s.createRecord(ctx, tx, collection, data, 0)
+			return e
+		})
+		if err != nil {
+			writeStoreError(w, s.logger, r, err)
+			return
+		}
+		s.writeRecord(w, r, http.StatusCreated, collection, rec, nil)
+		return
+	}
+
 	if errs := s.collections[collection].ValidateCreate(data); errs != nil {
 		writeError(w, http.StatusUnprocessableEntity, apiError{Code: "VALIDATION_ERROR", Message: "validation failed", Fields: errs})
 		return
 	}
-	if err := s.checkReferences(r.Context(), collection, data); err != nil {
+	if err := s.checkReferences(r.Context(), s.db, collection, data); err != nil {
 		writeStoreError(w, s.logger, r, err)
 		return
 	}
@@ -127,11 +144,28 @@ func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	// The id comes from the URL, not the body — it is the source of truth.
 	data["id"] = chi.URLParam(r, "id")
+
+	// Inline related objects → resolve + update transactionally.
+	if s.hasInlineRelations(collection, data) {
+		var rec store.Record
+		err := s.db.Tx(r.Context(), func(ctx context.Context, tx store.DB) error {
+			var e error
+			rec, e = s.updateRecord(ctx, tx, collection, data, 0)
+			return e
+		})
+		if err != nil {
+			writeStoreError(w, s.logger, r, err)
+			return
+		}
+		s.writeRecord(w, r, http.StatusOK, collection, rec, nil)
+		return
+	}
+
 	if errs := s.collections[collection].ValidateUpdate(data); errs != nil {
 		writeError(w, http.StatusUnprocessableEntity, apiError{Code: "VALIDATION_ERROR", Message: "validation failed", Fields: errs})
 		return
 	}
-	if err := s.checkReferences(r.Context(), collection, data); err != nil {
+	if err := s.checkReferences(r.Context(), s.db, collection, data); err != nil {
 		writeStoreError(w, s.logger, r, err)
 		return
 	}

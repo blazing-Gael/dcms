@@ -46,3 +46,25 @@ func (s *SchemaDefinition) InverseRelations(target string) []Inverse {
 	}
 	return out
 }
+
+// M2MInverse is a reverse many-to-many edge: some Source collection has an m2m
+// Field whose target is the collection being expanded. It lets a read walk a
+// many-to-many the other way, e.g. tags?expand=posts.
+type M2MInverse struct {
+	Source string // the collection holding the m2m field, e.g. "posts"
+	Field  string // that m2m field, e.g. "tags" (names the join table with Source)
+}
+
+// InverseM2M returns every many-to-many relation across the schema whose target
+// is the given collection — the reverse edges into it.
+func (s *SchemaDefinition) InverseM2M(target string) []M2MInverse {
+	var out []M2MInverse
+	for _, c := range s.Collections {
+		for _, f := range c.Fields {
+			if f.Type == TypeRelation && f.Many && f.Target == target {
+				out = append(out, M2MInverse{Source: c.Name, Field: f.Name})
+			}
+		}
+	}
+	return out
+}

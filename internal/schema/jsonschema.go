@@ -96,6 +96,24 @@ func relationRecordSchema(f FieldDef) obj {
 	}
 }
 
+// relationInputSchema renders a relation field as it appears in a create/update
+// body: the target id(s), or an inline record to create (nested write). The
+// inline shape references the target's own create-input component.
+func relationInputSchema(f FieldDef) obj {
+	inline := ref(pascal(f.Target) + "CreateInput")
+	if f.Many {
+		return obj{
+			"type":        "array",
+			"items":       obj{"anyOf": []any{obj{"type": "string"}, inline}},
+			"description": "target ids and/or inline records to create",
+		}
+	}
+	return obj{
+		"anyOf":       []any{obj{"type": "string"}, inline},
+		"description": "target id, or an inline record to create",
+	}
+}
+
 // recordSchema is the response shape: id + declared fields + audit columns, with
 // engine-managed fields marked readOnly.
 func (c CollectionDef) recordSchema() obj {
@@ -120,7 +138,11 @@ func (c CollectionDef) createInputSchema() obj {
 	props := obj{"id": obj{"type": "string"}}
 	var required []any
 	for _, f := range c.Fields {
-		props[f.Name] = fieldJSONSchema(f)
+		if f.Type == TypeRelation {
+			props[f.Name] = relationInputSchema(f)
+		} else {
+			props[f.Name] = fieldJSONSchema(f)
+		}
 		if f.Required && f.Default == nil {
 			required = append(required, f.Name)
 		}
@@ -137,7 +159,11 @@ func (c CollectionDef) createInputSchema() obj {
 func (c CollectionDef) updateInputSchema() obj {
 	props := obj{}
 	for _, f := range c.Fields {
-		props[f.Name] = fieldJSONSchema(f)
+		if f.Type == TypeRelation {
+			props[f.Name] = relationInputSchema(f)
+		} else {
+			props[f.Name] = fieldJSONSchema(f)
+		}
 	}
 	return obj{"type": "object", "properties": props, "additionalProperties": false}
 }

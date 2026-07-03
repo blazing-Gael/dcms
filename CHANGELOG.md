@@ -15,6 +15,14 @@ While on **0.x**, minor versions may include breaking changes.
 - Relation expansion via `?expand=`: belongs-to inlines the target object
   (batched on lists, no N+1), auto-derived has-many inverses and m2m links expand
   on single-record reads. m2m link sets are written/replaced transactionally.
+  Reverse many-to-many expansion (e.g. `tags?expand=posts`) and nested/multi-hop
+  expansion (e.g. `?expand=author.company`) are supported on single-record reads;
+  nested expansion is rejected on lists to avoid multi-level N+1.
+- Nested/inline writes: a relation may be given as an inline object (or, for
+  many-to-many, a list mixing ids and objects) and the related record(s) are
+  created and linked in the same request, transactionally — a nested write is
+  all-or-nothing. SDK inputs type this as `string | CreateTarget`; OpenAPI
+  documents it as an `anyOf`.
 - Two-layer referential integrity (ADR-0010): a gateway **validation layer**
   batch-checks every belongs-to and many-to-many reference before a write and
   returns a field-named `422` for anything that doesn't resolve (one `IN` query
