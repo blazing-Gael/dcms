@@ -21,6 +21,13 @@ While on **0.x**, minor versions may include breaking changes.
   streaming (or a redirect for direct-serving backends). A derived `url` is added
   to every media record. Configured via a `media:` block; the generated SDK gains
   a typed `media` client (`upload`/`replace`/`list`/`get`/`delete`/`rawUrl`).
+- S3-compatible media backend (`media.driver: s3`): a single adapter for MinIO,
+  SeaweedFS, Cloudflare R2, AWS S3, Backblaze B2, and the rest — selected by
+  config (`endpoint`, `region`, `bucket`, `force_path_style`, `public_base_url`)
+  with credentials supplied via env vars only (`DCMS_S3_ACCESS_KEY` /
+  `DCMS_S3_SECRET_KEY`). With `public_base_url` set, media URLs point straight at
+  the bucket/CDN (bytes bypass the server); otherwise they proxy through
+  `/__media/{id}/raw`. Pure-Go client — the single static binary is unchanged.
 - Relations: `belongs-to` (`type: relation, target: …` → string FK column) and
   `many-to-many` (`many: true` → engine-managed join table with a unique link
   index and full audit columns). Referenced by id; required relations enforced.

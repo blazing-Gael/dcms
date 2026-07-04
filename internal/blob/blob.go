@@ -42,8 +42,18 @@ type Store interface {
 // Config selects and locates a blob backend. Kept free of any dependency on the
 // config package so blob stays a leaf; the engine maps runtime config onto it.
 type Config struct {
-	Driver string // "local" (S3-compatible driver lands in M2)
-	Dir    string // base directory for the local driver
+	Driver string // "local" or "s3"
+	Dir    string // local: base directory
+
+	// S3-compatible driver (MinIO, SeaweedFS, Cloudflare R2, AWS S3, …).
+	Endpoint       string // host[:port], scheme optional — e.g. "s3.amazonaws.com", "localhost:9000"
+	Region         string // e.g. "us-east-1"; R2 uses "auto"
+	Bucket         string
+	AccessKey      string // supplied via env only (never a config file)
+	SecretKey      string // supplied via env only (never a config file)
+	UseSSL         *bool  // nil = infer from endpoint scheme (default TLS)
+	ForcePathStyle bool   // true for MinIO/SeaweedFS (path-style addressing)
+	PublicBaseURL  string // if set, URL() = this + "/" + key (public bucket / CDN); else proxied
 }
 
 // New constructs the blob store described by cfg.
@@ -51,7 +61,9 @@ func New(cfg Config) (Store, error) {
 	switch strings.ToLower(cfg.Driver) {
 	case "", "local":
 		return newLocal(cfg.Dir)
+	case "s3", "s3-compatible":
+		return newS3(cfg)
 	default:
-		return nil, fmt.Errorf("blob: unknown driver %q (supported: local; S3-compatible coming in M2)", cfg.Driver)
+		return nil, fmt.Errorf("blob: unknown driver %q (supported: local, s3)", cfg.Driver)
 	}
 }

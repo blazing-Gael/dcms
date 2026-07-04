@@ -147,7 +147,18 @@ func newDevCmd() *cobra.Command {
 				validateResponses = *cfg.Server.ValidateResponses
 			}
 
-			bs, err := blob.New(blob.Config{Driver: cfg.Media.Driver, Dir: cfg.Media.Dir})
+			bs, err := blob.New(blob.Config{
+				Driver:         cfg.Media.Driver,
+				Dir:            cfg.Media.Dir,
+				Endpoint:       cfg.Media.Endpoint,
+				Region:         cfg.Media.Region,
+				Bucket:         cfg.Media.Bucket,
+				AccessKey:      cfg.Media.AccessKey,
+				SecretKey:      cfg.Media.SecretKey,
+				UseSSL:         cfg.Media.UseSSL,
+				ForcePathStyle: cfg.Media.ForcePathStyle,
+				PublicBaseURL:  cfg.Media.PublicBaseURL,
+			})
 			if err != nil {
 				return err
 			}

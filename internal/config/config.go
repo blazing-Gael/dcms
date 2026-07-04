@@ -36,8 +36,7 @@ type Config struct {
 
 // Media configures the file/blob storage backing the media library (ADR-0011).
 type Media struct {
-	// Driver selects the blob backend: "local" (default). An S3-compatible
-	// driver lands in a later milestone; its credentials will be env-only.
+	// Driver selects the blob backend: "local" (default) or "s3".
 	Driver string `yaml:"driver"`
 	// Dir is the base directory for the local driver.
 	Dir string `yaml:"dir"`
@@ -46,6 +45,18 @@ type Media struct {
 	// AllowedContentTypes optionally restricts uploads (exact types, or a
 	// trailing-slash prefix like "image/"). Empty accepts any type.
 	AllowedContentTypes []string `yaml:"allowed_content_types"`
+
+	// S3-compatible driver settings (MinIO, SeaweedFS, Cloudflare R2, AWS S3, …).
+	Endpoint       string `yaml:"endpoint"`
+	Region         string `yaml:"region"`
+	Bucket         string `yaml:"bucket"`
+	UseSSL         *bool  `yaml:"use_ssl"`
+	ForcePathStyle bool   `yaml:"force_path_style"`
+	PublicBaseURL  string `yaml:"public_base_url"`
+	// AccessKey/SecretKey are credentials and therefore env-only — never read
+	// from the config file (the yaml:"-" enforces this; see the secrets rule).
+	AccessKey string `yaml:"-"`
+	SecretKey string `yaml:"-"`
 }
 
 // Database selects and locates the backing store.
@@ -138,6 +149,23 @@ func (c *Config) ApplyEnv() error {
 	}
 	if v, ok := os.LookupEnv("DCMS_MEDIA_DIR"); ok {
 		c.Media.Dir = v
+	}
+	// S3 credentials are env-only; endpoint/bucket/region may also be supplied via
+	// env for 12-factor deployments.
+	if v, ok := os.LookupEnv("DCMS_S3_ACCESS_KEY"); ok {
+		c.Media.AccessKey = v
+	}
+	if v, ok := os.LookupEnv("DCMS_S3_SECRET_KEY"); ok {
+		c.Media.SecretKey = v
+	}
+	if v, ok := os.LookupEnv("DCMS_S3_ENDPOINT"); ok {
+		c.Media.Endpoint = v
+	}
+	if v, ok := os.LookupEnv("DCMS_S3_BUCKET"); ok {
+		c.Media.Bucket = v
+	}
+	if v, ok := os.LookupEnv("DCMS_S3_REGION"); ok {
+		c.Media.Region = v
 	}
 	return nil
 }

@@ -29,9 +29,7 @@ server:
   # validate_responses: true
 
 media:
-  # Where uploaded files (the media library) are stored. "local" ships now; an
-  # S3-compatible driver (MinIO, SeaweedFS, Cloudflare R2, AWS S3, …) lands next,
-  # selected here with its credentials supplied via env vars only.
+  # Where uploaded files (the media library) are stored: "local" or "s3".
   driver: local
   # Base directory for the local driver (created if missing).
   dir: ./dcms-media
@@ -40,3 +38,19 @@ media:
   # Restrict uploads by content type — exact types or a trailing-slash prefix.
   # Omit to accept any type.
   # allowed_content_types: ["image/", "application/pdf"]
+
+  # ── S3-compatible storage (driver: s3) ────────────────────────────────────
+  # One driver reaches MinIO, SeaweedFS, Cloudflare R2, AWS S3, Backblaze B2, …
+  # Credentials are NEVER read from this file — set them via env vars:
+  #   DCMS_S3_ACCESS_KEY, DCMS_S3_SECRET_KEY
+  # (endpoint/bucket/region may also come from DCMS_S3_ENDPOINT/BUCKET/REGION).
+  #
+  # driver: s3
+  # endpoint: s3.amazonaws.com          # host[:port]; scheme optional
+  # region: us-east-1                    # Cloudflare R2 uses "auto"
+  # bucket: my-media
+  # force_path_style: false              # true for MinIO / SeaweedFS
+  # use_ssl: true                        # inferred from endpoint scheme if omitted
+  # public_base_url: https://cdn.example.com  # if set, media URLs point here (CDN /
+  #                                            # public bucket); else bytes proxy
+  #                                            # through /__media/{id}/raw
