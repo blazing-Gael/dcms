@@ -48,7 +48,7 @@ func (s *Server) handleMethodNotAllowed(w http.ResponseWriter, r *http.Request) 
 
 func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 	collection := chi.URLParam(r, "collection")
-	if !s.knownCollection(collection) {
+	if !s.routableCollection(collection) {
 		s.handleNotFound(w, r)
 		return
 	}
@@ -69,7 +69,7 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 	collection := chi.URLParam(r, "collection")
-	if !s.knownCollection(collection) {
+	if !s.routableCollection(collection) {
 		s.handleNotFound(w, r)
 		return
 	}
@@ -117,7 +117,7 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleGetOne(w http.ResponseWriter, r *http.Request) {
 	collection := chi.URLParam(r, "collection")
-	if !s.knownCollection(collection) {
+	if !s.routableCollection(collection) {
 		s.handleNotFound(w, r)
 		return
 	}
@@ -132,7 +132,7 @@ func (s *Server) handleGetOne(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
 	collection := chi.URLParam(r, "collection")
-	if !s.knownCollection(collection) {
+	if !s.routableCollection(collection) {
 		s.handleNotFound(w, r)
 		return
 	}
@@ -182,7 +182,7 @@ func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 	collection := chi.URLParam(r, "collection")
-	if !s.knownCollection(collection) {
+	if !s.routableCollection(collection) {
 		s.handleNotFound(w, r)
 		return
 	}

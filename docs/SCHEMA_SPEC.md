@@ -142,6 +142,21 @@ many-to-many relation's join rows always cascade when either endpoint is deleted
 (this is engine-managed and not configurable); `on_delete` therefore applies only
 to belongs-to relations.
 
+#### File / media (Phase 2)
+
+```yaml
+image:   { type: file }              # a single asset (belongs-to the media library)
+gallery: { type: file, many: true }  # a set of assets (a gallery)
+```
+
+A `file` field is sugar for a relation to the engine-managed `_media` collection
+(ADR-0011): it stores a media asset's id, expands to the media object (with a
+`url`), and honors `on_delete` like any belongs-to relation (default `restrict`,
+so an asset still in use can't be deleted). Assets are uploaded and managed
+through the `/__media` endpoints — you reference them by id — and the media
+library is browsable, replaceable, and answers "where is this used?" via reverse
+expansion. Do not set `target` on a file field; it is always `_media`.
+
 #### i18n (Phase 2)
 
 ```yaml

@@ -170,9 +170,8 @@ func (s *Server) findRelatedM2M(ctx context.Context, inv schema.M2MInverse, targ
 	if err != nil {
 		return nil, err
 	}
-	src := s.collections[inv.Source]
 	for _, r := range page.Data {
-		src.CoerceResponse(r)
+		s.coerceExpanded(inv.Source, r)
 	}
 	if page.Data == nil {
 		return []store.Record{}, nil
@@ -193,7 +192,7 @@ func (s *Server) expandBelongsTo(ctx context.Context, target string, rec store.R
 	if err != nil {
 		return err
 	}
-	s.collections[target].CoerceResponse(related)
+	s.coerceExpanded(target, related)
 	rec[field] = related
 	return nil
 }
@@ -207,9 +206,8 @@ func (s *Server) findRelated(ctx context.Context, inv schema.Inverse, parentID s
 	if err != nil {
 		return nil, err
 	}
-	src := s.collections[inv.Source]
 	for _, r := range page.Data {
-		src.CoerceResponse(r)
+		s.coerceExpanded(inv.Source, r)
 	}
 	if page.Data == nil {
 		return []store.Record{}, nil
@@ -258,10 +256,9 @@ func (s *Server) expandBelongsToBatch(ctx context.Context, target string, recs [
 	if err != nil {
 		return err
 	}
-	tcd := s.collections[target]
 	byID := make(map[string]store.Record, len(page.Data))
 	for _, tr := range page.Data {
-		tcd.CoerceResponse(tr)
+		s.coerceExpanded(target, tr)
 		if idv, ok := tr["id"].(string); ok {
 			byID[idv] = tr
 		}

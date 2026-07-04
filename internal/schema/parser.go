@@ -31,6 +31,9 @@ func Parse(src []byte) (*SchemaDefinition, error) {
 	if err := def.Validate(); err != nil {
 		return nil, err
 	}
+	// Finalize media support after validation: rewrite `file` fields to relations
+	// and inject the engine-managed _media collection (ADR-0011).
+	def.injectMedia()
 	return def, nil
 }
 

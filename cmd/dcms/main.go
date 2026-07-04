@@ -22,6 +22,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/blazing-Gael/dcms/internal/blob"
 	"github.com/blazing-Gael/dcms/internal/codegen"
 	"github.com/blazing-Gael/dcms/internal/config"
 	"github.com/blazing-Gael/dcms/internal/engine"
@@ -146,10 +147,20 @@ func newDevCmd() *cobra.Command {
 				validateResponses = *cfg.Server.ValidateResponses
 			}
 
+			bs, err := blob.New(blob.Config{Driver: cfg.Media.Driver, Dir: cfg.Media.Dir})
+			if err != nil {
+				return err
+			}
+
 			logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
 			fmt.Printf("dcms dev — %d collection(s) from %s\n", len(def.Collections), cfg.Schema)
 			fmt.Printf("listening on http://localhost:%d  (Ctrl+C to stop)\n", cfg.Server.Port)
-			return engine.Serve(ctx, def, db, fmt.Sprintf(":%d", cfg.Server.Port), logger, gateway.Options{ValidateResponses: validateResponses})
+			return engine.Serve(ctx, def, db, fmt.Sprintf(":%d", cfg.Server.Port), logger, gateway.Options{
+				ValidateResponses:   validateResponses,
+				Blob:                bs,
+				MaxUploadBytes:      cfg.Media.MaxUploadBytes,
+				AllowedContentTypes: cfg.Media.AllowedContentTypes,
+			})
 		},
 	}
 	cmd.Flags().String("schema", "./dcms.schema.yaml", "path to the schema file")

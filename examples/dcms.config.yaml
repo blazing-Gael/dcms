@@ -27,3 +27,16 @@ server:
   # set it explicitly here to override. (Response *shaping* — e.g. booleans as
   # true/false — always happens regardless of this setting.)
   # validate_responses: true
+
+media:
+  # Where uploaded files (the media library) are stored. "local" ships now; an
+  # S3-compatible driver (MinIO, SeaweedFS, Cloudflare R2, AWS S3, …) lands next,
+  # selected here with its credentials supplied via env vars only.
+  driver: local
+  # Base directory for the local driver (created if missing).
+  dir: ./dcms-media
+  # Cap on a single upload in bytes; omit for the 32 MiB default.
+  # max_upload_bytes: 33554432
+  # Restrict uploads by content type — exact types or a trailing-slash prefix.
+  # Omit to accept any type.
+  # allowed_content_types: ["image/", "application/pdf"]

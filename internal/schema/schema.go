@@ -21,6 +21,7 @@ const (
 	TypeEnum     FieldType = "enum"
 	TypeJSON     FieldType = "json"
 	TypeRelation FieldType = "relation"
+	TypeFile     FieldType = "file" // sugar: a relation to the engine's _media collection
 
 	// TODO(phase-2): i18n
 	// TODO(phase-3): media, geo, computed

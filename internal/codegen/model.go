@@ -44,6 +44,10 @@ type Field struct {
 	Relation bool
 	Many     bool   // true: many-to-many (a list); false: belongs-to (a single ref)
 	Target   string // the target's generated type name (PascalCase), e.g. "Users"
+	// NoInlineCreate suppresses the "or an inline object to create" input variant.
+	// Set for media relations: a media asset is created by uploading bytes, never
+	// as an inline JSON object, so its input is only the id.
+	NoInlineCreate bool
 }
 
 // Collection is one collection's three generated shapes plus its names.
@@ -53,6 +57,11 @@ type Collection struct {
 	Record []Field
 	Create []Field
 	Update []Field
+	// Reserved marks an engine-managed collection (a leading underscore, e.g.
+	// _media). Its record type is still generated (relations expand to it), but it
+	// has no JSON create/update inputs and no generic CRUD resource — it's served
+	// through dedicated endpoints (media upload/serve).
+	Reserved bool
 }
 
 // Model is the full neutral input to a backend.
@@ -101,6 +110,7 @@ func fieldOf(f schema.FieldDef, optional bool) Field {
 		fld.Relation = true
 		fld.Many = f.Many
 		fld.Target = pascal(f.Target)
+		fld.NoInlineCreate = f.Target == schema.MediaCollection
 	}
 	return fld
 }
@@ -112,7 +122,7 @@ func BuildModel(def *schema.SchemaDefinition) Model {
 		BasePath:        def.BaseURL(),
 	}
 	for _, c := range def.Collections {
-		coll := Collection{Name: c.Name, Type: pascal(c.Name)}
+		coll := Collection{Name: c.Name, Type: pascal(c.Name), Reserved: strings.HasPrefix(c.Name, "_")}
 
 		// Record (response): id + audit columns are engine-managed → readonly.
 		// A declared field is optional in the response when it is neither

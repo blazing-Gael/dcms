@@ -13,7 +13,7 @@ var nameRe = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
 // reservedCollections are names DCMS uses for internal endpoints/tables.
 var reservedCollections = map[string]bool{
 	"_schema": true, "_dashboards": true, "_users": true,
-	"_roles": true, "_audit": true, "_jobs": true,
+	"_roles": true, "_audit": true, "_jobs": true, "_media": true,
 }
 
 // reservedFields are engine-managed columns; a schema must not declare them.
@@ -99,6 +99,9 @@ func (s *SchemaDefinition) Validate() error {
 				// ok
 			case f.Type == TypeRelation:
 				// Relation specifics validated just below.
+			case f.Type == TypeFile:
+				// A file is sugar for a relation to _media, finalized after
+				// validation. Specifics validated just below.
 			default:
 				if phase, ok := deferredTypes[f.Type]; ok {
 					add("%s: type %q is not supported until phase %s", fpath, f.Type, phase)
@@ -117,19 +120,25 @@ func (s *SchemaDefinition) Validate() error {
 				case !allCols[f.Target]:
 					add("%s: relation target %q is not a declared collection", fpath, f.Target)
 				}
+			}
 
-				// on_delete applies only to belongs-to. A many-to-many join table
-				// always cascades its own link rows (engine-managed, not tunable).
-				if f.OnDelete != "" {
-					canonical, ok := normalizeOnDelete(f.OnDelete)
-					switch {
-					case !ok:
-						add("%s: invalid on_delete %q (want restrict, cascade, or set null)", fpath, f.OnDelete)
-					case f.Many:
-						add("%s: on_delete is not valid on a many-to-many relation (join links always cascade)", fpath)
-					case canonical == "set null" && f.Required:
-						add("%s: on_delete: set null requires the relation to be nullable (remove 'required')", fpath)
-					}
+			// A file field's target is the implicit _media collection.
+			if f.Type == TypeFile && f.Target != "" {
+				add("%s: a file field targets the built-in media library implicitly; do not set 'target'", fpath)
+			}
+
+			// on_delete applies to belongs-to relations and single file fields. A
+			// many-to-many join table always cascades its own link rows
+			// (engine-managed, not tunable).
+			if (f.Type == TypeRelation || f.Type == TypeFile) && f.OnDelete != "" {
+				canonical, ok := normalizeOnDelete(f.OnDelete)
+				switch {
+				case !ok:
+					add("%s: invalid on_delete %q (want restrict, cascade, or set null)", fpath, f.OnDelete)
+				case f.Many:
+					add("%s: on_delete is not valid on a many-to-many relation (join links always cascade)", fpath)
+				case canonical == "set null" && f.Required:
+					add("%s: on_delete: set null requires the relation to be nullable (remove 'required')", fpath)
 				}
 			}
 

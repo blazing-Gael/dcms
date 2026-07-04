@@ -9,6 +9,18 @@ While on **0.x**, minor versions may include breaking changes.
 ## [Unreleased]
 
 ### Added
+- Media library (ADR-0011): a `file` field type (`file` / `file, many: true`)
+  that is sugar for a relation to an engine-managed `_media` collection, so file
+  assets reuse the whole relation stack — reference, expand, referential
+  integrity, `on_delete`, and typed SDK output — and answer "where is this used?"
+  via reverse expansion. Bytes live behind a pluggable `blob.Store` (local-disk
+  adapter now; one S3-compatible adapter — MinIO, SeaweedFS, Cloudflare R2, AWS
+  S3 — lands next behind the same interface). Endpoints under `/__media`: upload
+  (multipart), replace-in-place (keeps the id and every reference), list/filter
+  (the library), metadata edit, delete (row + bytes), and range-aware raw
+  streaming (or a redirect for direct-serving backends). A derived `url` is added
+  to every media record. Configured via a `media:` block; the generated SDK gains
+  a typed `media` client (`upload`/`replace`/`list`/`get`/`delete`/`rawUrl`).
 - Relations: `belongs-to` (`type: relation, target: …` → string FK column) and
   `many-to-many` (`many: true` → engine-managed join table with a unique link
   index and full audit columns). Referenced by id; required relations enforced.

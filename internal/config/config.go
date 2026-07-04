@@ -31,6 +31,21 @@ type Config struct {
 	Schema   string   `yaml:"schema"`
 	Database Database `yaml:"database"`
 	Server   Server   `yaml:"server"`
+	Media    Media    `yaml:"media"`
+}
+
+// Media configures the file/blob storage backing the media library (ADR-0011).
+type Media struct {
+	// Driver selects the blob backend: "local" (default). An S3-compatible
+	// driver lands in a later milestone; its credentials will be env-only.
+	Driver string `yaml:"driver"`
+	// Dir is the base directory for the local driver.
+	Dir string `yaml:"dir"`
+	// MaxUploadBytes caps a single upload; 0 uses the engine default (32 MiB).
+	MaxUploadBytes int64 `yaml:"max_upload_bytes"`
+	// AllowedContentTypes optionally restricts uploads (exact types, or a
+	// trailing-slash prefix like "image/"). Empty accepts any type.
+	AllowedContentTypes []string `yaml:"allowed_content_types"`
 }
 
 // Database selects and locates the backing store.
@@ -65,6 +80,10 @@ func Default() Config {
 		},
 		Server: Server{
 			Port: 3000,
+		},
+		Media: Media{
+			Driver: "local",
+			Dir:    "./dcms-media",
 		},
 	}
 }
@@ -116,6 +135,9 @@ func (c *Config) ApplyEnv() error {
 			return fmt.Errorf("DCMS_PORT %q: not a number", v)
 		}
 		c.Server.Port = port
+	}
+	if v, ok := os.LookupEnv("DCMS_MEDIA_DIR"); ok {
+		c.Media.Dir = v
 	}
 	return nil
 }

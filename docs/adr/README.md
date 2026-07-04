@@ -27,3 +27,4 @@ future selves.
 | [0008](./0008-contracts-derive-from-schema.md) | Validators, OpenAPI, and SDKs all derive from the schema | Accepted |
 | [0009](./0009-layered-configuration.md) | Layered config: flags > env > file > defaults; one artifact per instance | Accepted |
 | [0010](./0010-two-layer-referential-integrity.md) | Two-layer referential integrity: app-level validation + DB-FK protection where supported | Accepted |
+| [0011](./0011-media-and-blob-storage.md) | Media as a relation to an engine-managed `_media` collection; bytes behind a pluggable blob store | Accepted |

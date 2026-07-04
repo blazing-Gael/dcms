@@ -10,13 +10,23 @@ package gateway
 import (
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
+	"github.com/blazing-Gael/dcms/internal/blob"
 	"github.com/blazing-Gael/dcms/internal/schema"
 	"github.com/blazing-Gael/dcms/internal/store"
 )
+
+// mediaBasePath is where the media library's byte-path endpoints live. It is
+// outside the collection API (/api/v1) because media's write path is bytes, not
+// JSON (ADR-0011).
+const mediaBasePath = "/__media"
+
+// defaultMaxUploadBytes caps a single upload when none is configured (32 MiB).
+const defaultMaxUploadBytes = 32 << 20
 
 // engineColTypes are the columns the engine adds to every collection; they are
 // valid for filtering/sorting even though they aren't declared in the schema.
@@ -36,6 +46,15 @@ type Options struct {
 	// is best enabled in dev/CI (see ADR-0008). Off by default so production
 	// pays nothing and never fails a read over a stored-data quirk.
 	ValidateResponses bool
+
+	// Blob is the byte store backing the media library (ADR-0011). When nil, the
+	// /__media endpoints report 503 — media is unconfigured.
+	Blob blob.Store
+	// MaxUploadBytes caps a single media upload; 0 uses defaultMaxUploadBytes.
+	MaxUploadBytes int64
+	// AllowedContentTypes optionally restricts uploads (exact matches, or a
+	// trailing-slash prefix like "image/"). Empty means any type is accepted.
+	AllowedContentTypes []string
 }
 
 // Server wires a parsed schema and a storage adapter into an http.Handler.
@@ -82,6 +101,17 @@ func (s *Server) Handler() http.Handler {
 	r.Get("/__openapi", s.handleOpenAPI)
 	r.Get("/__docs", s.handleDocs)
 
+	// Media library (byte path) — outside the collection API (ADR-0011).
+	r.Route(mediaBasePath, func(r chi.Router) {
+		r.Get("/", s.handleMediaList)
+		r.Post("/", s.handleMediaUpload)
+		r.Get("/{id}", s.handleMediaGet)
+		r.Post("/{id}", s.handleMediaReplace)
+		r.Patch("/{id}", s.handleMediaPatch)
+		r.Delete("/{id}", s.handleMediaDelete)
+		r.Get("/{id}/raw", s.handleMediaRaw)
+	})
+
 	// Virtual collection routes under the configured base URL.
 	r.Route(s.baseURL(), func(r chi.Router) {
 		r.Get("/{collection}", s.handleList)
@@ -104,6 +134,14 @@ func (s *Server) baseURL() string {
 func (s *Server) knownCollection(name string) bool {
 	_, ok := s.collections[name]
 	return ok
+}
+
+// routableCollection reports whether a name is reachable through the public
+// collection API. Engine-managed collections (a leading underscore, e.g. _media)
+// exist for expansion, migration, and typing but are not JSON-CRUD routable —
+// _media is served through its own byte-path endpoints instead (ADR-0011).
+func (s *Server) routableCollection(name string) bool {
+	return s.knownCollection(name) && !strings.HasPrefix(name, "_")
 }
 
 // fieldType returns the schema type of a column (declared field or engine column)

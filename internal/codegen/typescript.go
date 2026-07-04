@@ -34,12 +34,18 @@ func tsType(f Field, record bool) string {
 				// Present only when expanded; the array holds target objects.
 				return f.Target + "[]"
 			}
+			if f.NoInlineCreate {
+				return "string[]" // media: ids only (created via upload)
+			}
 			// input: a list of target ids and/or inline records to create.
 			return "(string | Create" + f.Target + ")[]"
 		}
 		// belongs-to
 		if record {
 			return "string | " + f.Target // the id, or the expanded object
+		}
+		if f.NoInlineCreate {
+			return "string" // media: id only (created via upload)
 		}
 		return "string | Create" + f.Target // input: the id, or an inline record
 	}
@@ -86,6 +92,7 @@ type tsColl struct {
 	Record     []tsField
 	Create     []tsField
 	Update     []tsField
+	Reserved   bool
 }
 
 type tsData struct {
@@ -113,6 +120,7 @@ func (tsBackend) Generate(m Model) (string, error) {
 			Record:     toTSFields(c.Record, true),
 			Create:     toTSFields(c.Create, false),
 			Update:     toTSFields(c.Update, false),
+			Reserved:   c.Reserved,
 		})
 	}
 
@@ -296,7 +304,7 @@ export interface {{.Type}} {
   {{if .ReadOnly}}readonly {{end}}{{.Name}}{{if .Optional}}?{{end}}: {{.Type}};
 {{- end}}
 }
-
+{{if not .Reserved}}
 export interface Create{{.Type}} {
 {{- range .Create}}
   {{.Name}}{{if .Optional}}?{{end}}: {{.Type}};
@@ -308,13 +316,89 @@ export interface Update{{.Type}} {
   {{.Name}}{{if .Optional}}?{{end}}: {{.Type}};
 {{- end}}
 }
-{{end}}
+{{end}}{{end}}
+// ─── Media library ──────────────────────────────────────────────────────────
+const MEDIA_PATH = "/__media";
+
+export interface MediaUploadInput {
+  file: Blob | File;
+  filename?: string;
+  alt?: string;
+  title?: string;
+  caption?: string;
+}
+
+export interface MediaResource {
+  list(options?: FindOptions<Media>): Promise<ListResult<Media>>;
+  get(id: string): Promise<Media>;
+  upload(input: MediaUploadInput): Promise<Media>;
+  /** Replace the bytes of an existing asset, keeping its id and all references. */
+  replace(id: string, file: Blob | File, filename?: string): Promise<Media>;
+  /** Edit metadata only (alt/title/caption/filename). */
+  update(id: string, meta: Partial<Pick<Media, "alt" | "title" | "caption" | "filename">>): Promise<Media>;
+  delete(id: string): Promise<void>;
+  /** The direct URL to an asset's bytes (for <img src>, downloads, etc.). */
+  rawUrl(id: string): string;
+}
+
+function mediaClient(cfg: Config): MediaResource {
+  const abs = (p: string) => cfg.origin + MEDIA_PATH + p;
+  const parse = async (res: Response): Promise<any> => {
+    if (res.status === 204) return undefined;
+    let body: any = undefined;
+    try { body = await res.json(); } catch { /* empty */ }
+    if (!res.ok) {
+      const e = (body && body.error) || {};
+      throw new DcmsError(e.message || res.statusText, e.code || "ERROR", res.status, e.fields);
+    }
+    return body;
+  };
+  const send = async (path: string, file: Blob | File, meta: Record<string, string | undefined>): Promise<Media> => {
+    const fd = new FormData();
+    fd.append("file", file, meta.filename || undefined);
+    for (const k of ["alt", "title", "caption"]) {
+      const v = meta[k];
+      if (v != null) fd.append(k, v);
+    }
+    const res = await cfg.fetch(abs(path), { method: "POST", headers: await resolveHeaders(cfg.headers), body: fd });
+    return (await parse(res)).data as Media;
+  };
+  return {
+    async list(options: FindOptions<Media> = {}): Promise<ListResult<Media>> {
+      const res = await cfg.fetch(abs("/" + encodeQuery(options)), { method: "GET", headers: await resolveHeaders(cfg.headers) });
+      return (await parse(res)) as ListResult<Media>;
+    },
+    async get(id: string): Promise<Media> {
+      const res = await cfg.fetch(abs("/" + encodeURIComponent(id)), { method: "GET", headers: await resolveHeaders(cfg.headers) });
+      return (await parse(res)).data as Media;
+    },
+    async upload(input: MediaUploadInput): Promise<Media> {
+      return send("/", input.file, { filename: input.filename, alt: input.alt, title: input.title, caption: input.caption });
+    },
+    async replace(id: string, file: Blob | File, filename?: string): Promise<Media> {
+      return send("/" + encodeURIComponent(id), file, { filename });
+    },
+    async update(id: string, meta: Partial<Pick<Media, "alt" | "title" | "caption" | "filename">>): Promise<Media> {
+      const headers = { ...(await resolveHeaders(cfg.headers)), "Content-Type": "application/json" };
+      const res = await cfg.fetch(abs("/" + encodeURIComponent(id)), { method: "PATCH", headers, body: JSON.stringify(meta) });
+      return (await parse(res)).data as Media;
+    },
+    async delete(id: string): Promise<void> {
+      await parse(await cfg.fetch(abs("/" + encodeURIComponent(id)), { method: "DELETE", headers: await resolveHeaders(cfg.headers) }));
+    },
+    rawUrl(id: string): string {
+      return cfg.origin + MEDIA_PATH + "/" + encodeURIComponent(id) + "/raw";
+    },
+  };
+}
+
 // ─── Client ─────────────────────────────────────────────────────────────────
 export interface DcmsClient {
   readonly contractVersion: string;
-{{- range .Collections}}
+  media: MediaResource;
+{{- range .Collections}}{{if not .Reserved}}
   {{.Collection}}: Resource<{{.Type}}, Create{{.Type}}, Update{{.Type}}>;
-{{- end}}
+{{- end}}{{- end}}
 }
 
 export function createClient(options: ClientOptions): DcmsClient {
@@ -325,9 +409,10 @@ export function createClient(options: ClientOptions): DcmsClient {
   };
   return {
     contractVersion: CONTRACT_VERSION,
-{{- range .Collections}}
+    media: mediaClient(cfg),
+{{- range .Collections}}{{if not .Reserved}}
     {{.Collection}}: resource<{{.Type}}, Create{{.Type}}, Update{{.Type}}>(cfg, "{{.Collection}}"),
-{{- end}}
+{{- end}}{{- end}}
   };
 }
 `

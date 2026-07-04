@@ -100,6 +100,14 @@ func relationRecordSchema(f FieldDef) obj {
 // body: the target id(s), or an inline record to create (nested write). The
 // inline shape references the target's own create-input component.
 func relationInputSchema(f FieldDef) obj {
+	// Media assets are created by uploading bytes, never as an inline JSON object,
+	// so a file/media relation's input is only the id(s).
+	if f.Target == MediaCollection {
+		if f.Many {
+			return obj{"type": "array", "items": obj{"type": "string"}, "description": "media asset ids"}
+		}
+		return obj{"type": "string", "description": "media asset id"}
+	}
 	inline := ref(pascal(f.Target) + "CreateInput")
 	if f.Many {
 		return obj{

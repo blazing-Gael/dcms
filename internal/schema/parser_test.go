@@ -44,8 +44,12 @@ func TestParse_ShorthandAndFullForm(t *testing.T) {
 	if def.Version != "1" || def.Meta.Name != "shop" || def.Meta.BaseURL != "/api/v1" {
 		t.Fatalf("meta not parsed: %#v", def.Meta)
 	}
-	if len(def.Collections) != 1 {
-		t.Fatalf("collections: got %d, want 1", len(def.Collections))
+	// One user collection, plus the engine-injected _media collection (ADR-0011).
+	if len(def.Collections) != 2 {
+		t.Fatalf("collections: got %d, want 2 (products + _media)", len(def.Collections))
+	}
+	if last := def.Collections[len(def.Collections)-1]; last.Name != MediaCollection {
+		t.Fatalf("_media should be injected last, got %q", last.Name)
 	}
 	col := def.Collections[0]
 	if col.Name != "products" || len(col.Fields) != 4 {

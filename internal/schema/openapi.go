@@ -1,5 +1,7 @@
 package schema
 
+import "strings"
+
 // OpenAPI builds an OpenAPI 3.1 document from the schema. Every path, parameter,
 // request body, and response is derived from the parsed schema, so the spec can
 // never drift from the live API. info.version carries the contract version.
@@ -11,6 +13,14 @@ func (s *SchemaDefinition) OpenAPI() obj {
 	for _, c := range s.Collections {
 		name := pascal(c.Name)
 		schemas[name] = c.recordSchema()
+
+		// Engine-managed collections (e.g. _media) expose their record type — it's
+		// referenced by relations — but have no public JSON CRUD routes or input
+		// bodies; they're served through dedicated endpoints (see mediaPaths).
+		if strings.HasPrefix(c.Name, "_") {
+			continue
+		}
+
 		schemas[name+"CreateInput"] = c.createInputSchema()
 		schemas[name+"UpdateInput"] = c.updateInputSchema()
 
@@ -23,6 +33,11 @@ func (s *SchemaDefinition) OpenAPI() obj {
 			"patch":  updateOp(c.Name, name),
 			"delete": deleteOp(c.Name, name),
 		}
+	}
+
+	// The media library's byte-path endpoints (ADR-0011).
+	for p, op := range mediaPaths() {
+		paths[p] = op
 	}
 
 	title := s.Meta.Name
@@ -163,6 +178,82 @@ func updateOp(collection, name string) obj {
 		},
 	}
 }
+
+// mediaPaths documents the media library's byte-path endpoints (ADR-0011). They
+// live outside the collection API because their write path is multipart bytes.
+func mediaPaths() obj {
+	m := mediaData()
+	notFound := jsonResponse("not found", errorEnvelope())
+	upload := obj{"required": true, "content": obj{"multipart/form-data": obj{"schema": obj{
+		"type": "object",
+		"properties": obj{
+			"file":    obj{"type": "string", "format": "binary"},
+			"alt":     obj{"type": "string"},
+			"title":   obj{"type": "string"},
+			"caption": obj{"type": "string"},
+		},
+		"required": []any{"file"},
+	}}}}
+	return obj{
+		"/__media": obj{
+			"get": obj{
+				"summary":    "List media assets (the library)",
+				"parameters": listParams(),
+				"responses":  obj{"200": jsonResponse("a page of media", listEnvelope("Media"))},
+			},
+			"post": obj{
+				"summary":     "Upload a new media asset",
+				"requestBody": upload,
+				"responses": obj{
+					"201": jsonResponse("created", dataEnvelope("Media")),
+					"413": jsonResponse("upload too large", errorEnvelope()),
+					"415": jsonResponse("unsupported content type", errorEnvelope()),
+				},
+			},
+		},
+		"/__media/{id}": obj{
+			"get": obj{
+				"summary":    "Get a media asset (use ?expand=<collection> for where-used)",
+				"parameters": []any{idParam(), expandParam()},
+				"responses":  obj{"200": m, "404": notFound},
+			},
+			"post": obj{
+				"summary":     "Replace an asset's file, keeping its id and all references",
+				"parameters":  []any{idParam()},
+				"requestBody": upload,
+				"responses":   obj{"200": m, "404": notFound},
+			},
+			"patch": obj{
+				"summary":    "Edit media metadata (alt/title/caption/filename)",
+				"parameters": []any{idParam()},
+				"responses":  obj{"200": m, "404": notFound},
+			},
+			"delete": obj{
+				"summary":    "Delete a media asset and its bytes",
+				"parameters": []any{idParam()},
+				"responses": obj{
+					"204": obj{"description": "deleted"},
+					"404": notFound,
+					"409": jsonResponse("still referenced by records", errorEnvelope()),
+				},
+			},
+		},
+		"/__media/{id}/raw": obj{
+			"get": obj{
+				"summary":    "Stream the asset's bytes (supports HTTP Range)",
+				"parameters": []any{idParam()},
+				"responses": obj{
+					"200": obj{"description": "the file bytes", "content": obj{"application/octet-stream": obj{"schema": obj{"type": "string", "format": "binary"}}}},
+					"302": obj{"description": "redirect to the object URL (for S3-backed stores)"},
+					"404": notFound,
+				},
+			},
+		},
+	}
+}
+
+// mediaData is the single-media success response, reused across media ops.
+func mediaData() obj { return jsonResponse("the media asset", dataEnvelope("Media")) }
 
 func deleteOp(collection, name string) obj {
 	return obj{
