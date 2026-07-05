@@ -30,6 +30,11 @@ const (
 	StartsWith Op = "starts_with"
 	In         Op = "in"
 	NotIn      Op = "nin"
+	// IsNull / NotNull test a column against SQL NULL (the Value is ignored).
+	// Used by the gateway's lifecycle filtering (ADR-0012) and available for any
+	// nullable field.
+	IsNull  Op = "is_null"
+	NotNull Op = "not_null"
 )
 
 // Filter represents a single field-level filter condition.

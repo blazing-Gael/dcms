@@ -6,6 +6,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/blazing-Gael/dcms/internal/blob"
@@ -79,8 +80,9 @@ func TestMedia_UploadServeReferenceExpand(t *testing.T) {
 	if rec["content_type"] != "image/png" {
 		t.Errorf("content_type = %#v, want image/png", rec["content_type"])
 	}
-	if rec["url"] != "/__media/"+id+"/raw" {
-		t.Errorf("derived url = %#v", rec["url"])
+	// URL is the proxy route, version-stamped so a replace busts caches.
+	if u, _ := rec["url"].(string); !strings.HasPrefix(u, "/__media/"+id+"/raw?v=") {
+		t.Errorf("derived url = %#v, want /__media/%s/raw?v=…", rec["url"], id)
 	}
 	if size, _ := rec["size"].(float64); int(size) != len(png) {
 		t.Errorf("size = %#v, want %d", rec["size"], len(png))
@@ -108,8 +110,8 @@ func TestMedia_UploadServeReferenceExpand(t *testing.T) {
 	if !ok || img["id"] != id {
 		t.Fatalf("expanded image should be the media object, got %#v", dataObj(t, b)["image"])
 	}
-	if img["url"] != "/__media/"+id+"/raw" {
-		t.Errorf("expanded media should carry url, got %#v", img["url"])
+	if u, _ := img["url"].(string); !strings.HasPrefix(u, "/__media/"+id+"/raw?v=") {
+		t.Errorf("expanded media should carry a versioned url, got %#v", img["url"])
 	}
 
 	// Where-used: from the media asset, expand the products referencing it.
@@ -145,6 +147,41 @@ func TestMedia_ReplaceKeepsIdAndReferences(t *testing.T) {
 	resp.Body.Close()
 	if string(got) != "version two" {
 		t.Fatalf("replaced bytes = %q, want 'version two'", got)
+	}
+}
+
+func TestMedia_CacheHeadersAndVersionedURL(t *testing.T) {
+	root := mediaServer(t, mediaProductSchema)
+	media := root + "/__media"
+
+	_, b := uploadFile(t, media, "file", "a.txt", "text/plain", []byte("one"))
+	rec := dataObj(t, b)
+	id := rec["id"].(string)
+	url1, _ := rec["url"].(string)
+
+	// The raw endpoint sets an ETag (from the checksum) and Cache-Control.
+	resp, _ := http.Get(media + "/" + id + "/raw")
+	etag := resp.Header.Get("ETag")
+	resp.Body.Close()
+	if etag == "" || resp.Header.Get("Cache-Control") == "" {
+		t.Fatalf("raw should set ETag + Cache-Control, got etag=%q cc=%q", etag, resp.Header.Get("Cache-Control"))
+	}
+
+	// A conditional request with the matching ETag → 304 Not Modified.
+	req, _ := http.NewRequest(http.MethodGet, media+"/"+id+"/raw", nil)
+	req.Header.Set("If-None-Match", etag)
+	cond, _ := http.DefaultClient.Do(req)
+	cond.Body.Close()
+	if cond.StatusCode != http.StatusNotModified {
+		t.Fatalf("If-None-Match should give 304, got %d", cond.StatusCode)
+	}
+
+	// Replacing the bytes changes the checksum → a different versioned URL, so
+	// caches holding the old bytes are busted.
+	_, b = uploadFile(t, media+"/"+id, "file", "a.txt", "text/plain", []byte("two"))
+	url2, _ := dataObj(t, b)["url"].(string)
+	if url2 == url1 || url2 == "" {
+		t.Fatalf("replace should change the versioned url: url1=%q url2=%q", url1, url2)
 	}
 }
 

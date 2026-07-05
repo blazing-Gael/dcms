@@ -137,6 +137,15 @@ func (c CollectionDef) recordSchema() obj {
 	props["updated_at"] = readOnlyDateTime()
 	props["created_by"] = readOnlyString()
 	props["updated_by"] = readOnlyString()
+	// Lifecycle-managed columns (ADR-0012), readonly, for whichever directives the
+	// collection opted into.
+	if c.Publishing {
+		props[LifecycleStatus] = obj{"type": "string", "enum": []any{StatusDraft, StatusPublished, StatusArchived}, "readOnly": true}
+		props[LifecyclePublishedAt] = readOnlyDateTime()
+	}
+	if c.SoftDelete {
+		props[LifecycleDeletedAt] = readOnlyDateTime()
+	}
 	return obj{"type": "object", "properties": props}
 }
 

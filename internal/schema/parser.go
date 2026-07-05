@@ -128,10 +128,18 @@ func toCollection(name string, node *yaml.Node) (CollectionDef, error) {
 			if err != nil {
 				return col, fmt.Errorf("indexes: %w", err)
 			}
+		case "publishing":
+			if err := e.Val.Decode(&col.Publishing); err != nil {
+				return col, fmt.Errorf("publishing: %w", err)
+			}
+		case "soft_delete":
+			if err := e.Val.Decode(&col.SoftDelete); err != nil {
+				return col, fmt.Errorf("soft_delete: %w", err)
+			}
 		default:
-			// Phase 2+ directives (access, hooks, vectorize, draft, i18n,
-			// soft_delete, schedule) are recognised but skipped in Phase 1.
-			// TODO(phase-2): parse access, vectorize, draft, i18n, soft_delete.
+			// Phase 2+ directives (access, hooks, vectorize, i18n, schedule) are
+			// recognised but skipped in Phase 1.
+			// TODO(phase-2): parse access, vectorize, i18n.
 			// TODO(phase-3): parse hooks, schedule.
 		}
 	}

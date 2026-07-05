@@ -17,10 +17,13 @@ var reservedCollections = map[string]bool{
 }
 
 // reservedFields are engine-managed columns; a schema must not declare them.
-// They are added automatically during compilation (see translate.go).
+// They are added automatically during compilation (see translate.go). The
+// leading-underscore lifecycle columns are added only when a collection opts into
+// the matching directive (ADR-0012), but are reserved unconditionally.
 var reservedFields = map[string]bool{
 	"id": true, "created_at": true, "updated_at": true,
 	"created_by": true, "updated_by": true,
+	LifecycleStatus: true, LifecyclePublishedAt: true, LifecycleDeletedAt: true,
 }
 
 // phase1Types are the field types implemented in Phase 1.
@@ -72,8 +75,16 @@ func (s *SchemaDefinition) Validate() error {
 		}
 		seenCol[col.Name] = true
 
-		// Column names available to indexes: declared fields + engine columns.
+		// Column names available to indexes: declared fields + engine columns
+		// (including the lifecycle columns this collection opts into).
 		known := map[string]bool{"id": true, "created_at": true, "updated_at": true, "created_by": true, "updated_by": true}
+		if col.Publishing {
+			known[LifecycleStatus] = true
+			known[LifecyclePublishedAt] = true
+		}
+		if col.SoftDelete {
+			known[LifecycleDeletedAt] = true
+		}
 
 		seenField := make(map[string]bool)
 		for _, f := range col.Fields {

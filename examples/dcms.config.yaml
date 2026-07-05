@@ -54,3 +54,12 @@ media:
   # public_base_url: https://cdn.example.com  # if set, media URLs point here (CDN /
   #                                            # public bucket); else bytes proxy
   #                                            # through /__media/{id}/raw
+
+content:
+  # Record lifecycle (ADR-0012). Collections opt into `publishing:` / `soft_delete:`
+  # in the SCHEMA (not here). The preview token that unlocks viewing drafts /
+  # scheduled / archived / trashed content is a SECRET and so is env-only — never
+  # written in this file. Set it in the environment:
+  #   DCMS_PREVIEW_TOKEN=<a long random string>
+  # Then send it as the `X-DCMS-Preview` header (or ?preview_token=) with
+  # ?status= / ?include_deleted= to widen the view. Unset ⇒ public reads only.

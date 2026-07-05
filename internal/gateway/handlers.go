@@ -6,9 +6,11 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/blazing-Gael/dcms/internal/schema"
 	"github.com/blazing-Gael/dcms/internal/store"
 )
 
@@ -58,6 +60,8 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, s.logger, r, err)
 		return
 	}
+	// Hide non-live / trashed records unless the request's view widens (ADR-0012).
+	q.Filters = append(q.Filters, s.lifecycleFilters(collection, visibilityFromContext(r.Context()))...)
 
 	page, err := s.db.Find(r.Context(), q)
 	if err != nil {
@@ -79,6 +83,7 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnprocessableEntity, apiError{Code: "VALIDATION_ERROR", Message: err.Error()})
 		return
 	}
+	stripManagedFields(data) // _status/_published_at/_deleted_at change only via transitions
 
 	// Inline related objects → create the whole tree transactionally.
 	if s.hasInlineRelations(collection, data) {
@@ -127,6 +132,12 @@ func (s *Server) handleGetOne(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, s.logger, r, err)
 		return
 	}
+	// A record hidden by the request's lifecycle view is 404 — never 403, so its
+	// existence doesn't leak (ADR-0012).
+	if !s.recordVisible(collection, rec, visibilityFromContext(r.Context())) {
+		writeError(w, http.StatusNotFound, apiError{Code: "NOT_FOUND", Message: "record not found"})
+		return
+	}
 	s.writeRecord(w, r, http.StatusOK, collection, rec, parseExpand(r.URL.Query()))
 }
 
@@ -142,6 +153,7 @@ func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnprocessableEntity, apiError{Code: "VALIDATION_ERROR", Message: err.Error()})
 		return
 	}
+	stripManagedFields(data) // _status/_published_at/_deleted_at change only via transitions
 	// The id comes from the URL, not the body — it is the source of truth.
 	data["id"] = chi.URLParam(r, "id")
 
@@ -186,8 +198,25 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 		s.handleNotFound(w, r)
 		return
 	}
+	id := chi.URLParam(r, "id")
 
-	if err := s.db.Delete(r.Context(), collection, chi.URLParam(r, "id")); err != nil {
+	// Soft-delete collections trash the row (reversible via /restore) unless the
+	// caller asks to purge. Purge falls through to the hard delete below and still
+	// honors on_delete: restrict (ADR-0012).
+	if s.collections[collection].SoftDelete && !strings.EqualFold(r.URL.Query().Get("purge"), "true") {
+		_, err := s.db.Update(r.Context(), store.WriteInput{
+			Collection: collection,
+			Data:       store.Record{"id": id, schema.LifecycleDeletedAt: nowUTC()},
+		})
+		if err != nil {
+			writeStoreError(w, s.logger, r, err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	if err := s.db.Delete(r.Context(), collection, id); err != nil {
 		// A foreign-key violation on delete is the RESTRICT default (ADR-0010):
 		// the record is still referenced. That's a legitimate client-facing
 		// conflict, not the invariant breach it would be on a write.

@@ -9,6 +9,30 @@ While on **0.x**, minor versions may include breaking changes.
 ## [Unreleased]
 
 ### Added
+- Record lifecycle (ADR-0012): opt-in per collection via `publishing: true`
+  and/or `soft_delete: true`.
+  - **Publishing** adds engine-managed `_status` (draft/published/archived) and
+    `_published_at`. Public reads show only live content (`_status=published AND
+    _published_at<=now`); a future `_published_at` **schedules** a go-live with no
+    background job (visibility is a read-time comparison). Transition endpoints:
+    `POST /{collection}/{id}/publish` (optional `{"at": "<RFC3339>"}` to schedule),
+    `/unpublish`, `/archive`.
+  - **Soft-delete** adds `_deleted_at`: `DELETE` trashes the row (hidden from
+    reads), `POST /{id}/restore` brings it back, and `DELETE ?purge=true` removes
+    it for good (still honoring `on_delete: restrict`).
+  - The default visibility filter applies everywhere — lists, get-one (hidden →
+    404, never 403), and relation expansion (batched, no N+1; a belongs-to to a
+    hidden record keeps the id but isn't inlined).
+  - An admin/preview bypass is gated by a secret `DCMS_PREVIEW_TOKEN` (env-only):
+    a request with `X-DCMS-Preview: <token>` may pass `?status=` /
+    `?include_deleted=` to see drafts/scheduled/archived/trashed content; without
+    it these params are ignored.
+  - Clients cannot set the managed columns directly (stripped from create/update).
+  - The generated SDK gains `publish/unpublish/archive`, `restore`, a `purge`
+    option, and preview `find` options; managed columns appear as readonly record
+    fields; OpenAPI documents the transition routes.
+- Store: `IsNull` / `NotNull` filter operators (additive) for null-testing any
+  nullable column.
 - Media library (ADR-0011): a `file` field type (`file` / `file, many: true`)
   that is sugar for a relation to an engine-managed `_media` collection, so file
   assets reuse the whole relation stack — reference, expand, referential
@@ -19,8 +43,10 @@ While on **0.x**, minor versions may include breaking changes.
   (multipart), replace-in-place (keeps the id and every reference), list/filter
   (the library), metadata edit, delete (row + bytes), and range-aware raw
   streaming (or a redirect for direct-serving backends). A derived `url` is added
-  to every media record. Configured via a `media:` block; the generated SDK gains
-  a typed `media` client (`upload`/`replace`/`list`/`get`/`delete`/`rawUrl`).
+  to every media record — version-stamped from the checksum so a replace-in-place
+  busts CDN/browser caches — and the raw endpoint sets an `ETag` (+ `Cache-Control`
+  and `304` revalidation). Configured via a `media:` block; the generated SDK
+  gains a typed `media` client (`upload`/`replace`/`list`/`get`/`delete`/`rawUrl`).
 - S3-compatible media backend (`media.driver: s3`): a single adapter for MinIO,
   SeaweedFS, Cloudflare R2, AWS S3, Backblaze B2, and the rest — selected by
   config (`endpoint`, `region`, `bucket`, `force_path_style`, `public_base_url`)

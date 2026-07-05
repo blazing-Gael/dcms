@@ -33,6 +33,15 @@ func (s *SchemaDefinition) OpenAPI() obj {
 			"patch":  updateOp(c.Name, name),
 			"delete": deleteOp(c.Name, name),
 		}
+		// Lifecycle transition endpoints (ADR-0012).
+		if c.Publishing {
+			paths[base+"/"+c.Name+"/{id}/publish"] = obj{"post": transitionOp(c.Name, name, "Publish (optionally schedule via {\"at\": <RFC3339>})")}
+			paths[base+"/"+c.Name+"/{id}/unpublish"] = obj{"post": transitionOp(c.Name, name, "Unpublish (return to draft)")}
+			paths[base+"/"+c.Name+"/{id}/archive"] = obj{"post": transitionOp(c.Name, name, "Archive (retire, kept but hidden)")}
+		}
+		if c.SoftDelete {
+			paths[base+"/"+c.Name+"/{id}/restore"] = obj{"post": transitionOp(c.Name, name, "Restore a soft-deleted record")}
+		}
 	}
 
 	// The media library's byte-path endpoints (ADR-0011).
@@ -175,6 +184,19 @@ func updateOp(collection, name string) obj {
 			"404": jsonResponse("not found", errorEnvelope()),
 			"409": jsonResponse("conflict (unique constraint)", errorEnvelope()),
 			"422": jsonResponse("validation error", errorEnvelope()),
+		},
+	}
+}
+
+// transitionOp documents a lifecycle transition endpoint (ADR-0012): a POST that
+// flips managed columns server-side and returns the updated record.
+func transitionOp(collection, name, summary string) obj {
+	return obj{
+		"summary":    summary + " — " + collection,
+		"parameters": []any{idParam()},
+		"responses": obj{
+			"200": jsonResponse("the updated "+collection+" record", dataEnvelope(name)),
+			"404": jsonResponse("not found", errorEnvelope()),
 		},
 	}
 }

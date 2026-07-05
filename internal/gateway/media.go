@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -60,7 +61,9 @@ func (s *Server) contentTypeAllowed(ct string) bool {
 
 // addMediaURL injects the derived, non-stored `url` onto a media record: the
 // backend's direct URL when it serves bytes itself (S3/R2), else the gateway's
-// proxy route.
+// proxy route. The URL carries a version token derived from the checksum, so a
+// replace-in-place (same key/id) yields a new URL and busts any CDN/browser
+// cache holding the old bytes.
 func (s *Server) addMediaURL(rec store.Record) {
 	if s.opts.Blob == nil {
 		return
@@ -70,11 +73,36 @@ func (s *Server) addMediaURL(rec store.Record) {
 	if key == "" || id == "" {
 		return
 	}
+	ver := mediaVersion(rec)
 	if u := s.opts.Blob.URL(key); u != "" {
-		rec["url"] = u
+		rec["url"] = withVersion(u, ver)
 		return
 	}
-	rec["url"] = mediaBasePath + "/" + id + "/raw"
+	rec["url"] = withVersion(mediaBasePath+"/"+id+"/raw", ver)
+}
+
+// mediaVersion returns a short, content-derived cache-busting token: the head of
+// the checksum, or the updated_at timestamp as a fallback.
+func mediaVersion(rec store.Record) string {
+	if ck, _ := rec[schema.MediaChecksum].(string); len(ck) >= 8 {
+		return ck[:8]
+	}
+	if ts, _ := rec["updated_at"].(string); ts != "" {
+		return ts
+	}
+	return ""
+}
+
+// withVersion appends a `v` query param to a URL, choosing the right separator.
+func withVersion(u, ver string) string {
+	if ver == "" {
+		return u
+	}
+	sep := "?"
+	if strings.Contains(u, "?") {
+		sep = "&"
+	}
+	return u + sep + "v=" + url.QueryEscape(ver)
 }
 
 // coerceExpanded shapes a related record for a response, adding the derived media
@@ -242,9 +270,20 @@ func (s *Server) handleMediaRaw(w http.ResponseWriter, r *http.Request) {
 	if ct, _ := rec[schema.MediaContentType].(string); ct != "" {
 		w.Header().Set("Content-Type", ct)
 	}
+	// The checksum is a strong validator → ETag for cheap 304 revalidation.
+	// Versioned URLs (?v=…) address immutable content, so cache them hard; a bare
+	// /raw hit gets a short TTL and revalidates via ETag.
+	if ck, _ := rec[schema.MediaChecksum].(string); ck != "" {
+		w.Header().Set("ETag", `"`+ck+`"`)
+	}
+	if r.URL.Query().Get("v") != "" {
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	} else {
+		w.Header().Set("Cache-Control", "public, max-age=300")
+	}
 	filename, _ := rec[schema.MediaFilename].(string)
 	if rs, ok := body.(io.ReadSeeker); ok {
-		http.ServeContent(w, r, filename, time.Time{}, rs) // Range-aware
+		http.ServeContent(w, r, filename, time.Time{}, rs) // Range + If-None-Match aware
 		return
 	}
 	_, _ = io.Copy(w, body)

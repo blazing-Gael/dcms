@@ -121,9 +121,11 @@ func (s *Server) expandM2M(ctx context.Context, collection, target string, rec s
 		return nil
 	}
 
+	filters := []store.Filter{{Field: "id", Operator: store.In, Value: ids}}
+	filters = append(filters, s.lifecycleFilters(target, visibilityFromContext(ctx))...)
 	page, err := s.db.Find(ctx, store.Query{
 		Collection: target,
-		Filters:    []store.Filter{{Field: "id", Operator: store.In, Value: ids}},
+		Filters:    filters,
 		Limit:      len(ids),
 	})
 	if err != nil {

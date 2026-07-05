@@ -44,7 +44,41 @@ func TestTypeScript_Interfaces(t *testing.T) {
 		"readonly created_by?: string;", // audit actor optional
 		"status: 'draft' | 'active';",   // enum → string-literal union
 		"export function createClient(", // runtime client emitted
-		"products: resource<Products, CreateProducts, UpdateProducts>(cfg, \"products\")",
+		"products: Object.assign(resource<Products, CreateProducts, UpdateProducts>(cfg, \"products\")",
+	}
+	for _, w := range wants {
+		if !strings.Contains(out, w) {
+			t.Errorf("generated output missing %q", w)
+		}
+	}
+}
+
+func TestTypeScript_Lifecycle(t *testing.T) {
+	src := []byte(`
+version: "1"
+collections:
+  articles:
+    publishing: true
+    soft_delete: true
+    fields:
+      title: { type: string, required: true }
+`)
+	def, err := schema.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	out, err := TypeScript(def)
+	if err != nil {
+		t.Fatalf("TypeScript: %v", err)
+	}
+	wants := []string{
+		"readonly _status: string;",             // managed field in the record type
+		"readonly _published_at?: string;",       // nullable managed field, optional
+		"readonly _deleted_at?: string;",         // soft-delete marker
+		"& Publishable<Articles>",                // client field gains publish methods
+		"& SoftDeletable<Articles>",              // ...and restore/purge
+		"publishable<Articles>(cfg, \"articles\")",
+		"softDeletable<Articles>(cfg, \"articles\")",
 	}
 	for _, w := range wants {
 		if !strings.Contains(out, w) {

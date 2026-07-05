@@ -48,8 +48,8 @@ collections:
     indexes: []                 # optional — field names to index
     vectorize: []               # optional — field names to embed for semantic search
     timestamps: true            # optional — auto-add createdAt / updatedAt
-    soft_delete: false          # optional — mark as deleted, don't hard remove
-    draft: false                # optional — enable draft/publish/archive state machine
+    soft_delete: false          # optional — DELETE trashes (reversible) instead of removing
+    publishing: false           # optional — enable draft / published / scheduled / archived
     i18n: []                    # optional — list of supported locale codes e.g. [en, ar, bn]
     access:                     # optional — RBAC rules (Phase 2+)
       ...
@@ -213,17 +213,26 @@ timestamps: true
 
 ---
 
-## Draft / publish state machine
+## Publishing / draft state machine (ADR-0012)
 
 ```yaml
-draft: true
-# Adds a hidden _status field with values: draft | published | archived
-# Endpoints:
-#   GET /api/v1/<collection>          returns only published records (public)
-#   GET /api/v1/<collection>?all=true returns all records (requires auth + role)
-#   POST /api/v1/<collection>/publish/:id   transitions draft → published
-#   POST /api/v1/<collection>/archive/:id   transitions published → archived
-#   POST /api/v1/<collection>/unpublish/:id transitions published → draft
+publishing: true
+# Adds engine-managed columns:
+#   _status:       draft | published | archived   (default draft, readonly)
+#   _published_at: datetime, nullable             (the go-live instant)
+#
+# Public reads show only LIVE content: _status = published AND _published_at <= now.
+# A FUTURE _published_at schedules a go-live — the record becomes visible the
+# instant the clock passes it, with no background job. `archived` is retired-but-
+# kept: hidden from the public and from the drafts view, but preserved.
+#
+# Transition endpoints (a record starts as draft):
+#   POST /api/v1/<collection>/:id/publish     {"at"?: "<RFC3339>"}  → published (or scheduled)
+#   POST /api/v1/<collection>/:id/unpublish                          → draft
+#   POST /api/v1/<collection>/:id/archive                            → archived
+#
+# Admin/preview (see the preview token below) may widen the view with
+#   ?status=draft | published | scheduled | archived | any
 ```
 
 ---
@@ -255,15 +264,28 @@ vectorize: [title, description]
 
 ---
 
-## Soft delete
+## Soft delete (ADR-0012)
 
 ```yaml
 soft_delete: true
-# DELETE /api/v1/<collection>/:id sets _deleted_at = now() instead of removing the row.
-# GET /api/v1/<collection> excludes soft-deleted records automatically.
-# GET /api/v1/<collection>?include_deleted=true includes them (requires auth).
-# Hard delete: DELETE /api/v1/<collection>/:id?hard=true (requires admin role).
+# Adds an engine-managed _deleted_at (datetime, nullable, readonly).
+#   DELETE /api/v1/<collection>/:id            trashes the row (sets _deleted_at)
+#   POST   /api/v1/<collection>/:id/restore    undeletes it
+#   DELETE /api/v1/<collection>/:id?purge=true permanently removes it (still
+#                                              honors on_delete: restrict → 409)
+# Reads exclude trashed records automatically. Admin/preview may include them via
+#   ?include_deleted=true   (active + trashed)
+#   ?include_deleted=only   (trash view)
 ```
+
+## Preview token (ADR-0012)
+
+The `?status` and `?include_deleted` params above are honored **only** for a
+request carrying a valid preview token — the `X-DCMS-Preview` header (or a
+`preview_token` query param) matching the server's `DCMS_PREVIEW_TOKEN` (env-only;
+it is a secret and is never read from the config file). Without the token these
+params are ignored and the public view (live, non-trashed) is returned. A hidden
+record is answered with `404`, never `403`, so its existence doesn't leak.
 
 ---
 
@@ -536,9 +558,11 @@ For Phase 1, implement only:
 
 **Supported field types:** `string`, `text`, `number`, `integer`, `boolean`, `date`, `datetime`, `enum`, `json`
 
-**Supported collection directives:** `fields`, `timestamps`, `indexes`
+**Supported collection directives:** `fields`, `timestamps`, `indexes`,
+`publishing`, `soft_delete`
 
-**Supported endpoints:** list, create, get one, update, delete
+**Supported endpoints:** list, create, get one, update, delete; plus (per
+directive) publish / unpublish / archive / restore transitions
 
 **Query params:** `limit`, `cursor`, `sort`, `fields`, `filter` (eq only)
 

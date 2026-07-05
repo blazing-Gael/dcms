@@ -55,6 +55,12 @@ type Options struct {
 	// AllowedContentTypes optionally restricts uploads (exact matches, or a
 	// trailing-slash prefix like "image/"). Empty means any type is accepted.
 	AllowedContentTypes []string
+
+	// PreviewToken, when set, unlocks the lifecycle preview bypass (ADR-0012): a
+	// request presenting it via X-DCMS-Preview (or ?preview_token=) may view
+	// drafts/scheduled/archived/trashed content through ?status / ?include_deleted.
+	// Empty disables the bypass — public reads only. Supplied via env only.
+	PreviewToken string
 }
 
 // Server wires a parsed schema and a storage adapter into an http.Handler.
@@ -90,6 +96,7 @@ func (s *Server) Handler() http.Handler {
 	r.Use(middleware.RequestID)
 	r.Use(s.requestLogger)
 	r.Use(s.recoverer)
+	r.Use(s.withVisibility) // resolve the request's lifecycle view once (ADR-0012)
 
 	r.NotFound(s.handleNotFound)
 	r.MethodNotAllowed(s.handleMethodNotAllowed)
@@ -119,6 +126,13 @@ func (s *Server) Handler() http.Handler {
 		r.Get("/{collection}/{id}", s.handleGetOne)
 		r.Patch("/{collection}/{id}", s.handleUpdate)
 		r.Delete("/{collection}/{id}", s.handleDelete)
+
+		// Lifecycle transitions (ADR-0012) — 404 on collections without the
+		// matching directive.
+		r.Post("/{collection}/{id}/publish", s.handlePublish)
+		r.Post("/{collection}/{id}/unpublish", s.handleUnpublish)
+		r.Post("/{collection}/{id}/archive", s.handleArchive)
+		r.Post("/{collection}/{id}/restore", s.handleRestore)
 	})
 
 	return r
@@ -153,6 +167,22 @@ func (s *Server) fieldType(collection, field string) (schema.FieldType, bool) {
 	cd, ok := s.collections[collection]
 	if !ok {
 		return "", false
+	}
+	// Lifecycle columns exist only on collections that opted in (ADR-0012); once
+	// present they are sortable/filterable like any column.
+	switch field {
+	case schema.LifecycleStatus:
+		if cd.Publishing {
+			return schema.TypeString, true
+		}
+	case schema.LifecyclePublishedAt:
+		if cd.Publishing {
+			return schema.TypeDateTime, true
+		}
+	case schema.LifecycleDeletedAt:
+		if cd.SoftDelete {
+			return schema.TypeDateTime, true
+		}
 	}
 	for _, f := range cd.Fields {
 		if f.Name == field {

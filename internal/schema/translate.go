@@ -128,6 +128,12 @@ func (c CollectionDef) ToCollectionMeta() store.CollectionMeta {
 
 	meta.Columns = append(meta.Columns, auditColumns...)
 
+	// Lifecycle columns (ADR-0012), for whichever directives this collection
+	// opted into, with their supporting indexes.
+	lcCols, lcIdx := c.lifecycleColumns()
+	meta.Columns = append(meta.Columns, lcCols...)
+	meta.Indexes = append(meta.Indexes, lcIdx...)
+
 	for _, idx := range c.Indexes {
 		meta.Indexes = append(meta.Indexes, store.IndexMeta{Columns: idx.Columns})
 	}

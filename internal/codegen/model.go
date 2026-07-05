@@ -62,6 +62,11 @@ type Collection struct {
 	// has no JSON create/update inputs and no generic CRUD resource — it's served
 	// through dedicated endpoints (media upload/serve).
 	Reserved bool
+	// Publishing / SoftDelete mirror the collection's lifecycle directives
+	// (ADR-0012): backends use them to emit transition methods (publish/unpublish/
+	// archive, restore) and a purge option on delete.
+	Publishing bool
+	SoftDelete bool
 }
 
 // Model is the full neutral input to a backend.
@@ -122,7 +127,10 @@ func BuildModel(def *schema.SchemaDefinition) Model {
 		BasePath:        def.BaseURL(),
 	}
 	for _, c := range def.Collections {
-		coll := Collection{Name: c.Name, Type: pascal(c.Name), Reserved: strings.HasPrefix(c.Name, "_")}
+		coll := Collection{
+			Name: c.Name, Type: pascal(c.Name), Reserved: strings.HasPrefix(c.Name, "_"),
+			Publishing: c.Publishing, SoftDelete: c.SoftDelete,
+		}
 
 		// Record (response): id + audit columns are engine-managed → readonly.
 		// A declared field is optional in the response when it is neither
@@ -137,6 +145,18 @@ func BuildModel(def *schema.SchemaDefinition) Model {
 			Field{Name: "created_by", Kind: KindString, Optional: true, ReadOnly: true},
 			Field{Name: "updated_by", Kind: KindString, Optional: true, ReadOnly: true},
 		)
+		// Lifecycle-managed columns are readonly response fields (ADR-0012).
+		if c.Publishing {
+			coll.Record = append(coll.Record,
+				Field{Name: schema.LifecycleStatus, Kind: KindString, ReadOnly: true},
+				Field{Name: schema.LifecyclePublishedAt, Kind: KindDateTime, Optional: true, ReadOnly: true},
+			)
+		}
+		if c.SoftDelete {
+			coll.Record = append(coll.Record,
+				Field{Name: schema.LifecycleDeletedAt, Kind: KindDateTime, Optional: true, ReadOnly: true},
+			)
+		}
 
 		// Create input: optional client id, then writeable fields. Required only
 		// when the schema requires it AND there's no default to fall back on.

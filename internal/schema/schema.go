@@ -60,7 +60,15 @@ type CollectionDef struct {
 	Indexes    []Index    `json:"indexes,omitempty"`
 	Timestamps bool       `json:"timestamps,omitempty"`
 
-	// TODO(phase-2): SoftDelete, Draft, I18n, Access, Vectorize
+	// Publishing opts the collection into draft/published/scheduled/archived
+	// states (ADR-0012): adds _status + _published_at, hides non-live records
+	// from public reads, and exposes publish/unpublish/archive actions.
+	Publishing bool `json:"publishing,omitempty"`
+	// SoftDelete makes DELETE trash a record (_deleted_at) instead of removing
+	// it, hides trashed records from public reads, and exposes restore + purge.
+	SoftDelete bool `json:"soft_delete,omitempty"`
+
+	// TODO(phase-2): I18n, Access, Vectorize
 	// TODO(phase-3): Hooks, Schedule
 }
 

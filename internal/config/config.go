@@ -32,6 +32,14 @@ type Config struct {
 	Database Database `yaml:"database"`
 	Server   Server   `yaml:"server"`
 	Media    Media    `yaml:"media"`
+	Content  Content  `yaml:"content"`
+}
+
+// Content configures record-lifecycle behavior (ADR-0012).
+type Content struct {
+	// PreviewToken unlocks the lifecycle preview bypass. It is a secret and so is
+	// env-only (DCMS_PREVIEW_TOKEN) — never read from the config file.
+	PreviewToken string `yaml:"-"`
 }
 
 // Media configures the file/blob storage backing the media library (ADR-0011).
@@ -166,6 +174,9 @@ func (c *Config) ApplyEnv() error {
 	}
 	if v, ok := os.LookupEnv("DCMS_S3_REGION"); ok {
 		c.Media.Region = v
+	}
+	if v, ok := os.LookupEnv("DCMS_PREVIEW_TOKEN"); ok {
+		c.Content.PreviewToken = v
 	}
 	return nil
 }

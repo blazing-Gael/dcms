@@ -171,6 +171,7 @@ func newDevCmd() *cobra.Command {
 				Blob:                bs,
 				MaxUploadBytes:      cfg.Media.MaxUploadBytes,
 				AllowedContentTypes: cfg.Media.AllowedContentTypes,
+				PreviewToken:        cfg.Content.PreviewToken,
 			})
 		},
 	}

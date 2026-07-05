@@ -205,6 +205,10 @@ func buildWhere(filters []store.Filter) (string, []any, error) {
 			}
 			conds = append(conds, fmt.Sprintf("%s %s (%s)", col, kw, placeholders))
 			args = append(args, vals...)
+		case store.IsNull:
+			conds = append(conds, col+" IS NULL")
+		case store.NotNull:
+			conds = append(conds, col+" IS NOT NULL")
 		default:
 			return "", nil, fmt.Errorf("%w: unsupported operator %q", store.ErrInvalidInput, op)
 		}

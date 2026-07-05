@@ -93,6 +93,8 @@ type tsColl struct {
 	Create     []tsField
 	Update     []tsField
 	Reserved   bool
+	Publishing bool
+	SoftDelete bool
 }
 
 type tsData struct {
@@ -121,6 +123,8 @@ func (tsBackend) Generate(m Model) (string, error) {
 			Create:     toTSFields(c.Create, false),
 			Update:     toTSFields(c.Update, false),
 			Reserved:   c.Reserved,
+			Publishing: c.Publishing,
+			SoftDelete: c.SoftDelete,
 		})
 	}
 
@@ -192,6 +196,13 @@ export interface FindOptions<T> {
   limit?: number;
   cursor?: string;
   fields?: (keyof T & string)[];
+  /**
+   * Lifecycle preview (ADR-0012). Only honored when the client sends a valid
+   * preview token (set it via ClientOptions.headers as "X-DCMS-Preview");
+   * otherwise these are ignored and only live, non-trashed records are returned.
+   */
+  status?: "draft" | "published" | "scheduled" | "archived" | "any";
+  includeDeleted?: "true" | "only";
 }
 
 export interface Resource<T, TCreate, TUpdate> {
@@ -200,6 +211,22 @@ export interface Resource<T, TCreate, TUpdate> {
   create(input: TCreate): Promise<T>;
   update(id: string, input: TUpdate): Promise<T>;
   delete(id: string): Promise<void>;
+}
+
+/** Transition methods for a collection with publishing enabled (ADR-0012). */
+export interface Publishable<T> {
+  /** Publish now, or schedule by passing a future RFC3339 timestamp as at. */
+  publish(id: string, at?: string): Promise<T>;
+  unpublish(id: string): Promise<T>;
+  archive(id: string): Promise<T>;
+}
+
+/** Transition methods for a collection with soft-delete enabled (ADR-0012). */
+export interface SoftDeletable<T> {
+  /** Undelete a soft-deleted (trashed) record. */
+  restore(id: string): Promise<T>;
+  /** Permanently delete, bypassing the trash. */
+  purge(id: string): Promise<void>;
 }
 
 export type HeaderSource =
@@ -230,6 +257,8 @@ function encodeQuery(opts: FindOptions<any>): string {
   if (opts.cursor) p.set("cursor", opts.cursor);
   if (opts.sort) p.set("sort", opts.sort);
   if (opts.fields && opts.fields.length) p.set("fields", opts.fields.join(","));
+  if (opts.status) p.set("status", opts.status);
+  if (opts.includeDeleted) p.set("include_deleted", opts.includeDeleted);
   if (opts.filter) {
     for (const field of Object.keys(opts.filter)) {
       const cond = (opts.filter as any)[field];
@@ -293,6 +322,33 @@ function resource<T, TCreate, TUpdate>(cfg: Config, collection: string): Resourc
     },
     async delete(id: string): Promise<void> {
       await req(cfg, "DELETE", "/" + collection + "/" + encodeURIComponent(id));
+    },
+  };
+}
+
+function publishable<T>(cfg: Config, collection: string): Publishable<T> {
+  const at = (id: string) => "/" + collection + "/" + encodeURIComponent(id);
+  return {
+    async publish(id: string, when?: string): Promise<T> {
+      return (await req(cfg, "POST", at(id) + "/publish", when ? { at: when } : undefined)).data as T;
+    },
+    async unpublish(id: string): Promise<T> {
+      return (await req(cfg, "POST", at(id) + "/unpublish")).data as T;
+    },
+    async archive(id: string): Promise<T> {
+      return (await req(cfg, "POST", at(id) + "/archive")).data as T;
+    },
+  };
+}
+
+function softDeletable<T>(cfg: Config, collection: string): SoftDeletable<T> {
+  const at = (id: string) => "/" + collection + "/" + encodeURIComponent(id);
+  return {
+    async restore(id: string): Promise<T> {
+      return (await req(cfg, "POST", at(id) + "/restore")).data as T;
+    },
+    async purge(id: string): Promise<void> {
+      await req(cfg, "DELETE", at(id) + "?purge=true");
     },
   };
 }
@@ -397,7 +453,7 @@ export interface DcmsClient {
   readonly contractVersion: string;
   media: MediaResource;
 {{- range .Collections}}{{if not .Reserved}}
-  {{.Collection}}: Resource<{{.Type}}, Create{{.Type}}, Update{{.Type}}>;
+  {{.Collection}}: Resource<{{.Type}}, Create{{.Type}}, Update{{.Type}}>{{if .Publishing}} & Publishable<{{.Type}}>{{end}}{{if .SoftDelete}} & SoftDeletable<{{.Type}}>{{end}};
 {{- end}}{{- end}}
 }
 
@@ -411,7 +467,7 @@ export function createClient(options: ClientOptions): DcmsClient {
     contractVersion: CONTRACT_VERSION,
     media: mediaClient(cfg),
 {{- range .Collections}}{{if not .Reserved}}
-    {{.Collection}}: resource<{{.Type}}, Create{{.Type}}, Update{{.Type}}>(cfg, "{{.Collection}}"),
+    {{.Collection}}: Object.assign(resource<{{.Type}}, Create{{.Type}}, Update{{.Type}}>(cfg, "{{.Collection}}"){{if .Publishing}}, publishable<{{.Type}}>(cfg, "{{.Collection}}"){{end}}{{if .SoftDelete}}, softDeletable<{{.Type}}>(cfg, "{{.Collection}}"){{end}}),
 {{- end}}{{- end}}
   };
 }

@@ -162,9 +162,11 @@ func (s *Server) findRelatedM2M(ctx context.Context, inv schema.M2MInverse, targ
 	if len(ids) == 0 {
 		return []store.Record{}, nil
 	}
+	filters := []store.Filter{{Field: "id", Operator: store.In, Value: ids}}
+	filters = append(filters, s.lifecycleFilters(inv.Source, visibilityFromContext(ctx))...)
 	page, err := s.db.Find(ctx, store.Query{
 		Collection: inv.Source,
-		Filters:    []store.Filter{{Field: "id", Operator: store.In, Value: ids}},
+		Filters:    filters,
 		Limit:      len(ids),
 	})
 	if err != nil {
@@ -180,6 +182,8 @@ func (s *Server) findRelatedM2M(ctx context.Context, inv schema.M2MInverse, targ
 }
 
 // expandBelongsTo fetches the single target of a belongs-to field and inlines it.
+// A target hidden by the request's lifecycle view is left as its id — the
+// relationship stays intact, but the withheld record is not exposed (ADR-0012).
 func (s *Server) expandBelongsTo(ctx context.Context, target string, rec store.Record, field string) error {
 	idv, _ := rec[field].(string)
 	if idv == "" {
@@ -192,6 +196,9 @@ func (s *Server) expandBelongsTo(ctx context.Context, target string, rec store.R
 	if err != nil {
 		return err
 	}
+	if !s.recordVisible(target, related, visibilityFromContext(ctx)) {
+		return nil // hidden target: keep the id, don't inline
+	}
 	s.coerceExpanded(target, related)
 	rec[field] = related
 	return nil
@@ -199,9 +206,11 @@ func (s *Server) expandBelongsTo(ctx context.Context, target string, rec store.R
 
 // findRelated fetches the has-many children of parentID via an inverse edge.
 func (s *Server) findRelated(ctx context.Context, inv schema.Inverse, parentID string) ([]store.Record, error) {
+	filters := []store.Filter{{Field: inv.Field, Operator: store.Eq, Value: parentID}}
+	filters = append(filters, s.lifecycleFilters(inv.Source, visibilityFromContext(ctx))...)
 	page, err := s.db.Find(ctx, store.Query{
 		Collection: inv.Source,
-		Filters:    []store.Filter{{Field: inv.Field, Operator: store.Eq, Value: parentID}},
+		Filters:    filters,
 	})
 	if err != nil {
 		return nil, err
@@ -248,9 +257,11 @@ func (s *Server) expandBelongsToBatch(ctx context.Context, target string, recs [
 	if len(ids) == 0 {
 		return nil
 	}
+	filters := []store.Filter{{Field: "id", Operator: store.In, Value: ids}}
+	filters = append(filters, s.lifecycleFilters(target, visibilityFromContext(ctx))...)
 	page, err := s.db.Find(ctx, store.Query{
 		Collection: target,
-		Filters:    []store.Filter{{Field: "id", Operator: store.In, Value: ids}},
+		Filters:    filters,
 		Limit:      len(ids),
 	})
 	if err != nil {
