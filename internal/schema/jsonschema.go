@@ -38,6 +38,9 @@ func fieldJSONSchema(f FieldDef) obj {
 	case TypeDateTime:
 		m["type"] = "string"
 		m["format"] = "date-time"
+	case TypeRichText:
+		// A structured content document — a shared reusable component (ADR-0014).
+		return ref("RichText")
 	case TypeJSON:
 		// any JSON value — no "type" constraint
 	}

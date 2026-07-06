@@ -70,6 +70,8 @@ func tsScalar(f Field) string {
 			parts[i] = "'" + v + "'"
 		}
 		return strings.Join(parts, " | ")
+	case KindRichText:
+		return "RichText"
 	case KindJSON:
 		return "unknown"
 	default:
@@ -171,6 +173,58 @@ export interface ListMeta {
 export interface ListResult<T> {
   data: T[];
   meta: ListMeta;
+  /** Reference manifest, present when ?expand= resolved richtext references (ADR-0015). */
+  included?: Included;
+}
+
+// Structured rich content (ADR-0014): a portable-text-style document. A richtext
+// field's value is an array of these nodes — text blocks with formatted spans,
+// plus custom blocks (images, references, code, embeds) that may point at media
+// or other records.
+export interface RichTextSpan {
+  _type: "span";
+  text: string;
+  marks?: string[]; // decorators (strong/em/…) or markDef _keys
+}
+export interface RichTextMarkDef {
+  _key: string;
+  _type: string; // "link" | "reference" | …
+  [k: string]: unknown; // link: { href }, reference: { collection, ref }
+}
+export interface RichTextBlock {
+  _type: "block";
+  style?: string; // e.g. "normal", "h2", "blockquote"
+  listItem?: "bullet" | "number";
+  level?: number;
+  children?: RichTextSpan[];
+  markDefs?: RichTextMarkDef[];
+}
+// A custom (non-text) block: image/reference/code/embed. _type discriminates.
+export interface RichTextObject {
+  _type: string;
+  [k: string]: unknown;
+}
+export type RichTextNode = RichTextBlock | RichTextObject;
+export type RichText = RichTextNode[];
+
+// The reference manifest returned at the response root by ?expand= on a richtext
+// field (ADR-0015): resolved entities keyed "<collection>:<id>". The document AST
+// stays id-only; resolve a node's ref against this map with resolveRef.
+export type Included = Record<string, Record<string, unknown>>;
+
+/**
+ * resolveRef looks up the entity a richtext image/reference node (or reference
+ * markDef) points at, from an included manifest. Returns undefined when the
+ * target was hidden, missing, or the field was not expanded.
+ */
+export function resolveRef(
+  included: Included | undefined,
+  node: { _type?: string; ref?: string; collection?: string },
+): Record<string, unknown> | undefined {
+  if (!included || !node.ref) return undefined;
+  const collection = node._type === "image" ? "_media" : node.collection;
+  if (!collection) return undefined;
+  return included[collection + ":" + node.ref];
 }
 
 export type FilterOps<V> = {
@@ -196,6 +250,10 @@ export interface FindOptions<T> {
   limit?: number;
   cursor?: string;
   fields?: (keyof T & string)[];
+  /** Comma-separated relation/richtext fields to inline (?expand=). */
+  expand?: string[];
+  /** Set false to skip the total row count for cheaper pages (meta.total omitted). */
+  count?: boolean;
   /**
    * Lifecycle preview (ADR-0012). Only honored when the client sends a valid
    * preview token (set it via ClientOptions.headers as "X-DCMS-Preview");
@@ -257,6 +315,8 @@ function encodeQuery(opts: FindOptions<any>): string {
   if (opts.cursor) p.set("cursor", opts.cursor);
   if (opts.sort) p.set("sort", opts.sort);
   if (opts.fields && opts.fields.length) p.set("fields", opts.fields.join(","));
+  if (opts.expand && opts.expand.length) p.set("expand", opts.expand.join(","));
+  if (opts.count === false) p.set("count", "false");
   if (opts.status) p.set("status", opts.status);
   if (opts.includeDeleted) p.set("include_deleted", opts.includeDeleted);
   if (opts.filter) {

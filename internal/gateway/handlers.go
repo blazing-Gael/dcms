@@ -90,8 +90,13 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 		var rec store.Record
 		err := s.db.Tx(r.Context(), func(ctx context.Context, tx store.DB) error {
 			var e error
-			rec, e = s.createRecord(ctx, tx, collection, data, 0)
-			return e
+			if rec, e = s.createRecord(ctx, tx, collection, data, 0); e != nil {
+				return e
+			}
+			if s.revised(collection) {
+				return s.captureRevision(ctx, tx, collection, rec, "create")
+			}
+			return nil
 		})
 		if err != nil {
 			writeStoreError(w, s.logger, r, err)
@@ -110,7 +115,7 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rec, err := s.writeWithLinks(r.Context(), collection, data, func(ctx context.Context, db store.DB, base store.Record) (store.Record, error) {
+	rec, err := s.writeWithLinks(r.Context(), collection, "create", data, func(ctx context.Context, db store.DB, base store.Record) (store.Record, error) {
 		return db.Create(ctx, store.WriteInput{Collection: collection, Data: base})
 	})
 	if err != nil {
@@ -162,8 +167,13 @@ func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
 		var rec store.Record
 		err := s.db.Tx(r.Context(), func(ctx context.Context, tx store.DB) error {
 			var e error
-			rec, e = s.updateRecord(ctx, tx, collection, data, 0)
-			return e
+			if rec, e = s.updateRecord(ctx, tx, collection, data, 0); e != nil {
+				return e
+			}
+			if s.revised(collection) {
+				return s.captureRevision(ctx, tx, collection, rec, "update")
+			}
+			return nil
 		})
 		if err != nil {
 			writeStoreError(w, s.logger, r, err)
@@ -182,7 +192,7 @@ func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rec, err := s.writeWithLinks(r.Context(), collection, data, func(ctx context.Context, db store.DB, base store.Record) (store.Record, error) {
+	rec, err := s.writeWithLinks(r.Context(), collection, "update", data, func(ctx context.Context, db store.DB, base store.Record) (store.Record, error) {
 		return db.Update(ctx, store.WriteInput{Collection: collection, Data: base})
 	})
 	if err != nil {
@@ -204,10 +214,8 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 	// caller asks to purge. Purge falls through to the hard delete below and still
 	// honors on_delete: restrict (ADR-0012).
 	if s.collections[collection].SoftDelete && !strings.EqualFold(r.URL.Query().Get("purge"), "true") {
-		_, err := s.db.Update(r.Context(), store.WriteInput{
-			Collection: collection,
-			Data:       store.Record{"id": id, schema.LifecycleDeletedAt: nowUTC()},
-		})
+		_, err := s.updateAndRevise(r.Context(), collection,
+			store.Record{"id": id, schema.LifecycleDeletedAt: nowUTC()}, "delete")
 		if err != nil {
 			writeStoreError(w, s.logger, r, err)
 			return

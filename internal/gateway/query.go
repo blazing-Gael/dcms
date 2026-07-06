@@ -43,6 +43,16 @@ func (s *Server) parseListQuery(values url.Values, collection string) (store.Que
 
 	q.Cursor = values.Get("cursor")
 
+	// The total row count is a COUNT(*) scan; ?count=false skips it for cheaper
+	// pages (meta.total is then omitted). Keyset pagination works without it.
+	if raw := values.Get("count"); raw != "" {
+		on, err := strconv.ParseBool(raw)
+		if err != nil {
+			return q, badRequest("count", "must be true or false")
+		}
+		q.SkipCount = !on
+	}
+
 	if raw := values.Get("sort"); raw != "" {
 		field := strings.TrimPrefix(raw, "-")
 		if !s.hasColumn(collection, field) {

@@ -6,7 +6,7 @@ import "strings"
 // request body, and response is derived from the parsed schema, so the spec can
 // never drift from the live API. info.version carries the contract version.
 func (s *SchemaDefinition) OpenAPI() obj {
-	schemas := obj{"Error": errorSchema()}
+	schemas := obj{"Error": errorSchema(), "RichText": richTextSchema()}
 	paths := obj{}
 	base := s.BaseURL()
 
@@ -70,6 +70,55 @@ func (s *SchemaDefinition) OpenAPI() obj {
 
 func ref(name string) obj { return obj{"$ref": "#/components/schemas/" + name} }
 
+// richTextSchema is the reusable component for structured rich content (ADR-0014):
+// an array of nodes — text blocks with spans and markDefs, or custom blocks
+// (image/reference/code/embed) discriminated by _type. Custom blocks stay open
+// (additionalProperties) because their shape varies by _type.
+func richTextSchema() obj {
+	span := obj{
+		"type": "object",
+		"properties": obj{
+			"_type": obj{"const": "span"},
+			"text":  obj{"type": "string"},
+			"marks": obj{"type": "array", "items": obj{"type": "string"}},
+		},
+		"required": []any{"_type", "text"},
+	}
+	markDef := obj{
+		"type": "object",
+		"properties": obj{
+			"_key":  obj{"type": "string"},
+			"_type": obj{"type": "string"},
+		},
+		"required":             []any{"_key", "_type"},
+		"additionalProperties": true,
+	}
+	block := obj{
+		"type": "object",
+		"properties": obj{
+			"_type":    obj{"const": "block"},
+			"style":    obj{"type": "string"},
+			"listItem": obj{"type": "string", "enum": []any{"bullet", "number"}},
+			"level":    obj{"type": "integer"},
+			"children": obj{"type": "array", "items": span},
+			"markDefs": obj{"type": "array", "items": markDef},
+		},
+		"required": []any{"_type"},
+	}
+	custom := obj{
+		"type":                 "object",
+		"properties":           obj{"_type": obj{"type": "string"}},
+		"required":             []any{"_type"},
+		"additionalProperties": true,
+		"description":          "a custom block (image/reference/code/embed), discriminated by _type",
+	}
+	return obj{
+		"type":        "array",
+		"description": "structured rich content (portable-text-style)",
+		"items":       obj{"anyOf": []any{block, custom}},
+	}
+}
+
 func errorSchema() obj {
 	return obj{
 		"type": "object",
@@ -82,10 +131,21 @@ func errorSchema() obj {
 	}
 }
 
+// includedSchema documents the optional `included` reference manifest (ADR-0015):
+// entities resolved by ?expand= on a richtext field, keyed "<collection>:<id>".
+func includedSchema() obj {
+	return obj{
+		"type":                 "object",
+		"additionalProperties": obj{"type": "object"},
+		"description":          "reference manifest: entities resolved by ?expand= on a richtext field, keyed \"<collection>:<id>\"",
+	}
+}
+
 func dataEnvelope(recordName string) obj {
 	return obj{"type": "object", "properties": obj{
-		"data": ref(recordName),
-		"meta": obj{"type": "object"},
+		"data":     ref(recordName),
+		"meta":     obj{"type": "object"},
+		"included": includedSchema(),
 	}}
 }
 
@@ -93,10 +153,11 @@ func listEnvelope(recordName string) obj {
 	return obj{"type": "object", "properties": obj{
 		"data": obj{"type": "array", "items": ref(recordName)},
 		"meta": obj{"type": "object", "properties": obj{
-			"total":       obj{"type": "integer"},
+			"total":       obj{"type": "integer", "description": "omitted when ?count=false"},
 			"limit":       obj{"type": "integer"},
 			"next_cursor": obj{"type": "string"},
 		}},
+		"included": includedSchema(),
 	}}
 }
 
@@ -122,6 +183,7 @@ func listParams() []any {
 		queryParam("cursor", "string", "keyset pagination cursor from a previous response"),
 		queryParam("sort", "string", "field to sort by; prefix with - for descending"),
 		queryParam("fields", "string", "comma-separated sparse fieldset"),
+		queryParam("count", "boolean", "set false to skip the total row count (cheaper pages; meta.total is then omitted)"),
 		expandParam(),
 		obj{
 			"name": "filter", "in": "query", "style": "deepObject", "explode": true,
@@ -136,7 +198,8 @@ func listParams() []any {
 // many-to-many on single reads).
 func expandParam() obj {
 	return queryParam("expand", "string",
-		"comma-separated relation fields to inline in the response, e.g. expand=author,tags")
+		"comma-separated fields to inline in the response: relation fields (e.g. expand=author,tags) "+
+			"and richtext fields, which resolve their in-content references under a _resolved key (e.g. expand=body)")
 }
 
 func reqBody(ref string) obj {

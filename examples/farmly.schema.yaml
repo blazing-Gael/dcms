@@ -346,8 +346,11 @@ collections:
         unique: true
         pattern: "^[a-z0-9-]+$"
       content:
-        type: text                # Phase 2: i18n
-        label: "Story body (Markdown)"
+        type: richtext            # structured body content (ADR-0014)
+        label: "Story body"
+        styles: [normal, h2, h3, blockquote]
+        marks:  [strong, em, link]
+        blocks: [image]           # inline images reference the media library
       excerpt:
         type: string
         max: 500
@@ -366,6 +369,7 @@ collections:
       # cover_image:              # Phase 3
       #   type: media
     timestamps: true
+    revisions: true               # keep full version history of every edit (ADR-0013)
     indexes: [status, vendor_id]
     # vectorize: [headline, content, excerpt]  # Phase 2
     # draft: true                 # Phase 2

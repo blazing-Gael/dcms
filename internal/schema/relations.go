@@ -33,6 +33,18 @@ func (c CollectionDef) ManyToMany(field string) (target string, ok bool) {
 	return "", false
 }
 
+// RichTextField reports the field definition when field is a richtext field on
+// c, so the gateway can resolve `?expand=<field>` for in-content references
+// (ADR-0014).
+func (c CollectionDef) RichTextField(field string) (FieldDef, bool) {
+	for _, f := range c.Fields {
+		if f.Name == field && f.Type == TypeRichText {
+			return f, true
+		}
+	}
+	return FieldDef{}, false
+}
+
 // InverseRelations returns every belongs-to relation across the schema that
 // points at the target collection — i.e. the has-many edges into it.
 func (s *SchemaDefinition) InverseRelations(target string) []Inverse {

@@ -27,6 +27,7 @@ const (
 	KindDateTime
 	KindEnum
 	KindJSON
+	KindRichText
 	KindUnknown
 )
 
@@ -97,6 +98,8 @@ func kindOf(t schema.FieldType) Kind {
 		return KindEnum
 	case schema.TypeJSON:
 		return KindJSON
+	case schema.TypeRichText:
+		return KindRichText
 	case schema.TypeRelation:
 		// A belongs-to relation is the target's id (a string) on the wire.
 		// Typed relation expansion comes in a later codegen increment.

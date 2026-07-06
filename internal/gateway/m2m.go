@@ -9,17 +9,19 @@ import (
 )
 
 // writeWithLinks performs a base write (create or update) together with any
-// many-to-many link replacements. With no m2m fields in the body it writes
-// directly; otherwise the base write and the link updates run in one
-// transaction, so a record and its relations commit or roll back together.
+// many-to-many link replacements and, on a revisioned collection, a captured
+// revision (operation). With none of those needed it writes directly; otherwise
+// the base write, link updates, and revision run in one transaction, so a record
+// and everything recording it commit or roll back together.
 func (s *Server) writeWithLinks(
 	ctx context.Context,
 	collection string,
+	operation string,
 	data store.Record,
 	write func(context.Context, store.DB, store.Record) (store.Record, error),
 ) (store.Record, error) {
 	base, links := s.splitM2M(collection, data)
-	if len(links) == 0 {
+	if len(links) == 0 && !s.revised(collection) {
 		return write(ctx, s.db, base)
 	}
 	var rec store.Record
@@ -33,6 +35,9 @@ func (s *Server) writeWithLinks(
 			if e = s.replaceLinks(ctx, tx, collection, field, id, ids); e != nil {
 				return e
 			}
+		}
+		if s.revised(collection) {
+			return s.captureRevision(ctx, tx, collection, rec, operation)
 		}
 		return nil
 	})

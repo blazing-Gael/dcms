@@ -53,6 +53,7 @@ type Query struct {
 	Cursor     string   // opaque cursor from previous response
 	Fields     []string // sparse fieldset — empty = all fields
 	Locale     string   // for i18n field resolution (Phase 2)
+	SkipCount  bool     // skip the total COUNT(*) (a page-size scan on big tables); Page.Total is then -1
 }
 
 // Page is the result of a list operation.

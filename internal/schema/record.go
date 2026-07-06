@@ -74,6 +74,16 @@ func (c CollectionDef) validateRecord(data map[string]any, isCreate bool) FieldE
 			continue
 		}
 
+		// A richtext value is a structured document (ADR-0014). Validate its shape
+		// against the field's allowlists here; in-content reference existence is
+		// checked at the gateway (batched), like relation ids.
+		if f.Type == TypeRichText {
+			if msg := f.validateRichText(v); msg != "" {
+				errs[f.Name] = msg
+			}
+			continue
+		}
+
 		if !typeMatches(f.Type, v) {
 			errs[f.Name] = "must be of type " + string(f.Type)
 			continue

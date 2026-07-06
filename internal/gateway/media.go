@@ -65,6 +65,10 @@ func (s *Server) contentTypeAllowed(ct string) bool {
 // replace-in-place (same key/id) yields a new URL and busts any CDN/browser
 // cache holding the old bytes.
 func (s *Server) addMediaURL(rec store.Record) {
+	// storage_key is the internal blob path — used to build the URL, then dropped
+	// so it never reaches a client (ADR-0015). addMediaURL is the choke point every
+	// media serialization passes through (single, list, expansion, manifest).
+	defer delete(rec, schema.MediaStorageKey)
 	if s.opts.Blob == nil {
 		return
 	}
@@ -121,13 +125,15 @@ func (s *Server) coerceExpanded(collection string, rec store.Record) {
 func (s *Server) writeMedia(w http.ResponseWriter, r *http.Request, status int, rec store.Record) {
 	s.collections[schema.MediaCollection].CoerceResponse(rec)
 	s.addMediaURL(rec)
+	var included refManifest
 	if exp := parseExpand(r.URL.Query()); len(exp) > 0 {
-		if err := s.expandRecord(r.Context(), schema.MediaCollection, rec, exp); err != nil {
+		included = refManifest{}
+		if err := s.expandRecord(r.Context(), schema.MediaCollection, rec, exp, included); err != nil {
 			writeStoreError(w, s.logger, r, err)
 			return
 		}
 	}
-	writeData(w, status, rec)
+	writeDataWith(w, r, status, rec, included)
 }
 
 func (s *Server) handleMediaList(w http.ResponseWriter, r *http.Request) {
@@ -145,7 +151,7 @@ func (s *Server) handleMediaList(w http.ResponseWriter, r *http.Request) {
 		s.collections[schema.MediaCollection].CoerceResponse(rec)
 		s.addMediaURL(rec)
 	}
-	writeList(w, page, effectiveLimit(q.Limit))
+	writeListWith(w, r, page, effectiveLimit(q.Limit), nil)
 }
 
 func (s *Server) handleMediaGet(w http.ResponseWriter, r *http.Request) {

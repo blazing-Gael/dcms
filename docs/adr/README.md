@@ -29,3 +29,6 @@ future selves.
 | [0010](./0010-two-layer-referential-integrity.md) | Two-layer referential integrity: app-level validation + DB-FK protection where supported | Accepted |
 | [0011](./0011-media-and-blob-storage.md) | Media as a relation to an engine-managed `_media` collection; bytes behind a pluggable blob store | Accepted |
 | [0012](./0012-record-lifecycle.md) | Record lifecycle: publishing states (`_status` + `_published_at`) and soft-delete (`_deleted_at`), gateway-filtered with a preview-token bypass | Accepted |
+| [0013](./0013-revisions.md) | Revisions: append-only version history in an engine-managed `_revisions` collection, full snapshots captured in the write transaction | Accepted |
+| [0014](./0014-rich-content.md) | Rich content: a structured (portable-text-style) `richtext` field stored as JSON, with per-field allowlists and batched in-content reference validation | Accepted |
+| [0015](./0015-reference-manifest.md) | Reference resolution via a deduplicated root `included` manifest (pure AST); media returned as a public projection | Accepted |

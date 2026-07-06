@@ -109,6 +109,15 @@ func normalize(v any) any {
 		return int64(0)
 	case time.Time:
 		return t.UTC().Format(time.RFC3339Nano)
+	case map[string]any, []any:
+		// SQLite has no native object/array type, so a structured value (a JSON
+		// column — see the `json` and `richtext` field types) is persisted as JSON
+		// text. On error we fall through with the raw value and let the driver
+		// reject it rather than silently dropping data.
+		if b, err := json.Marshal(t); err == nil {
+			return string(b)
+		}
+		return v
 	default:
 		return v
 	}

@@ -14,6 +14,7 @@ var nameRe = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
 var reservedCollections = map[string]bool{
 	"_schema": true, "_dashboards": true, "_users": true,
 	"_roles": true, "_audit": true, "_jobs": true, "_media": true,
+	"_revisions": true,
 }
 
 // reservedFields are engine-managed columns; a schema must not declare them.
@@ -113,6 +114,9 @@ func (s *SchemaDefinition) Validate() error {
 			case f.Type == TypeFile:
 				// A file is sugar for a relation to _media, finalized after
 				// validation. Specifics validated just below.
+			case f.Type == TypeRichText:
+				// Structured content (ADR-0014). Its per-field allowlists are
+				// validated just below.
 			default:
 				if phase, ok := deferredTypes[f.Type]; ok {
 					add("%s: type %q is not supported until phase %s", fpath, f.Type, phase)
@@ -164,6 +168,13 @@ func (s *SchemaDefinition) Validate() error {
 						add("%s: enum values contains duplicate %q", fpath, v)
 					}
 					seenVal[v] = true
+				}
+			}
+
+			// Rich content allowlists (ADR-0014): marks/blocks must be known.
+			if f.Type == TypeRichText {
+				for _, msg := range f.validateRichTextConfig() {
+					add("%s: %s", fpath, msg)
 				}
 			}
 

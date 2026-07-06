@@ -11,6 +11,28 @@ import (
 	"github.com/blazing-Gael/dcms/internal/store"
 )
 
+// Expand budget — bounds on a single request's expansion so a hostile or careless
+// ?expand= can't fan out unboundedly (many fields, deep nesting, or a document
+// that references a huge number of records). Exceeding any of these is a 422.
+const (
+	maxExpandTokens = 20 // distinct top-level expand fields per request
+	maxExpandDepth  = 4  // segments in a dotted path, e.g. a.b.c.d
+	maxResolvedRefs = 1000
+)
+
+// checkExpandBudget rejects an over-budget expand request before any query runs.
+func checkExpandBudget(tokens []string) error {
+	if len(tokens) > maxExpandTokens {
+		return badRequest("expand", fmt.Sprintf("too many expand fields (%d); max is %d", len(tokens), maxExpandTokens))
+	}
+	for _, t := range tokens {
+		if depth := strings.Count(t, ".") + 1; depth > maxExpandDepth {
+			return badRequest("expand", fmt.Sprintf("expand path %q is too deep (%d); max depth is %d", t, depth, maxExpandDepth))
+		}
+	}
+	return nil
+}
+
 // parseExpand pulls the comma-separated `expand` query param into tokens.
 func parseExpand(values url.Values) []string {
 	raw := values.Get("expand")
@@ -38,9 +60,12 @@ func parseExpand(values url.Values) []string {
 // string id the schema promises; expansion changes the shape afterward. Nested
 // expansion is single-record only — lists reject dotted tokens (see
 // expandListRecords) to avoid multi-level N+1.
-func (s *Server) expandRecord(ctx context.Context, collection string, rec store.Record, tokens []string) error {
+func (s *Server) expandRecord(ctx context.Context, collection string, rec store.Record, tokens []string, m refManifest) error {
+	if err := checkExpandBudget(tokens); err != nil {
+		return err
+	}
 	for seg, subs := range groupExpand(tokens) {
-		target, err := s.expandOne(ctx, collection, rec, seg)
+		target, err := s.expandOne(ctx, collection, rec, seg, m)
 		if err != nil {
 			return err
 		}
@@ -56,12 +81,12 @@ func (s *Server) expandRecord(ctx context.Context, collection string, rec store.
 		}
 		switch v := rec[seg].(type) {
 		case store.Record:
-			if err := s.expandRecord(ctx, target, v, childPaths); err != nil {
+			if err := s.expandRecord(ctx, target, v, childPaths, m); err != nil {
 				return err
 			}
 		case []store.Record:
 			for _, child := range v {
-				if err := s.expandRecord(ctx, target, child, childPaths); err != nil {
+				if err := s.expandRecord(ctx, target, child, childPaths, m); err != nil {
 					return err
 				}
 			}
@@ -87,8 +112,14 @@ func groupExpand(tokens []string) map[string][]string {
 // expandOne expands a single field on a record and returns the collection of the
 // expanded target (so the caller can recurse for nested paths). It handles
 // belongs-to, forward many-to-many, and inverse edges (has-many + reverse m2m).
-func (s *Server) expandOne(ctx context.Context, collection string, rec store.Record, field string) (string, error) {
+func (s *Server) expandOne(ctx context.Context, collection string, rec store.Record, field string, m refManifest) (string, error) {
 	cd := s.collections[collection]
+	// A richtext field resolves its in-content references into the manifest
+	// (ADR-0015), leaving the AST id-only. It has no single target collection, so
+	// there is nothing further to recurse into.
+	if fd, ok := cd.RichTextField(field); ok {
+		return "", s.expandRichTextDocs(ctx, fd, [][]any{docOf(rec[field])}, m)
+	}
 	if target, ok := cd.BelongsTo(field); ok {
 		return target, s.expandBelongsTo(ctx, target, rec, field)
 	}
@@ -228,11 +259,27 @@ func (s *Server) findRelated(ctx context.Context, inv schema.Inverse, parentID s
 // expandListRecords expands a page of records. Only belongs-to tokens are
 // allowed on lists (has-many on a list is expensive and disallowed for now);
 // belongs-to is batched — distinct ids fetched once — to avoid N+1 queries.
-func (s *Server) expandListRecords(ctx context.Context, collection string, recs []store.Record, tokens []string) error {
+func (s *Server) expandListRecords(ctx context.Context, collection string, recs []store.Record, tokens []string, m refManifest) error {
+	if err := checkExpandBudget(tokens); err != nil {
+		return err
+	}
 	cd := s.collections[collection]
 	for _, tok := range tokens {
 		if strings.Contains(tok, ".") {
 			return badRequest("expand", fmt.Sprintf("nested expansion (%q) is only supported on single-record reads, not lists", tok))
+		}
+		// A richtext field resolves its in-content references across the whole page
+		// into one shared, deduplicated manifest (ADR-0015) — collect every
+		// document, then expand once.
+		if fd, ok := cd.RichTextField(tok); ok {
+			docs := make([][]any, 0, len(recs))
+			for _, r := range recs {
+				docs = append(docs, docOf(r[tok]))
+			}
+			if err := s.expandRichTextDocs(ctx, fd, docs, m); err != nil {
+				return err
+			}
+			continue
 		}
 		target, ok := cd.BelongsTo(tok)
 		if !ok {

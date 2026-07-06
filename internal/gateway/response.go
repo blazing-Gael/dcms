@@ -1,10 +1,13 @@
 package gateway
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/blazing-Gael/dcms/internal/store"
 )
@@ -22,25 +25,118 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
+// refManifest is the deduplicated set of entities resolved by ?expand= on a
+// richtext field (ADR-0015), keyed "<collection>:<id>". It is returned at the
+// response root as `included` so the document AST can stay pure (id-only) — which
+// keeps documents cacheable, dedupes shared references across a list, and makes
+// reference cycles harmless.
+type refManifest map[string]store.Record
+
+func manifestKey(collection, id string) string { return collection + ":" + id }
+
+// add records an entity in the manifest under its collection:id key (no-op for a
+// record without a string id).
+func (m refManifest) add(collection string, rec store.Record) {
+	if id, ok := rec["id"].(string); ok && id != "" {
+		m[manifestKey(collection, id)] = rec
+	}
+}
+
 // writeData writes a single-record success envelope: {"data": ..., "meta": {}}.
+// The nil request means no conditional-GET handling (used by non-read callers).
 func writeData(w http.ResponseWriter, status int, data any) {
-	writeJSON(w, status, map[string]any{"data": data, "meta": map[string]any{}})
+	writeDataWith(w, nil, status, data, nil)
+}
+
+// writeDataWith writes a single-record envelope, adding the `included` reference
+// manifest when non-empty (ADR-0015). When r is a GET it also emits an ETag and
+// honors If-None-Match (304).
+func writeDataWith(w http.ResponseWriter, r *http.Request, status int, data any, included refManifest) {
+	env := map[string]any{"data": data, "meta": map[string]any{}}
+	if len(included) > 0 {
+		env["included"] = included
+	}
+	writeEnvelope(w, r, status, env)
 }
 
 // writeList writes a list success envelope with pagination metadata.
 func writeList(w http.ResponseWriter, page store.Page, limit int) {
+	writeListWith(w, nil, page, limit, nil)
+}
+
+// writeListWith writes a list envelope, adding the `included` reference manifest
+// when non-empty (ADR-0015) and, for a GET, an ETag with If-None-Match handling.
+func writeListWith(w http.ResponseWriter, r *http.Request, page store.Page, limit int, included refManifest) {
 	data := page.Data
 	if data == nil {
 		data = []store.Record{} // encode an empty list as [], never null
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"data": data,
-		"meta": map[string]any{
-			"total":       page.Total,
-			"limit":       limit,
-			"next_cursor": page.NextCursor,
-		},
-	})
+	meta := map[string]any{
+		"limit":       limit,
+		"next_cursor": page.NextCursor,
+	}
+	// A negative total means the count was skipped (?count=false) — omit it rather
+	// than report a bogus number.
+	if page.Total >= 0 {
+		meta["total"] = page.Total
+	}
+	env := map[string]any{"data": data, "meta": meta}
+	if len(included) > 0 {
+		env["included"] = included
+	}
+	writeEnvelope(w, r, http.StatusOK, env)
+}
+
+// writeEnvelope marshals a success envelope. For a safe GET it derives a strong
+// ETag from the response bytes and returns 304 when the client's If-None-Match
+// matches — cheap conditional reads that let a cache/browser skip an unchanged
+// body. Other methods (and the nil-request callers) just write.
+func writeEnvelope(w http.ResponseWriter, r *http.Request, status int, env map[string]any) {
+	if r == nil || r.Method != http.MethodGet {
+		writeJSON(w, status, env)
+		return
+	}
+	body, err := json.Marshal(env)
+	if err != nil {
+		writeJSON(w, status, env) // fall back; marshaling env should not fail
+		return
+	}
+	etag := etagOf(body)
+	w.Header().Set("ETag", etag)
+	if ifNoneMatch(r.Header.Get("If-None-Match"), etag) {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(status)
+	_, _ = w.Write(body)
+}
+
+// etagOf returns a strong ETag (a quoted hash of the body). Content-derived, so it
+// changes exactly when the response would.
+func etagOf(body []byte) string {
+	sum := sha256.Sum256(body)
+	return `"` + hex.EncodeToString(sum[:16]) + `"`
+}
+
+// ifNoneMatch reports whether a client's If-None-Match header matches etag —
+// either "*" or a comma-separated list containing it (weak prefixes tolerated).
+func ifNoneMatch(header, etag string) bool {
+	header = strings.TrimSpace(header)
+	if header == "" {
+		return false
+	}
+	if header == "*" {
+		return true
+	}
+	for _, tok := range strings.Split(header, ",") {
+		tok = strings.TrimSpace(tok)
+		tok = strings.TrimPrefix(tok, "W/")
+		if tok == etag {
+			return true
+		}
+	}
+	return false
 }
 
 // writeRecord shapes a single record to the schema's declared types (always)
@@ -58,13 +154,15 @@ func (s *Server) writeRecord(w http.ResponseWriter, r *http.Request, status int,
 			return
 		}
 	}
+	var included refManifest
 	if len(expand) > 0 {
-		if err := s.expandRecord(r.Context(), collection, rec, expand); err != nil {
+		included = refManifest{}
+		if err := s.expandRecord(r.Context(), collection, rec, expand, included); err != nil {
 			writeStoreError(w, s.logger, r, err)
 			return
 		}
 	}
-	writeData(w, status, rec)
+	writeDataWith(w, r, status, rec, included)
 }
 
 // writeRecords does the same for a list response: every record is shaped, and
@@ -84,13 +182,15 @@ func (s *Server) writeRecords(w http.ResponseWriter, r *http.Request, collection
 			}
 		}
 	}
+	var included refManifest
 	if len(expand) > 0 {
-		if err := s.expandListRecords(r.Context(), collection, page.Data, expand); err != nil {
+		included = refManifest{}
+		if err := s.expandListRecords(r.Context(), collection, page.Data, expand, included); err != nil {
 			writeStoreError(w, s.logger, r, err)
 			return
 		}
 	}
-	writeList(w, page, limit)
+	writeListWith(w, r, page, limit, included)
 }
 
 // writeError writes an error envelope: {"error": {...}}.

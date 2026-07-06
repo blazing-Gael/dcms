@@ -42,7 +42,7 @@ func (s *Server) handlePublish(w http.ResponseWriter, r *http.Request) {
 		}
 		at = t.UTC()
 	}
-	s.applyTransition(w, r, collection, store.Record{
+	s.applyTransition(w, r, collection, "publish", store.Record{
 		"id":                        chi.URLParam(r, "id"),
 		schema.LifecycleStatus:      schema.StatusPublished,
 		schema.LifecyclePublishedAt: at,
@@ -56,7 +56,7 @@ func (s *Server) handleUnpublish(w http.ResponseWriter, r *http.Request) {
 		s.handleNotFound(w, r)
 		return
 	}
-	s.applyTransition(w, r, collection, store.Record{
+	s.applyTransition(w, r, collection, "unpublish", store.Record{
 		"id":                        chi.URLParam(r, "id"),
 		schema.LifecycleStatus:      schema.StatusDraft,
 		schema.LifecyclePublishedAt: nil,
@@ -71,7 +71,7 @@ func (s *Server) handleArchive(w http.ResponseWriter, r *http.Request) {
 		s.handleNotFound(w, r)
 		return
 	}
-	s.applyTransition(w, r, collection, store.Record{
+	s.applyTransition(w, r, collection, "archive", store.Record{
 		"id":                   chi.URLParam(r, "id"),
 		schema.LifecycleStatus: schema.StatusArchived,
 	})
@@ -84,16 +84,17 @@ func (s *Server) handleRestore(w http.ResponseWriter, r *http.Request) {
 		s.handleNotFound(w, r)
 		return
 	}
-	s.applyTransition(w, r, collection, store.Record{
-		"id":                       chi.URLParam(r, "id"),
-		schema.LifecycleDeletedAt:  nil,
+	s.applyTransition(w, r, collection, "restore", store.Record{
+		"id":                      chi.URLParam(r, "id"),
+		schema.LifecycleDeletedAt: nil,
 	})
 }
 
-// applyTransition performs the managed Update and writes the resulting record.
-// A missing id surfaces as 404 via the store's ErrNotFound.
-func (s *Server) applyTransition(w http.ResponseWriter, r *http.Request, collection string, data store.Record) {
-	rec, err := s.db.Update(r.Context(), store.WriteInput{Collection: collection, Data: data})
+// applyTransition performs the managed Update and writes the resulting record,
+// capturing a revision (labeled with operation) on revisioned collections. A
+// missing id surfaces as 404 via the store's ErrNotFound.
+func (s *Server) applyTransition(w http.ResponseWriter, r *http.Request, collection, operation string, data store.Record) {
+	rec, err := s.updateAndRevise(r.Context(), collection, data, operation)
 	if err != nil {
 		writeStoreError(w, s.logger, r, err)
 		return

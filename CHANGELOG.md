@@ -31,6 +31,61 @@ While on **0.x**, minor versions may include breaking changes.
   - The generated SDK gains `publish/unpublish/archive`, `restore`, a `purge`
     option, and preview `find` options; managed columns appear as readonly record
     fields; OpenAPI documents the transition routes.
+- Version history / revisions (ADR-0013): opt-in per collection via
+  `revisions: true`.
+  - Adds an engine-managed `_revisions` collection (injected only when at least
+    one collection opts in) that stores a **full JSON snapshot** of the record on
+    every write, labeled with the operation (`create` / `update` / `publish` /
+    `unpublish` / `archive` / `restore` / `delete`) and a per-record incrementing
+    `version`.
+  - Snapshots are captured **synchronously in the write's own transaction**, so
+    history can never diverge from the record — either both commit or both roll
+    back.
+  - Endpoints (preview-gated by `DCMS_PREVIEW_TOKEN`, 404 when the collection
+    lacks the directive): `GET /{collection}/{id}/revisions` (history, newest
+    first, without the heavy blobs), `GET /{collection}/{id}/revisions/{version}`
+    (one version incl. its snapshot), and `POST
+    /{collection}/{id}/revisions/{version}/restore`.
+  - **Restore is content-only**: it rolls back declared fields but leaves managed
+    lifecycle columns (`_status` / `_published_at` / `_deleted_at`) untouched, and
+    is itself recorded as a new revision (append-only history).
+- Rich content field type `richtext` (ADR-0014): structured, portable-text-style
+  body content.
+  - The value is a **structured JSON document** (an array of blocks/spans plus
+    custom `image` / `reference` / `code` / `embed` blocks) — not HTML or markdown
+    — so it renders to any target and its embeds are first-class references.
+    Stored in a JSON column; the locked store interface is untouched.
+  - Configurable per field via `styles` / `marks` / `blocks` allowlists (with
+    sensible defaults); unknown marks/blocks fail schema validation.
+  - Validated on write: well-formed document within the field's allowlists, span
+    marks resolve to a decorator or a declared `markDef`, and link hrefs must use a
+    safe scheme (no `javascript:`). Every in-content reference (image → `_media`,
+    `reference` nodes → the named collection) is checked for existence in the
+    **same batched pass as relations** (field-named `422` on a dangling ref; no
+    N+1). The generated SDK gains a shared `RichText` type; OpenAPI a `RichText`
+    component.
+  - `?expand=<richtext field>` resolves referenced records (image → its `_media`
+    asset with a `url`; `reference` nodes → the named record) into a
+    **deduplicated `included` manifest at the response root** (ADR-0015), keyed
+    `"<collection>:<id>"`; the document AST stays id-only. Keeps documents
+    cacheable, dedupes shared references across a list, and makes reference cycles
+    harmless. Batched (one query per target collection, no N+1) and lifecycle-aware
+    (a hidden/missing target is simply absent from `included`). The SDK gains an
+    `Included` type and a `resolveRef` helper.
+- Reference resolution via a manifest (ADR-0015): resolved references now ride a
+  root `included` map instead of being inlined into the response, so updating one
+  referenced entity no longer staleness-poisons every document that embeds it.
+  Media is returned as a **public projection** everywhere it is serialized — the
+  internal `storage_key` (blob path) is never exposed.
+- Read hardening: list total is now opt-out via `?count=false` (skips the
+  `COUNT(*)` scan; `meta.total` is then omitted); an **expand budget** caps the
+  number of expand fields, nesting depth, and total resolved references (`422` when
+  exceeded); and GET reads carry a strong **`ETag`** with `If-None-Match` → `304`
+  conditional-GET support.
+- `json` (and `richtext`) columns now round-trip structured values correctly: the
+  SQLite adapter persists objects/arrays as JSON text on write, and the gateway
+  decodes them back to real structure on read (previously a structured `json`
+  value could not be written).
 - Store: `IsNull` / `NotNull` filter operators (additive) for null-testing any
   nullable column.
 - Media library (ADR-0011): a `file` field type (`file` / `file, many: true`)

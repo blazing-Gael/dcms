@@ -110,6 +110,11 @@ func (c CollectionDef) ToCollectionMeta() store.CollectionMeta {
 			references = f.Target
 			onDelete, _ = normalizeOnDelete(f.OnDelete) // validated already
 		}
+		// A richtext value is a structured document persisted as JSON; it needs no
+		// new physical column type (ADR-0014), keeping the store interface untouched.
+		if f.Type == TypeRichText {
+			colType = string(TypeJSON)
+		}
 		meta.Columns = append(meta.Columns, store.ColumnMeta{
 			Name:       f.Name,
 			Type:       colType,

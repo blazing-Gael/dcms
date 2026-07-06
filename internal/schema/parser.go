@@ -34,6 +34,8 @@ func Parse(src []byte) (*SchemaDefinition, error) {
 	// Finalize media support after validation: rewrite `file` fields to relations
 	// and inject the engine-managed _media collection (ADR-0011).
 	def.injectMedia()
+	// Inject the _revisions collection when any collection opts in (ADR-0013).
+	def.injectRevisions()
 	return def, nil
 }
 
@@ -68,6 +70,9 @@ type rawField struct {
 	Target   string   `yaml:"target"`
 	Many     bool     `yaml:"many"`
 	OnDelete string   `yaml:"on_delete"`
+	Styles   []string `yaml:"styles"`
+	Marks    []string `yaml:"marks"`
+	Blocks   []string `yaml:"blocks"`
 }
 
 type nodeEntry struct {
@@ -136,6 +141,10 @@ func toCollection(name string, node *yaml.Node) (CollectionDef, error) {
 			if err := e.Val.Decode(&col.SoftDelete); err != nil {
 				return col, fmt.Errorf("soft_delete: %w", err)
 			}
+		case "revisions":
+			if err := e.Val.Decode(&col.Revisions); err != nil {
+				return col, fmt.Errorf("revisions: %w", err)
+			}
 		default:
 			// Phase 2+ directives (access, hooks, vectorize, i18n, schedule) are
 			// recognised but skipped in Phase 1.
@@ -177,6 +186,9 @@ func toFields(node *yaml.Node) ([]FieldDef, error) {
 			f.Target = rf.Target
 			f.Many = rf.Many
 			f.OnDelete = rf.OnDelete
+			f.Styles = rf.Styles
+			f.Marks = rf.Marks
+			f.Blocks = rf.Blocks
 		default:
 			return nil, fmt.Errorf("%s: expected a type or a field definition, got %s", e.Key, kindName(e.Val.Kind))
 		}

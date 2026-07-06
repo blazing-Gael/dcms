@@ -50,6 +50,7 @@ collections:
     timestamps: true            # optional — auto-add createdAt / updatedAt
     soft_delete: false          # optional — DELETE trashes (reversible) instead of removing
     publishing: false           # optional — enable draft / published / scheduled / archived
+    revisions: false            # optional — keep full-snapshot version history per record
     i18n: []                    # optional — list of supported locale codes e.g. [en, ar, bn]
     access:                     # optional — RBAC rules (Phase 2+)
       ...
@@ -156,6 +157,59 @@ so an asset still in use can't be deleted). Assets are uploaded and managed
 through the `/__media` endpoints — you reference them by id — and the media
 library is browsable, replaceable, and answers "where is this used?" via reverse
 expansion. Do not set `target` on a file field; it is always `_media`.
+
+#### Rich content — `richtext` (ADR-0014)
+
+Formatted body content: headings, bold/italic/links, lists, and inline embeds
+that reference media and other records. The value is a **structured document**
+(a portable-text-style JSON array of nodes), stored in a JSON column — never HTML
+or a markdown string — so it renders to any target (HTML, React, plain text) and
+its embeds are first-class references, not brittle inline markup.
+
+```yaml
+body:
+  type: richtext
+  styles: [normal, h2, h3, blockquote]   # allowed block styles (labels; free-form)
+  marks:  [strong, em, code, link]       # allowed decorators + annotation types
+  blocks: [image, reference]             # allowed custom (non-text) block types
+```
+
+All three lists are optional; omitted, they default to
+`styles: [normal, h1, h2, h3, h4, blockquote]`, `marks: [strong, em, code, link]`,
+`blocks: [image]`. `marks` must be known decorators (`strong`, `em`, `code`,
+`underline`, `strike`) or annotations (`link`, `reference`); `blocks` must be known
+types (`image`, `code`, `embed`, `reference`) — an unknown one fails schema
+validation. `styles` are free-form labels a renderer maps.
+
+The stored document is an array of nodes:
+
+```jsonc
+[
+  { "_type": "block", "style": "h2",
+    "children": [ { "_type": "span", "text": "Hello", "marks": ["strong"] } ] },
+  { "_type": "block", "style": "normal",
+    "markDefs": [ { "_key": "l1", "_type": "link", "href": "https://example.com" } ],
+    "children": [ { "_type": "span", "text": "a link", "marks": ["l1"] } ] },
+  { "_type": "image", "ref": "<media id>", "alt": "a photo" },        // → _media
+  { "_type": "reference", "collection": "authors", "ref": "<id>" }    // → a record
+]
+```
+
+On write the document is validated structurally (well-formed nodes, styles/marks/
+blocks within the field's allowlists, spans whose marks resolve to a decorator or
+a declared `markDef`, safe link schemes — no `javascript:`), and every in-content
+reference (image → `_media`, `reference` nodes → the named collection) is checked
+for existence in the same batched pass as relations (field-named `422` on a
+dangling ref; no N+1). Because references live inside a JSON blob there is no DB
+foreign key protecting them — the validation layer owns their correctness.
+
+`?expand=body` resolves the referenced records (image blocks → their `_media`
+asset with a `url`, `reference` nodes → the named record) into a **deduplicated
+`included` manifest at the response root**, keyed `"<collection>:<id>"`; the
+document AST stays id-only (ADR-0015). This keeps documents cacheable, serializes a
+shared reference once across a list, and makes reference cycles harmless. Like
+relation expansion it is batched (one query per target collection, no N+1) and
+lifecycle-aware (a hidden or missing target is simply absent from `included`).
 
 #### i18n (Phase 2)
 
@@ -286,6 +340,30 @@ request carrying a valid preview token — the `X-DCMS-Preview` header (or a
 it is a secret and is never read from the config file). Without the token these
 params are ignored and the public view (live, non-trashed) is returned. A hidden
 record is answered with `404`, never `403`, so its existence doesn't leak.
+
+## Revisions / version history (ADR-0013)
+
+```yaml
+revisions: true
+# Keeps a full-snapshot version history of every record in the collection. On each
+# write DCMS captures the whole record as JSON in the same transaction (history can
+# never diverge from the record), labeled with the operation and a per-record
+# incrementing version:
+#   create / update / publish / unpublish / archive / restore / delete
+#
+#   GET  /api/v1/<collection>/:id/revisions                  history (newest first,
+#                                                            no snapshot blobs)
+#   GET  /api/v1/<collection>/:id/revisions/:version         one version + snapshot
+#   POST /api/v1/<collection>/:id/revisions/:version/restore roll content back
+#
+# Restore is content-only: it restores declared fields but leaves the managed
+# lifecycle columns (_status/_published_at/_deleted_at) as they are, and is itself
+# recorded as a new revision (history is append-only).
+#
+# History endpoints are gated by the same preview token as above (a request without
+# it gets 404). Snapshots live in an engine-managed `_revisions` collection that is
+# added only when at least one collection opts in.
+```
 
 ---
 
@@ -556,13 +634,14 @@ schema validation failed:
 
 For Phase 1, implement only:
 
-**Supported field types:** `string`, `text`, `number`, `integer`, `boolean`, `date`, `datetime`, `enum`, `json`
+**Supported field types:** `string`, `text`, `number`, `integer`, `boolean`, `date`, `datetime`, `enum`, `json`, `richtext`, `relation`, `file`
 
 **Supported collection directives:** `fields`, `timestamps`, `indexes`,
-`publishing`, `soft_delete`
+`publishing`, `soft_delete`, `revisions`
 
 **Supported endpoints:** list, create, get one, update, delete; plus (per
-directive) publish / unpublish / archive / restore transitions
+directive) publish / unpublish / archive / restore transitions and
+revisions list / get / restore
 
 **Query params:** `limit`, `cursor`, `sort`, `fields`, `filter` (eq only)
 

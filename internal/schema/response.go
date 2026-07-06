@@ -1,6 +1,7 @@
 package schema
 
 import (
+	"encoding/json"
 	"strings"
 	"time"
 )
@@ -12,19 +13,49 @@ import (
 // is the right place to restore the declared type before it hits the wire, so
 // the response matches the OpenAPI spec and the generated SDK types.
 //
-// Only booleans need coercing today. Integers/numbers already serialize
-// correctly, and deferred types (json, etc.) are handled when they land.
+// Booleans come back as integer 0/1 and are restored to true/false. Structured
+// columns (`json` and `richtext`) are stored as JSON text (see the sqlite
+// adapter) and are decoded back into objects/arrays here so the response carries
+// real structure, not an escaped string. Integers/numbers already serialize
+// correctly.
 func (c CollectionDef) CoerceResponse(data map[string]any) {
 	for _, f := range c.Fields {
-		if f.Type != TypeBoolean {
+		v, ok := data[f.Name]
+		if !ok || v == nil {
 			continue
 		}
-		if v, ok := data[f.Name]; ok && v != nil {
+		switch f.Type {
+		case TypeBoolean:
 			if b, ok := numToBool(v); ok {
 				data[f.Name] = b
 			}
+		case TypeJSON, TypeRichText:
+			if decoded, ok := decodeJSONColumn(v); ok {
+				data[f.Name] = decoded
+			}
 		}
 	}
+}
+
+// decodeJSONColumn parses a stored JSON column value (text or bytes, as an
+// adapter may hand it back) into its structured form. Reports false when the
+// value isn't a decodable string/bytes (already structured, or not JSON), leaving
+// the caller to keep the original.
+func decodeJSONColumn(v any) (any, bool) {
+	var raw []byte
+	switch s := v.(type) {
+	case string:
+		raw = []byte(s)
+	case []byte:
+		raw = s
+	default:
+		return nil, false
+	}
+	var out any
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil, false
+	}
+	return out, true
 }
 
 // numToBool converts the numeric forms a store may hand back into a bool.

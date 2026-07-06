@@ -21,7 +21,8 @@ const (
 	TypeEnum     FieldType = "enum"
 	TypeJSON     FieldType = "json"
 	TypeRelation FieldType = "relation"
-	TypeFile     FieldType = "file" // sugar: a relation to the engine's _media collection
+	TypeFile     FieldType = "file"     // sugar: a relation to the engine's _media collection
+	TypeRichText FieldType = "richtext" // structured (portable-text-style) content, stored as JSON (ADR-0014)
 
 	// TODO(phase-2): i18n
 	// TODO(phase-3): media, geo, computed
@@ -45,6 +46,12 @@ type FieldDef struct {
 	Target   string `json:"target,omitempty"`    // the collection this relation points at
 	Many     bool   `json:"many,omitempty"`      // false: belongs-to (FK column); true: many-to-many (join table)
 	OnDelete string `json:"on_delete,omitempty"` // belongs-to only: restrict (default) | cascade | set null
+
+	// Rich content fields (Type == richtext) — per-field allowlists (ADR-0014).
+	// Empty lists fall back to the built-in defaults (see richtext.go).
+	Styles []string `json:"styles,omitempty"` // allowed block styles (free-form labels)
+	Marks  []string `json:"marks,omitempty"`  // allowed decorators + annotation types
+	Blocks []string `json:"blocks,omitempty"` // allowed custom (non-text) block types
 }
 
 // Index describes a database index. Columns has one entry for a single-column
@@ -67,6 +74,9 @@ type CollectionDef struct {
 	// SoftDelete makes DELETE trash a record (_deleted_at) instead of removing
 	// it, hides trashed records from public reads, and exposes restore + purge.
 	SoftDelete bool `json:"soft_delete,omitempty"`
+	// Revisions captures append-only version history for the collection in the
+	// engine-managed _revisions collection (ADR-0013), with view/restore endpoints.
+	Revisions bool `json:"revisions,omitempty"`
 
 	// TODO(phase-2): I18n, Access, Vectorize
 	// TODO(phase-3): Hooks, Schedule

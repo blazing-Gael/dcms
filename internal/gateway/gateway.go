@@ -133,6 +133,11 @@ func (s *Server) Handler() http.Handler {
 		r.Post("/{collection}/{id}/unpublish", s.handleUnpublish)
 		r.Post("/{collection}/{id}/archive", s.handleArchive)
 		r.Post("/{collection}/{id}/restore", s.handleRestore)
+
+		// Version history (ADR-0013) — 404 on collections without `revisions`.
+		r.Get("/{collection}/{id}/revisions", s.handleRevisionList)
+		r.Get("/{collection}/{id}/revisions/{version}", s.handleRevisionGet)
+		r.Post("/{collection}/{id}/revisions/{version}/restore", s.handleRevisionRestore)
 	})
 
 	return r

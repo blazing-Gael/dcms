@@ -148,10 +148,15 @@ func (c *conn) Find(ctx context.Context, q store.Query) (store.Page, error) {
 	if where != "" {
 		whereSQL = " WHERE " + where
 	}
-	var total int64
-	countSQL := fmt.Sprintf("SELECT COUNT(*) FROM %s%s;", quote(q.Collection), whereSQL)
-	if err := c.exec.QueryRowContext(ctx, countSQL, filterArgs...).Scan(&total); err != nil {
-		return store.Page{}, err
+	// The total is a COUNT(*) over the filtered set — on a large table that's a
+	// scan, so the caller can skip it (Page.Total = -1) when it only needs the page
+	// (keyset pagination doesn't require a total).
+	total := int64(-1)
+	if !q.SkipCount {
+		countSQL := fmt.Sprintf("SELECT COUNT(*) FROM %s%s;", quote(q.Collection), whereSQL)
+		if err := c.exec.QueryRowContext(ctx, countSQL, filterArgs...).Scan(&total); err != nil {
+			return store.Page{}, err
+		}
 	}
 
 	// The list query's WHERE = filters AND (optional) keyset "seek" condition.

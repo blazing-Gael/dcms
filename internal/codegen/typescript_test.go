@@ -87,6 +87,38 @@ collections:
 	}
 }
 
+func TestTypeScript_RichText(t *testing.T) {
+	src := []byte(`
+version: "1"
+collections:
+  pages:
+    fields:
+      title: { type: string, required: true }
+      body:  { type: richtext }
+`)
+	def, err := schema.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	out, err := TypeScript(def)
+	if err != nil {
+		t.Fatalf("TypeScript: %v", err)
+	}
+	wants := []string{
+		"export type RichText =",          // the shared document type is emitted
+		"export interface RichTextBlock",  // node shape
+		"body?: RichText;",                // the field types to it
+		"export type Included =",          // the reference manifest type (ADR-0015)
+		"export function resolveRef(",     // the manifest resolver helper
+		"included?: Included;",            // list results carry the manifest
+	}
+	for _, w := range wants {
+		if !strings.Contains(out, w) {
+			t.Errorf("generated output missing %q", w)
+		}
+	}
+}
+
 func TestTypeScript_CreateOptionality(t *testing.T) {
 	out, err := TypeScript(fixture(t))
 	if err != nil {
