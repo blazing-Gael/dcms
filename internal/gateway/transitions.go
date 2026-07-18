@@ -94,6 +94,11 @@ func (s *Server) handleRestore(w http.ResponseWriter, r *http.Request) {
 // capturing a revision (labeled with operation) on revisioned collections. A
 // missing id surfaces as 404 via the store's ErrNotFound.
 func (s *Server) applyTransition(w http.ResponseWriter, r *http.Request, collection, operation string, data store.Record) {
+	// A transition is a managed write; authorize it like an update (ADR-0016).
+	id, _ := data["id"].(string)
+	if !s.authorizeRecordWrite(w, r, collection, id, schema.ActionUpdate) {
+		return
+	}
 	rec, err := s.updateAndRevise(r.Context(), collection, data, operation)
 	if err != nil {
 		writeStoreError(w, s.logger, r, err)

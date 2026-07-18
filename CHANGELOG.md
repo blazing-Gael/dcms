@@ -9,6 +9,33 @@ While on **0.x**, minor versions may include breaking changes.
 ## [Unreleased]
 
 ### Added
+- Authentication & authorization — milestone 1 (ADR-0016): the first
+  security-bearing layer of the engine.
+  - **Authorization** — collection `access:` rules are now live and enforced at
+    the gateway: per-operation `read`/`create`/`update`/`delete`, each one of
+    `public` | `authenticated` | `[role, …]` | `owner`. Denied writes → `403`
+    (`401` if anonymous); denied single reads → `404` (existence never leaks);
+    `owner` on a list narrows the query to the caller's own rows. Default when
+    omitted: reads `public`, writes `authenticated`. Roles named in a rule must be
+    declared under `auth.roles` (else a schema-compile error).
+  - **Authentication** — a `principal` (id + roles) is resolved once per request
+    by a pluggable `Authenticator` seam and feeds `store.WithActor`, so
+    `created_by`/`updated_by` come from the *verified* identity. Local identity
+    uses **opaque, DB-backed sessions** (not JWT — see ADR-0016 for the rationale
+    in a backend-per-customer model): `POST /auth/login` issues a token (body +
+    `HttpOnly` cookie), `POST /auth/logout` revokes it immediately, `GET /auth/me`
+    returns the principal. Passwords are bcrypt-hashed; `password_hash` is stripped
+    at every serialization choke point.
+  - **Engine collections** `_users` and `_sessions` are injected (reserved, not
+    JSON-CRUD routable). `auth:` config gains `provider`, `roles`, and
+    `session.ttl`; the reserved `jwt:`/`oidc:` blocks are for the later
+    external-identity milestone.
+  - **Bootstrap** — `dcms admin create` writes the first admin directly; on first
+    run an env-seeded admin (`DCMS_ADMIN_EMAIL`/`DCMS_ADMIN_PASSWORD`, env-only
+    secrets) is created when no users exist yet.
+  - **Contracts** — OpenAPI gains the `/auth/*` paths, a bearer/cookie security
+    scheme, and per-operation `x-access` + `security`; the TS client gains an
+    `auth` namespace (`login`/`logout`/`me`) with `Principal`/`LoginResult` types.
 - Record lifecycle (ADR-0012): opt-in per collection via `publishing: true`
   and/or `soft_delete: true`.
   - **Publishing** adds engine-managed `_status` (draft/published/archived) and

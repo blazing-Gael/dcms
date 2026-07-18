@@ -32,3 +32,4 @@ future selves.
 | [0013](./0013-revisions.md) | Revisions: append-only version history in an engine-managed `_revisions` collection, full snapshots captured in the write transaction | Accepted |
 | [0014](./0014-rich-content.md) | Rich content: a structured (portable-text-style) `richtext` field stored as JSON, with per-field allowlists and batched in-content reference validation | Accepted |
 | [0015](./0015-reference-manifest.md) | Reference resolution via a deduplicated root `included` manifest (pure AST); media returned as a public projection | Accepted |
+| [0016](./0016-authentication-and-authorization.md) | Auth: a principal spine + gateway-enforced `access:` rules (authz), with opaque DB-backed sessions for local identity (authn); `_users`/`_sessions` injected; JWT reserved for external OIDC | Accepted |

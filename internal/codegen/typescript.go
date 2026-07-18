@@ -508,9 +508,63 @@ function mediaClient(cfg: Config): MediaResource {
   };
 }
 
+// ─── Auth ───────────────────────────────────────────────────────────────────
+const AUTH_PATH = "/auth";
+
+export interface Principal {
+  id: string;
+  roles: string[];
+  email?: string;
+  name?: string;
+}
+
+export interface LoginResult {
+  token: string;
+  expires_at: string;
+  user: Principal;
+}
+
+export interface AuthResource {
+  /** Exchange email + password for an opaque session token (also set as a cookie). */
+  login(email: string, password: string): Promise<LoginResult>;
+  /** Revoke the current session (idempotent). */
+  logout(): Promise<void>;
+  /** The current principal; throws DcmsError with status 401 when unauthenticated. */
+  me(): Promise<Principal>;
+}
+
+function authClient(cfg: Config): AuthResource {
+  const abs = (p: string) => cfg.origin + AUTH_PATH + p;
+  const parse = async (res: Response): Promise<any> => {
+    if (res.status === 204) return undefined;
+    let body: any = undefined;
+    try { body = await res.json(); } catch { /* empty */ }
+    if (!res.ok) {
+      const e = (body && body.error) || {};
+      throw new DcmsError(e.message || res.statusText, e.code || "ERROR", res.status, e.fields);
+    }
+    return body;
+  };
+  return {
+    async login(email: string, password: string): Promise<LoginResult> {
+      const headers = { ...(await resolveHeaders(cfg.headers)), "Content-Type": "application/json" };
+      const res = await cfg.fetch(abs("/login"), { method: "POST", headers, body: JSON.stringify({ email, password }) });
+      return (await parse(res)) as LoginResult;
+    },
+    async logout(): Promise<void> {
+      await parse(await cfg.fetch(abs("/logout"), { method: "POST", headers: await resolveHeaders(cfg.headers) }));
+    },
+    async me(): Promise<Principal> {
+      const res = await cfg.fetch(abs("/me"), { method: "GET", headers: await resolveHeaders(cfg.headers) });
+      return (await parse(res)).data as Principal;
+    },
+  };
+}
+
 // ─── Client ─────────────────────────────────────────────────────────────────
 export interface DcmsClient {
   readonly contractVersion: string;
+  auth: AuthResource;
   media: MediaResource;
 {{- range .Collections}}{{if not .Reserved}}
   {{.Collection}}: Resource<{{.Type}}, Create{{.Type}}, Update{{.Type}}>{{if .Publishing}} & Publishable<{{.Type}}>{{end}}{{if .SoftDelete}} & SoftDeletable<{{.Type}}>{{end}};
@@ -525,6 +579,7 @@ export function createClient(options: ClientOptions): DcmsClient {
   };
   return {
     contractVersion: CONTRACT_VERSION,
+    auth: authClient(cfg),
     media: mediaClient(cfg),
 {{- range .Collections}}{{if not .Reserved}}
     {{.Collection}}: Object.assign(resource<{{.Type}}, Create{{.Type}}, Update{{.Type}}>(cfg, "{{.Collection}}"){{if .Publishing}}, publishable<{{.Type}}>(cfg, "{{.Collection}}"){{end}}{{if .SoftDelete}}, softDeletable<{{.Type}}>(cfg, "{{.Collection}}"){{end}}),

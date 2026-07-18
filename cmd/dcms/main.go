@@ -53,6 +53,7 @@ func newRootCmd() *cobra.Command {
 		newValidateCmd(),
 		newCodegenCmd(),
 		newMigrateCmd(),
+		newAdminCmd(),
 		newVersionCmd(),
 	)
 	return root
@@ -140,6 +141,13 @@ func newDevCmd() *cobra.Command {
 				return err
 			}
 
+			// Seed the first admin from env when the user table is empty (ADR-0016),
+			// so a fresh backend is reachable without a chicken-and-egg lockout.
+			logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+			if err := gateway.EnsureSeedAdmin(ctx, db, cfg.Auth.AdminEmail, cfg.Auth.AdminPassword, logger); err != nil {
+				return err
+			}
+
 			// Strict response validation defaults ON for `dev` (the guardrail is
 			// most useful while iterating) unless the config sets it explicitly.
 			validateResponses := true
@@ -163,7 +171,6 @@ func newDevCmd() *cobra.Command {
 				return err
 			}
 
-			logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
 			fmt.Printf("dcms dev — %d collection(s) from %s\n", len(def.Collections), cfg.Schema)
 			fmt.Printf("listening on http://localhost:%d  (Ctrl+C to stop)\n", cfg.Server.Port)
 			return engine.Serve(ctx, def, db, fmt.Sprintf(":%d", cfg.Server.Port), logger, gateway.Options{
@@ -172,6 +179,7 @@ func newDevCmd() *cobra.Command {
 				MaxUploadBytes:      cfg.Media.MaxUploadBytes,
 				AllowedContentTypes: cfg.Media.AllowedContentTypes,
 				PreviewToken:        cfg.Content.PreviewToken,
+				Authenticator:       gateway.NewSessionAuthenticator(db),
 			})
 		},
 	}
@@ -288,6 +296,77 @@ func newMigrateCmd() *cobra.Command {
 	cmd.Flags().String("schema", "./dcms.schema.yaml", "path to the schema file")
 	cmd.Flags().String("db", "./dcms.db", "path to the SQLite database file")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "print the migration SQL without applying it")
+	return cmd
+}
+
+// newAdminCmd groups administrative commands. Today it holds `admin create`, the
+// bootstrap path for the first (or any) user account (ADR-0016).
+func newAdminCmd() *cobra.Command {
+	admin := &cobra.Command{
+		Use:   "admin",
+		Short: "Administrative commands (user bootstrap, etc.)",
+	}
+	admin.AddCommand(newAdminCreateCmd())
+	return admin
+}
+
+// newAdminCreateCmd creates a user directly in the store, bypassing the HTTP
+// authz layer — the only way to make the first admin before anyone can log in.
+// The password is a secret; prefer supplying it via DCMS_ADMIN_PASSWORD over the
+// --password flag (which can leak into shell history).
+func newAdminCreateCmd() *cobra.Command {
+	var email, password string
+	var roles []string
+	cmd := &cobra.Command{
+		Use:   "create",
+		Short: "Create a user (bootstrap the first admin)",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := resolveConfig(cmd)
+			if err != nil {
+				return err
+			}
+			if err := requireSQLite(cfg); err != nil {
+				return err
+			}
+			// Credentials fall back to the same env the server seeds from.
+			if email == "" {
+				email = cfg.Auth.AdminEmail
+			}
+			if password == "" {
+				password = cfg.Auth.AdminPassword
+			}
+			if email == "" || password == "" {
+				return fmt.Errorf("both --email and --password (or DCMS_ADMIN_EMAIL/DCMS_ADMIN_PASSWORD) are required")
+			}
+
+			def, err := engine.LoadSchema(cfg.Schema)
+			if err != nil {
+				return err
+			}
+			db, err := engine.OpenStore(cfg.Database.Path)
+			if err != nil {
+				return err
+			}
+			defer db.Close()
+
+			ctx := context.Background()
+			// Ensure the identity tables exist before writing to them.
+			if err := engine.Apply(ctx, db, def); err != nil {
+				return err
+			}
+			rec, err := gateway.CreateUser(ctx, db, email, password, roles)
+			if err != nil {
+				return err
+			}
+			fmt.Printf("created user %s (id %v, roles %v)\n", email, rec["id"], roles)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&email, "email", "", "user email (login identifier)")
+	cmd.Flags().StringVar(&password, "password", "", "user password (prefer DCMS_ADMIN_PASSWORD)")
+	cmd.Flags().StringSliceVar(&roles, "role", []string{"admin"}, "roles to assign (repeatable)")
+	cmd.Flags().String("schema", "./dcms.schema.yaml", "path to the schema file")
+	cmd.Flags().String("db", "./dcms.db", "path to the SQLite database file")
 	return cmd
 }
 

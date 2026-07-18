@@ -78,7 +78,12 @@ type CollectionDef struct {
 	// engine-managed _revisions collection (ADR-0013), with view/restore endpoints.
 	Revisions bool `json:"revisions,omitempty"`
 
-	// TODO(phase-2): I18n, Access, Vectorize
+	// Access is the per-operation authorization policy (ADR-0016), enforced at
+	// the gateway. Nil (or a nil action) falls back to the engine default:
+	// reads public, writes authenticated. See CollectionDef.AccessRule.
+	Access *AccessRules `json:"access,omitempty"`
+
+	// TODO(phase-2): I18n, Vectorize
 	// TODO(phase-3): Hooks, Schedule
 }
 
@@ -93,5 +98,6 @@ type Meta struct {
 type SchemaDefinition struct {
 	Version     string          `json:"version"`
 	Meta        Meta            `json:"meta"`
+	Auth        AuthConfig      `json:"auth,omitempty"`
 	Collections []CollectionDef `json:"collections"`
 }

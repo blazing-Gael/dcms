@@ -146,6 +146,7 @@ func ifNoneMatch(header, etag string) bool {
 func (s *Server) writeRecord(w http.ResponseWriter, r *http.Request, status int, collection string, rec store.Record, expand []string) {
 	cd := s.collections[collection]
 	cd.CoerceResponse(rec)
+	redactSecrets(collection, rec)
 	if s.opts.ValidateResponses {
 		if errs := cd.ValidateResponse(rec); errs != nil {
 			s.logger.Error("response contract violation",
@@ -171,6 +172,7 @@ func (s *Server) writeRecords(w http.ResponseWriter, r *http.Request, collection
 	cd := s.collections[collection]
 	for _, rec := range page.Data {
 		cd.CoerceResponse(rec)
+		redactSecrets(collection, rec)
 	}
 	if s.opts.ValidateResponses {
 		for _, rec := range page.Data {

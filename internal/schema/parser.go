@@ -36,6 +36,8 @@ func Parse(src []byte) (*SchemaDefinition, error) {
 	def.injectMedia()
 	// Inject the _revisions collection when any collection opts in (ADR-0013).
 	def.injectRevisions()
+	// Inject the engine-managed identity collections _users/_sessions (ADR-0016).
+	def.injectAuth()
 	return def, nil
 }
 
@@ -51,6 +53,7 @@ func Parse(src []byte) (*SchemaDefinition, error) {
 type rawSchema struct {
 	Version     string    `yaml:"version"`
 	Meta        Meta      `yaml:"meta"`
+	Auth        yaml.Node `yaml:"auth"`
 	Collections yaml.Node `yaml:"collections"`
 }
 
@@ -94,6 +97,13 @@ func mappingEntries(n *yaml.Node) ([]nodeEntry, error) {
 
 func (r rawSchema) toDefinition() (*SchemaDefinition, error) {
 	def := &SchemaDefinition{Version: r.Version, Meta: r.Meta}
+	if r.Auth.Kind != 0 {
+		auth, err := parseAuth(&r.Auth)
+		if err != nil {
+			return nil, fmt.Errorf("schema: auth: %w", err)
+		}
+		def.Auth = auth
+	}
 	if r.Collections.Kind == 0 {
 		return def, nil // no collections — Validate reports it
 	}
@@ -145,10 +155,15 @@ func toCollection(name string, node *yaml.Node) (CollectionDef, error) {
 			if err := e.Val.Decode(&col.Revisions); err != nil {
 				return col, fmt.Errorf("revisions: %w", err)
 			}
+		case "access":
+			col.Access, err = parseAccess(e.Val)
+			if err != nil {
+				return col, fmt.Errorf("access: %w", err)
+			}
 		default:
-			// Phase 2+ directives (access, hooks, vectorize, i18n, schedule) are
-			// recognised but skipped in Phase 1.
-			// TODO(phase-2): parse access, vectorize, i18n.
+			// Later directives (hooks, vectorize, i18n, schedule) are recognised
+			// but skipped for now.
+			// TODO(phase-2): parse vectorize, i18n.
 			// TODO(phase-3): parse hooks, schedule.
 		}
 	}

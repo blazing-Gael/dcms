@@ -19,13 +19,18 @@ collections:
 		t.Fatalf("Parse: %v", err)
 	}
 
-	// _media is always injected, last.
-	last := def.Collections[len(def.Collections)-1]
-	if last.Name != MediaCollection {
-		t.Fatalf("_media not injected (got %q)", last.Name)
+	// _media is always injected (after user collections, before identity ones).
+	var media *CollectionDef
+	for i := range def.Collections {
+		if def.Collections[i].Name == MediaCollection {
+			media = &def.Collections[i]
+		}
+	}
+	if media == nil {
+		t.Fatalf("_media not injected")
 	}
 	cols := map[string]bool{}
-	for _, f := range last.Fields {
+	for _, f := range media.Fields {
 		cols[f.Name] = true
 	}
 	for _, want := range []string{MediaFilename, MediaContentType, MediaSize, MediaStorageKey} {

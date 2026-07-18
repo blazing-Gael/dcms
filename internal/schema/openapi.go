@@ -24,28 +24,33 @@ func (s *SchemaDefinition) OpenAPI() obj {
 		schemas[name+"CreateInput"] = c.createInputSchema()
 		schemas[name+"UpdateInput"] = c.updateInputSchema()
 
-		paths[base+"/"+c.Name] = obj{
-			"get":  listOp(c.Name, name),
-			"post": createOp(c.Name, name),
-		}
-		paths[base+"/"+c.Name+"/{id}"] = obj{
-			"get":    getOneOp(c.Name, name),
-			"patch":  updateOp(c.Name, name),
-			"delete": deleteOp(c.Name, name),
-		}
-		// Lifecycle transition endpoints (ADR-0012).
+		listGet := annotateAccess(listOp(c.Name, name), c.AccessRule(ActionRead))
+		createPost := annotateAccess(createOp(c.Name, name), c.AccessRule(ActionCreate))
+		getOne := annotateAccess(getOneOp(c.Name, name), c.AccessRule(ActionRead))
+		patch := annotateAccess(updateOp(c.Name, name), c.AccessRule(ActionUpdate))
+		del := annotateAccess(deleteOp(c.Name, name), c.AccessRule(ActionDelete))
+
+		paths[base+"/"+c.Name] = obj{"get": listGet, "post": createPost}
+		paths[base+"/"+c.Name+"/{id}"] = obj{"get": getOne, "patch": patch, "delete": del}
+		// Lifecycle transition endpoints (ADR-0012); a transition is a managed write,
+		// so it carries the collection's update access (ADR-0016).
 		if c.Publishing {
-			paths[base+"/"+c.Name+"/{id}/publish"] = obj{"post": transitionOp(c.Name, name, "Publish (optionally schedule via {\"at\": <RFC3339>})")}
-			paths[base+"/"+c.Name+"/{id}/unpublish"] = obj{"post": transitionOp(c.Name, name, "Unpublish (return to draft)")}
-			paths[base+"/"+c.Name+"/{id}/archive"] = obj{"post": transitionOp(c.Name, name, "Archive (retire, kept but hidden)")}
+			paths[base+"/"+c.Name+"/{id}/publish"] = obj{"post": annotateAccess(transitionOp(c.Name, name, "Publish (optionally schedule via {\"at\": <RFC3339>})"), c.AccessRule(ActionUpdate))}
+			paths[base+"/"+c.Name+"/{id}/unpublish"] = obj{"post": annotateAccess(transitionOp(c.Name, name, "Unpublish (return to draft)"), c.AccessRule(ActionUpdate))}
+			paths[base+"/"+c.Name+"/{id}/archive"] = obj{"post": annotateAccess(transitionOp(c.Name, name, "Archive (retire, kept but hidden)"), c.AccessRule(ActionUpdate))}
 		}
 		if c.SoftDelete {
-			paths[base+"/"+c.Name+"/{id}/restore"] = obj{"post": transitionOp(c.Name, name, "Restore a soft-deleted record")}
+			paths[base+"/"+c.Name+"/{id}/restore"] = obj{"post": annotateAccess(transitionOp(c.Name, name, "Restore a soft-deleted record"), c.AccessRule(ActionUpdate))}
 		}
 	}
 
 	// The media library's byte-path endpoints (ADR-0011).
 	for p, op := range mediaPaths() {
+		paths[p] = op
+	}
+
+	// Local authentication endpoints (ADR-0016).
+	for p, op := range authPaths() {
 		paths[p] = op
 	}
 
@@ -59,10 +64,75 @@ func (s *SchemaDefinition) OpenAPI() obj {
 	}
 
 	return obj{
-		"openapi":    "3.1.0",
-		"info":       info,
-		"paths":      paths,
-		"components": obj{"schemas": schemas},
+		"openapi": "3.1.0",
+		"info":    info,
+		"paths":   paths,
+		"components": obj{
+			"schemas": schemas,
+			"securitySchemes": obj{
+				// Opaque session token: `Authorization: Bearer <token>` from
+				// POST /auth/login, or the dcms_session cookie (ADR-0016).
+				"sessionToken": obj{"type": "http", "scheme": "bearer"},
+				"sessionCookie": obj{
+					"type": "apiKey", "in": "cookie", "name": "dcms_session",
+				},
+			},
+		},
+	}
+}
+
+// annotateAccess records a route's authorization rule (ADR-0016) on its operation
+// object: a human-readable x-access note plus, for any non-public rule, a security
+// requirement so generated clients and docs know a session token is needed.
+func annotateAccess(op obj, rule Rule) obj {
+	op["x-access"] = accessNote(rule)
+	if rule.Kind != RulePublic {
+		op["security"] = []obj{{"sessionToken": []string{}}, {"sessionCookie": []string{}}}
+	}
+	return op
+}
+
+// accessNote renders an access rule as a short human-readable string.
+func accessNote(rule Rule) string {
+	switch rule.Kind {
+	case RuleRoles:
+		return "roles: " + strings.Join(rule.Roles, ", ")
+	default:
+		return string(rule.Kind)
+	}
+}
+
+// authPaths returns the OpenAPI paths for the local auth endpoints (ADR-0016).
+func authPaths() obj {
+	credentials := obj{
+		"type":     "object",
+		"required": []string{"email", "password"},
+		"properties": obj{
+			"email":    obj{"type": "string", "format": "email"},
+			"password": obj{"type": "string", "format": "password"},
+		},
+	}
+	return obj{
+		"/auth/login": obj{"post": obj{
+			"summary":     "Log in with email + password; returns an opaque session token",
+			"tags":        []string{"auth"},
+			"requestBody": obj{"required": true, "content": obj{"application/json": obj{"schema": credentials}}},
+			"responses": obj{
+				"200": obj{"description": "authenticated; token in body and Set-Cookie"},
+				"401": obj{"description": "invalid email or password"},
+			},
+		}},
+		"/auth/logout": obj{"post": obj{
+			"summary":   "Revoke the current session",
+			"tags":      []string{"auth"},
+			"responses": obj{"204": obj{"description": "logged out (idempotent)"}},
+		}},
+		"/auth/me": obj{"get": obj{
+			"summary":   "Return the current principal (id, roles, email)",
+			"tags":      []string{"auth"},
+			"security":  []obj{{"sessionToken": []string{}}, {"sessionCookie": []string{}}},
+			"responses": obj{"200": obj{"description": "the authenticated principal"}, "401": obj{"description": "not authenticated"}},
+		}},
 	}
 }
 

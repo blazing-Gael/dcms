@@ -55,11 +55,19 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Authorize the read (ADR-0016). A role/public/authenticated rule gates the
+	// whole endpoint; an `owner` rule narrows the query to the caller's own rows.
+	ownerFilters, ok := s.listReadFilters(w, r, collection)
+	if !ok {
+		return
+	}
+
 	q, err := s.parseListQuery(r.URL.Query(), collection)
 	if err != nil {
 		writeStoreError(w, s.logger, r, err)
 		return
 	}
+	q.Filters = append(q.Filters, ownerFilters...)
 	// Hide non-live / trashed records unless the request's view widens (ADR-0012).
 	q.Filters = append(q.Filters, s.lifecycleFilters(collection, visibilityFromContext(r.Context()))...)
 
@@ -75,6 +83,9 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 	collection := chi.URLParam(r, "collection")
 	if !s.routableCollection(collection) {
 		s.handleNotFound(w, r)
+		return
+	}
+	if !s.authorizeCreate(w, r, collection) {
 		return
 	}
 
@@ -137,9 +148,11 @@ func (s *Server) handleGetOne(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, s.logger, r, err)
 		return
 	}
-	// A record hidden by the request's lifecycle view is 404 — never 403, so its
-	// existence doesn't leak (ADR-0012).
-	if !s.recordVisible(collection, rec, visibilityFromContext(r.Context())) {
+	// A record hidden by the request's lifecycle view (ADR-0012) or not readable
+	// under the access rule (ADR-0016) is 404 — never 403, so neither its existence
+	// nor an owner boundary leaks.
+	if !s.recordVisible(collection, rec, visibilityFromContext(r.Context())) ||
+		!s.recordReadable(r.Context(), collection, rec) {
 		writeError(w, http.StatusNotFound, apiError{Code: "NOT_FOUND", Message: "record not found"})
 		return
 	}
@@ -150,6 +163,9 @@ func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
 	collection := chi.URLParam(r, "collection")
 	if !s.routableCollection(collection) {
 		s.handleNotFound(w, r)
+		return
+	}
+	if !s.authorizeRecordWrite(w, r, collection, chi.URLParam(r, "id"), schema.ActionUpdate) {
 		return
 	}
 
@@ -209,6 +225,9 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := chi.URLParam(r, "id")
+	if !s.authorizeRecordWrite(w, r, collection, id, schema.ActionDelete) {
+		return
+	}
 
 	// Soft-delete collections trash the row (reversible via /restore) unless the
 	// caller asks to purge. Purge falls through to the hard delete below and still

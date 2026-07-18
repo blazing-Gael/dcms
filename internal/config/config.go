@@ -33,6 +33,16 @@ type Config struct {
 	Server   Server   `yaml:"server"`
 	Media    Media    `yaml:"media"`
 	Content  Content  `yaml:"content"`
+	Auth     Auth     `yaml:"auth"`
+}
+
+// Auth carries runtime auth secrets (ADR-0016). Both fields are env-only
+// (DCMS_ADMIN_EMAIL / DCMS_ADMIN_PASSWORD) — the yaml:"-" keeps the bootstrap
+// credential out of any committed config file, per the secrets rule (ADR-0009).
+// They seed the first admin on startup when no users exist yet.
+type Auth struct {
+	AdminEmail    string `yaml:"-"`
+	AdminPassword string `yaml:"-"`
 }
 
 // Content configures record-lifecycle behavior (ADR-0012).
@@ -177,6 +187,14 @@ func (c *Config) ApplyEnv() error {
 	}
 	if v, ok := os.LookupEnv("DCMS_PREVIEW_TOKEN"); ok {
 		c.Content.PreviewToken = v
+	}
+	// Bootstrap admin credentials are env-only (secrets rule); they seed the first
+	// admin when the user table is empty (ADR-0016).
+	if v, ok := os.LookupEnv("DCMS_ADMIN_EMAIL"); ok {
+		c.Auth.AdminEmail = v
+	}
+	if v, ok := os.LookupEnv("DCMS_ADMIN_PASSWORD"); ok {
+		c.Auth.AdminPassword = v
 	}
 	return nil
 }

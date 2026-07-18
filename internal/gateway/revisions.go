@@ -114,7 +114,7 @@ func (s *Server) handleRevisionList(w http.ResponseWriter, r *http.Request) {
 		s.handleNotFound(w, r)
 		return
 	}
-	if s.previewDenied(r) {
+	if s.previewDenied(r) || !s.authorizeCollectionRead(r, collection) {
 		s.handleNotFound(w, r)
 		return
 	}
@@ -145,7 +145,7 @@ func (s *Server) handleRevisionGet(w http.ResponseWriter, r *http.Request) {
 		s.handleNotFound(w, r)
 		return
 	}
-	if s.previewDenied(r) {
+	if s.previewDenied(r) || !s.authorizeCollectionRead(r, collection) {
 		s.handleNotFound(w, r)
 		return
 	}
@@ -169,6 +169,9 @@ func (s *Server) handleRevisionRestore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := chi.URLParam(r, "id")
+	if !s.authorizeRecordWrite(w, r, collection, id, schema.ActionUpdate) {
+		return
+	}
 	rev, err := s.findRevision(r.Context(), collection, id, chi.URLParam(r, "version"))
 	if err != nil {
 		writeStoreError(w, s.logger, r, err)

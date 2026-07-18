@@ -367,20 +367,31 @@ revisions: true
 
 ---
 
-## Access control (Phase 2)
+## Access control (collection-level rules are LIVE — ADR-0016)
 
 ```yaml
 access:
   read:    public              # anyone, no auth required
-  create:  [admin, vendor]     # authenticated users with these roles
-  update:  [admin, vendor]
+  create:  [admin, vendor]     # authenticated users with one of these roles
+  update:  owner               # the user who created the record
   delete:  [admin]
-  # special values:
-  #   public      — no authentication required
-  #   authenticated — any valid JWT, regardless of role
-  #   [role, ...]  — one of the listed roles
-  #   owner       — the user who created the record (matches created_by field)
+  # rule values:
+  #   public         — no authentication required
+  #   authenticated  — any valid principal, regardless of role
+  #   [role, ...]    — the principal holds at least one listed role
+  #   owner          — the principal is the record's created_by
 ```
+
+Enforcement (ADR-0016) is at the gateway, above the store:
+
+- A **denied write** (create/update/delete/transition) → `403` (or `401` if the
+  caller is anonymous). A **denied single read** → `404`, never `403`, so a
+  record's existence never leaks. `owner` on a **list** read narrows the query to
+  the caller's own rows rather than forbidding the endpoint.
+- **Default when `access:` is omitted:** reads are `public`, writes are
+  `authenticated`. Tightening is additive, per collection.
+- Roles named in a rule must be declared under `auth.roles` (a typo is a
+  schema-compile error). There is no role hierarchy — list every role that passes.
 
 Field-level access (Phase 2):
 
@@ -451,29 +462,45 @@ brand:
 
 ---
 
-## Auth configuration (Phase 2)
+## Auth configuration (local provider is LIVE — ADR-0016)
 
 ```yaml
 auth:
-  provider: local                   # local | oidc | both
-  jwt:
-    algorithm: HS256                # HS256 | RS256
-    secret: ${JWT_SECRET}           # env var reference
-    access_ttl: 15m
-    refresh_ttl: 7d
-  roles:                            # role definitions
+  provider: local                   # local | oidc | both (default local)
+  session:                          # local provider: opaque DB-backed sessions
+    ttl: 168h                       # Go duration; default 7 days
+  roles:                            # role definitions (referenced by access rules)
     admin:
       label: "Administrator"
     vendor:
       label: "Vendor"
     customer:
       label: "Customer"
-  # OIDC config (if provider: oidc or both):
-  oidc:
+
+  # ── Reserved for the external-identity milestone (not yet enforced) ──
+  jwt:                              # applies to the EXTERNAL provider only
+    algorithm: HS256                # HS256 | RS256
+    secret: ${JWT_SECRET}
+  oidc:                            # provider: oidc | both
     issuer: "https://accounts.google.com"
     client_id: ${OIDC_CLIENT_ID}
     client_secret: ${OIDC_CLIENT_SECRET}
 ```
+
+**Local identity uses opaque, DB-backed sessions, not JWT** (ADR-0016). Login at
+`POST /auth/login` exchanges `{email, password}` for a session token (returned in
+the body and as an `HttpOnly` cookie); send it back as `Authorization: Bearer
+<token>` or the cookie. `POST /auth/logout` revokes it immediately; `GET /auth/me`
+returns the current principal. The `jwt:` block above pertains to the *external*
+OIDC provider (a later milestone), where DCMS verifies tokens issued by the IdP.
+
+Two engine-managed collections back this: `_users` (email, password_hash, roles)
+and `_sessions` — both reserved and not JSON-CRUD routable. `password_hash` is
+never serialized in any response.
+
+**Bootstrap:** create the first admin with `dcms admin create --email … --password
+…`, or set `DCMS_ADMIN_EMAIL` / `DCMS_ADMIN_PASSWORD` (env-only secrets) and the
+server seeds an admin on first run when no users exist yet.
 
 ---
 

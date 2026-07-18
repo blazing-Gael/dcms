@@ -2,7 +2,8 @@
 //
 // For every collection it registers CRUD routes (list/create/get/update/delete)
 // plus the introspection endpoints (/__schema, /__health, /__ready). Authorization
-// (RBAC) is enforced here at the gateway layer in Phase 2 — never inside the store.
+// (the schema `access:` rules) is enforced here at the gateway layer — never inside
+// the store (ADR-0003, ADR-0016).
 //
 // See DEV_ROADMAP.md section 1.3 for the Phase 1 router acceptance criteria.
 package gateway
@@ -61,6 +62,12 @@ type Options struct {
 	// drafts/scheduled/archived/trashed content through ?status / ?include_deleted.
 	// Empty disables the bypass — public reads only. Supplied via env only.
 	PreviewToken string
+
+	// Authenticator resolves a request's principal (ADR-0016). When set,
+	// authorization (the `access:` rules) is enforced; when nil, auth is not
+	// configured and enforcement is bypassed (pre-auth behavior). Production wires
+	// the session-backed authenticator; tests may leave it nil or supply a stub.
+	Authenticator Authenticator
 }
 
 // Server wires a parsed schema and a storage adapter into an http.Handler.
@@ -96,6 +103,7 @@ func (s *Server) Handler() http.Handler {
 	r.Use(middleware.RequestID)
 	r.Use(s.requestLogger)
 	r.Use(s.recoverer)
+	r.Use(s.withPrincipal)  // resolve the request's identity once (ADR-0016)
 	r.Use(s.withVisibility) // resolve the request's lifecycle view once (ADR-0012)
 
 	r.NotFound(s.handleNotFound)
@@ -107,6 +115,13 @@ func (s *Server) Handler() http.Handler {
 	r.Get("/__schema", s.handleSchema)
 	r.Get("/__openapi", s.handleOpenAPI)
 	r.Get("/__docs", s.handleDocs)
+
+	// Local authentication (ADR-0016) — outside the collection API.
+	r.Route("/auth", func(r chi.Router) {
+		r.Post("/login", s.handleLogin)
+		r.Post("/logout", s.handleLogout)
+		r.Get("/me", s.handleMe)
+	})
 
 	// Media library (byte path) — outside the collection API (ADR-0011).
 	r.Route(mediaBasePath, func(r chi.Router) {

@@ -117,6 +117,17 @@ func (s *Server) coerceExpanded(collection string, rec store.Record) {
 	if collection == schema.MediaCollection {
 		s.addMediaURL(rec)
 	}
+	redactSecrets(collection, rec)
+}
+
+// redactSecrets strips fields that must never reach a client from a serialized
+// record. Today that is _users.password_hash — the same defense-in-depth pattern
+// as media's storage_key (ADR-0016): applied at every serialization choke point,
+// so no expansion, manifest, or list path can leak it.
+func redactSecrets(collection string, rec store.Record) {
+	if collection == schema.UsersCollection {
+		delete(rec, schema.UserPasswordHash)
+	}
 }
 
 // writeMedia shapes and writes a single media record, adding its url and honoring

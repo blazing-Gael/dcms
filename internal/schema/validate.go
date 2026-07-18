@@ -61,6 +61,24 @@ func (s *SchemaDefinition) Validate() error {
 		allCols[col.Name] = true
 	}
 
+	// Declared roles (ADR-0016), validated once and reused when checking that every
+	// role named in an access rule actually exists.
+	roleSet := make(map[string]bool, len(s.Auth.Roles))
+	for i, r := range s.Auth.Roles {
+		switch {
+		case r.Name == "":
+			add("auth.roles[%d]: role name is empty", i)
+		case !nameRe.MatchString(r.Name):
+			add("auth.roles.%s: invalid role name (must be lowercase snake_case, starting with a letter)", r.Name)
+		case roleSet[r.Name]:
+			add("auth.roles.%s: duplicate role", r.Name)
+		}
+		roleSet[r.Name] = true
+	}
+	if p := s.Auth.Provider; p != "" && p != "local" && p != "oidc" && p != "both" {
+		add("auth.provider: %q is not one of local, oidc, both", p)
+	}
+
 	seenCol := make(map[string]bool)
 	for _, col := range s.Collections {
 		cpath := "collections." + col.Name
@@ -183,6 +201,25 @@ func (s *SchemaDefinition) Validate() error {
 			if f.Pattern != "" {
 				if _, err := regexp.Compile(f.Pattern); err != nil {
 					add("%s: invalid pattern: %v", fpath, err)
+				}
+			}
+		}
+
+		// Access rules (ADR-0016): every role named in a rule must be declared in
+		// auth.roles, so a typo fails fast at compile time instead of silently
+		// locking everyone out at request time.
+		if col.Access != nil {
+			for action, rule := range map[AccessAction]*Rule{
+				ActionRead: col.Access.Read, ActionCreate: col.Access.Create,
+				ActionUpdate: col.Access.Update, ActionDelete: col.Access.Delete,
+			} {
+				if rule == nil || rule.Kind != RuleRoles {
+					continue
+				}
+				for _, role := range rule.Roles {
+					if !roleSet[role] {
+						add("%s.access.%s: role %q is not declared in auth.roles", cpath, action, role)
+					}
 				}
 			}
 		}
