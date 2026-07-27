@@ -137,7 +137,7 @@ func (s *Server) expandM2M(ctx context.Context, collection, target string, rec s
 		return err
 	}
 	for _, r := range page.Data {
-		s.coerceExpanded(target, r)
+		s.coerceExpanded(ctx, target, r)
 	}
 	if page.Data == nil {
 		rec[field] = []store.Record{}

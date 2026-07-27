@@ -52,6 +52,11 @@ type FieldDef struct {
 	Styles []string `json:"styles,omitempty"` // allowed block styles (free-form labels)
 	Marks  []string `json:"marks,omitempty"`  // allowed decorators + annotation types
 	Blocks []string `json:"blocks,omitempty"` // allowed custom (non-text) block types
+
+	// Access is the field's per-direction policy (ADR-0016 milestone 2). Nil
+	// means unrestricted. Read masks the field out of responses; Write drops an
+	// unauthorized writer's value. Enforced at the gateway, never in the store.
+	Access *FieldAccess `json:"access,omitempty"`
 }
 
 // Index describes a database index. Columns has one entry for a single-column

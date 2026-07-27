@@ -36,6 +36,30 @@ While on **0.x**, minor versions may include breaking changes.
   - **Contracts** — OpenAPI gains the `/auth/*` paths, a bearer/cookie security
     scheme, and per-operation `x-access` + `security`; the TS client gains an
     `auth` namespace (`login`/`logout`/`me`) with `Principal`/`LoginResult` types.
+- Authentication & authorization — milestone 2 (ADR-0016): **field-level access**
+  via `fields.<name>.access` with the same rule grammar as collection access.
+  - **`read` masks** — an unauthorized reader still gets the record, just without
+    the field (single, list, and `?expand`ed responses alike). Masking runs at the
+    serialization choke points *after* response-contract validation.
+  - **`write` filters** — an unauthorized writer's value for the field is silently
+    dropped, not rejected, so round-tripping a masked record never `4xx`s. On
+    create an `owner` write rule collapses to `authenticated`; on update it is
+    checked against the stored `created_by`, loaded lazily (no extra read unless
+    such a field is actually present in the body).
+  - Enforced only when auth is enabled and the collection declares a field rule
+    (`HasFieldAccess`), so the common path pays nothing. Only `read`/`write` keys
+    are valid; unknown keys and undeclared roles are schema-compile errors.
+  - **Contracts** — a field's JSON Schema gains `x-access-read`/`x-access-write`
+    annotations so generated clients/docs know a field may be absent or ignored.
+  - **Reference schema** — `examples/farmly.schema.yaml` now demonstrates a read
+    mask (`orders.payment_reference` → admin-only) and write masks
+    (`reviews.status`, `reviews.is_verified_purchase` → admin-only, so a customer
+    cannot self-approve or self-verify their own review).
+  - **Reference schema (M1)** — `examples/farmly.schema.yaml` also declares `auth:`
+    (roles `admin`/`vendor`/`customer`, 7-day sessions) and a real `access:`
+    policy per collection: public storefront reads, role-gated authoring,
+    admin-only PII, and `owner`-scoped orders. A new schema test compiles every
+    shipped example and pins farmly's access wiring.
 - Record lifecycle (ADR-0012): opt-in per collection via `publishing: true`
   and/or `soft_delete: true`.
   - **Publishing** adds engine-managed `_status` (draft/published/archived) and

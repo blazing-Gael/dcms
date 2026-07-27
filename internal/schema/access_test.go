@@ -106,6 +106,119 @@ collections:
 	}
 }
 
+func TestFieldAccess_ParsesReadAndWrite(t *testing.T) {
+	def, err := Parse([]byte(`
+version: "1"
+auth:
+  roles:
+    admin: { label: Administrator }
+collections:
+  profiles:
+    fields:
+      name: string
+      salary:
+        type: number
+        access:
+          read:  [admin]
+          write: [admin]
+      bio:
+        type: string
+        access:
+          write: owner
+`))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	var profiles *CollectionDef
+	for i := range def.Collections {
+		if def.Collections[i].Name == "profiles" {
+			profiles = &def.Collections[i]
+		}
+	}
+	if profiles == nil {
+		t.Fatal("profiles collection missing")
+	}
+	if !profiles.HasFieldAccess() {
+		t.Fatal("HasFieldAccess should be true")
+	}
+	byName := map[string]FieldDef{}
+	for _, f := range profiles.Fields {
+		byName[f.Name] = f
+	}
+	// name: no access → both directions default public.
+	if got := byName["name"].ReadRule(); got.Kind != RulePublic {
+		t.Errorf("name read: %+v", got)
+	}
+	if got := byName["name"].WriteRule(); got.Kind != RulePublic {
+		t.Errorf("name write: %+v", got)
+	}
+	// salary: role-gated both ways.
+	if got := byName["salary"].ReadRule(); got.Kind != RuleRoles || len(got.Roles) != 1 || got.Roles[0] != "admin" {
+		t.Errorf("salary read: %+v", got)
+	}
+	if got := byName["salary"].WriteRule(); got.Kind != RuleRoles {
+		t.Errorf("salary write: %+v", got)
+	}
+	// bio: write owner, read undeclared → public.
+	if got := byName["bio"].ReadRule(); got.Kind != RulePublic {
+		t.Errorf("bio read should default public: %+v", got)
+	}
+	if got := byName["bio"].WriteRule(); got.Kind != RuleOwner {
+		t.Errorf("bio write: %+v", got)
+	}
+}
+
+func TestFieldAccess_HasFieldAccessFalseWhenNoneDeclared(t *testing.T) {
+	def, err := Parse([]byte(`
+version: "1"
+collections:
+  posts:
+    fields:
+      title: string
+`))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if def.Collections[0].HasFieldAccess() {
+		t.Fatal("HasFieldAccess should be false with no field rules")
+	}
+}
+
+func TestFieldAccess_UndeclaredRoleIsError(t *testing.T) {
+	_, err := Parse([]byte(`
+version: "1"
+auth:
+  roles:
+    admin: { label: Administrator }
+collections:
+  profiles:
+    fields:
+      salary:
+        type: number
+        access:
+          read: [admin, ghost]
+`))
+	if err == nil || !strings.Contains(err.Error(), "ghost") {
+		t.Fatalf("expected undeclared-role error naming 'ghost', got: %v", err)
+	}
+}
+
+func TestFieldAccess_UnknownKeyIsError(t *testing.T) {
+	_, err := Parse([]byte(`
+version: "1"
+collections:
+  profiles:
+    fields:
+      salary:
+        type: number
+        access:
+          create: public
+`))
+	if err == nil || !strings.Contains(err.Error(), "unknown field access key") {
+		t.Fatalf("expected unknown-field-access-key error, got: %v", err)
+	}
+}
+
 func TestAuth_IdentityCollectionsInjected(t *testing.T) {
 	def, err := Parse([]byte(`
 version: "1"

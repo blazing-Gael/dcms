@@ -121,6 +121,20 @@ func (s *SchemaDefinition) Validate() error {
 			seenField[f.Name] = true
 			known[f.Name] = true
 
+			// Field-level access roles must be declared too (ADR-0016 M2).
+			if f.Access != nil {
+				for dir, rule := range map[string]*Rule{"read": f.Access.Read, "write": f.Access.Write} {
+					if rule == nil || rule.Kind != RuleRoles {
+						continue
+					}
+					for _, role := range rule.Roles {
+						if !roleSet[role] {
+							add("%s.access.%s: role %q is not declared in auth.roles", fpath, dir, role)
+						}
+					}
+				}
+			}
+
 			// Field type.
 			switch {
 			case f.Type == "":

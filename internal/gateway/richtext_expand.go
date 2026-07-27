@@ -88,7 +88,7 @@ func (s *Server) loadVisibleByIDs(ctx context.Context, collection string, idset 
 			return nil, err
 		}
 		for _, r := range page.Data {
-			s.coerceExpanded(collection, r)
+			s.coerceExpanded(ctx, collection, r)
 			if id, ok := r["id"].(string); ok {
 				out[id] = r
 			}

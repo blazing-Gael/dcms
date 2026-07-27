@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -112,12 +113,13 @@ func withVersion(u, ver string) string {
 // coerceExpanded shapes a related record for a response, adding the derived media
 // URL when the related record is a media asset (so an expanded product.image
 // carries its url like a directly-fetched media record does).
-func (s *Server) coerceExpanded(collection string, rec store.Record) {
+func (s *Server) coerceExpanded(ctx context.Context, collection string, rec store.Record) {
 	s.collections[collection].CoerceResponse(rec)
 	if collection == schema.MediaCollection {
 		s.addMediaURL(rec)
 	}
 	redactSecrets(collection, rec)
+	s.maskReadFields(ctx, collection, rec)
 }
 
 // redactSecrets strips fields that must never reach a client from a serialized

@@ -393,7 +393,7 @@ Enforcement (ADR-0016) is at the gateway, above the store:
 - Roles named in a rule must be declared under `auth.roles` (a typo is a
   schema-compile error). There is no role hierarchy — list every role that passes.
 
-Field-level access (Phase 2):
+Field-level access (LIVE — ADR-0016):
 
 ```yaml
 fields:
@@ -403,6 +403,18 @@ fields:
       read: [admin]     # hidden from non-admins in all responses
       write: [admin]    # ignored if submitted by non-admins
 ```
+
+- Uses the same rule grammar as collection access
+  (`public` | `authenticated` | `[role, …]` | `owner`); an omitted direction is
+  `public` (the collection rule is the real gate).
+- **`read` is a mask, not a gate:** an unauthorized reader still receives the
+  record — just without that field (in single, list, and `?expand`ed responses).
+- **`write` is a filter, not a rejection:** an unauthorized writer's value for the
+  field is silently dropped, so a client that round-trips a record it read never
+  gets a `4xx` for a field it was never allowed to see. On **create**, an `owner`
+  write rule collapses to `authenticated` (you become the owner of what you make).
+- Only `read`/`write` are valid keys here (the CRUD verbs belong to the collection);
+  any other key is a schema-compile error, as is a role not declared in `auth.roles`.
 
 ---
 

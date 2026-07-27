@@ -155,6 +155,9 @@ func (s *Server) writeRecord(w http.ResponseWriter, r *http.Request, status int,
 			return
 		}
 	}
+	// Field masking runs after response validation: the stored record is
+	// contract-valid; masking only removes fields this caller may not read.
+	s.maskReadFields(r.Context(), collection, rec)
 	var included refManifest
 	if len(expand) > 0 {
 		included = refManifest{}
@@ -183,6 +186,10 @@ func (s *Server) writeRecords(w http.ResponseWriter, r *http.Request, collection
 				return
 			}
 		}
+	}
+	// Mask after validation (see writeRecord).
+	for _, rec := range page.Data {
+		s.maskReadFields(r.Context(), collection, rec)
 	}
 	var included refManifest
 	if len(expand) > 0 {

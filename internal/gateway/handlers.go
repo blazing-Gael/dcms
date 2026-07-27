@@ -95,6 +95,9 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	stripManagedFields(data) // _status/_published_at/_deleted_at change only via transitions
+	// Drop fields the caller may not write (ADR-0016 M2). isCreate: `owner` write
+	// rules resolve as authenticated (you become the owner of what you create).
+	s.stripUnwritableFields(r.Context(), collection, "", data, true)
 
 	// Inline related objects → create the whole tree transactionally.
 	if s.hasInlineRelations(collection, data) {
@@ -177,6 +180,9 @@ func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
 	stripManagedFields(data) // _status/_published_at/_deleted_at change only via transitions
 	// The id comes from the URL, not the body — it is the source of truth.
 	data["id"] = chi.URLParam(r, "id")
+	// Drop fields the caller may not write (ADR-0016 M2). On update an `owner`
+	// write rule is checked against the stored record's created_by, loaded lazily.
+	s.stripUnwritableFields(r.Context(), collection, chi.URLParam(r, "id"), data, false)
 
 	// Inline related objects → resolve + update transactionally.
 	if s.hasInlineRelations(collection, data) {

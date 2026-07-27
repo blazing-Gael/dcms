@@ -76,6 +76,73 @@ func (c CollectionDef) AccessRule(action AccessAction) Rule {
 	return defaultRule(action)
 }
 
+// FieldAccess is a field's per-direction policy (ADR-0016 milestone 2). A nil
+// direction means unrestricted: the collection-level rule already gated the
+// operation, and the field adds nothing on top.
+//
+// Read is a *masking* rule, not a gate — an unauthorized reader still gets the
+// record, just without the field. Write is likewise a filter: an unauthorized
+// writer's value for the field is dropped, not rejected, so a client that
+// round-trips a record it fetched does not fail on a field it never saw.
+type FieldAccess struct {
+	Read  *Rule `json:"read,omitempty"`
+	Write *Rule `json:"write,omitempty"`
+}
+
+// ReadRule returns the effective read rule for a field (public when undeclared).
+func (f FieldDef) ReadRule() Rule {
+	if f.Access != nil && f.Access.Read != nil {
+		return *f.Access.Read
+	}
+	return Rule{Kind: RulePublic}
+}
+
+// WriteRule returns the effective write rule for a field (public when
+// undeclared — the collection's create/update rule is the real gate).
+func (f FieldDef) WriteRule() Rule {
+	if f.Access != nil && f.Access.Write != nil {
+		return *f.Access.Write
+	}
+	return Rule{Kind: RulePublic}
+}
+
+// HasFieldAccess reports whether any field on the collection declares a rule.
+// The gateway uses this to skip field masking entirely on the common case.
+func (c CollectionDef) HasFieldAccess() bool {
+	for _, f := range c.Fields {
+		if f.Access != nil && (f.Access.Read != nil || f.Access.Write != nil) {
+			return true
+		}
+	}
+	return false
+}
+
+// parseFieldAccess decodes a field's `access:` mapping. Only read/write are
+// valid keys — the CRUD actions belong to the collection, and silently accepting
+// `create:` here would suggest a gate that does not exist.
+func parseFieldAccess(node *yaml.Node) (*FieldAccess, error) {
+	entries, err := mappingEntries(node)
+	if err != nil {
+		return nil, err
+	}
+	fa := &FieldAccess{}
+	for _, e := range entries {
+		rule, err := parseRule(e.Val)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", e.Key, err)
+		}
+		switch e.Key {
+		case "read":
+			fa.Read = rule
+		case "write":
+			fa.Write = rule
+		default:
+			return nil, fmt.Errorf("unknown field access key %q (want read or write)", e.Key)
+		}
+	}
+	return fa, nil
+}
+
 // AuthConfig is the top-level `auth:` block. M1 uses Provider (defaulting to
 // "local"), the declared Roles, and Session. The jwt:/oidc: sub-blocks reserved
 // in SCHEMA_SPEC are for the external-identity milestone and are ignored here.

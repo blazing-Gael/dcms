@@ -73,9 +73,10 @@ type rawField struct {
 	Target   string   `yaml:"target"`
 	Many     bool     `yaml:"many"`
 	OnDelete string   `yaml:"on_delete"`
-	Styles   []string `yaml:"styles"`
-	Marks    []string `yaml:"marks"`
-	Blocks   []string `yaml:"blocks"`
+	Styles   []string  `yaml:"styles"`
+	Marks    []string  `yaml:"marks"`
+	Blocks   []string  `yaml:"blocks"`
+	Access   yaml.Node `yaml:"access"`
 }
 
 type nodeEntry struct {
@@ -204,6 +205,12 @@ func toFields(node *yaml.Node) ([]FieldDef, error) {
 			f.Styles = rf.Styles
 			f.Marks = rf.Marks
 			f.Blocks = rf.Blocks
+			if rf.Access.Kind != 0 {
+				f.Access, err = parseFieldAccess(&rf.Access)
+				if err != nil {
+					return nil, fmt.Errorf("%s: access: %w", e.Key, err)
+				}
+			}
 		default:
 			return nil, fmt.Errorf("%s: expected a type or a field definition, got %s", e.Key, kindName(e.Val.Kind))
 		}

@@ -27,21 +27,25 @@ brand:
   rtl: false
   locale: en
 
-# ── Auth (Phase 2) ──────────────────────────────────────────────────────
-# auth:
-#   provider: local
-#   jwt:
-#     algorithm: HS256
-#     secret: ${JWT_SECRET}
-#     access_ttl: 15m
-#     refresh_ttl: 7d
-#   roles:
-#     admin:
-#       label: "Administrator"
-#     vendor:
-#       label: "Farm / Vendor"
-#     customer:
-#       label: "Customer"
+# ── Auth (ADR-0016) ─────────────────────────────────────────────────────
+# Local identity: opaque, DB-backed sessions. Log in at POST /auth/login and
+# send the returned token as `Authorization: Bearer <token>` (a HttpOnly
+# `dcms_session` cookie is set too). Roles declared here are the only names an
+# `access:` rule may reference — a typo is a schema-compile error.
+#
+# Seed the first admin with DCMS_ADMIN_EMAIL / DCMS_ADMIN_PASSWORD on first run,
+# or `dcms admin create --email you@farmly.com --role admin`.
+auth:
+  provider: local
+  session:
+    ttl: 168h                     # 7 days
+  roles:
+    admin:
+      label: "Administrator"
+    vendor:
+      label: "Farm / Vendor"
+    customer:
+      label: "Customer"
 
 collections:
 
@@ -66,11 +70,11 @@ collections:
       #   type: media
     timestamps: true
     indexes: [slug]
-    # access:                       # Phase 2
-    #   read: public
-    #   create: [admin]
-    #   update: [admin]
-    #   delete: [admin]
+    access:
+      read: public                  # storefront browses categories anonymously
+      create: [admin]
+      update: [admin]
+      delete: [admin]
 
   # ── Products ───────────────────────────────────────────────────────────
   products:
@@ -155,11 +159,11 @@ collections:
     # vectorize: [title, description, short_description]  # Phase 2
     # draft: true                 # Phase 2
     # i18n: [en, ar, bn]         # Phase 2
-    # access:                     # Phase 2
-    #   read: public
-    #   create: [admin, vendor]
-    #   update: [admin, vendor]
-    #   delete: [admin]
+    access:
+      read: public
+      create: [admin, vendor]
+      update: [admin, vendor]
+      delete: [admin]
     # hooks:                      # Phase 3
     #   after_create: notify-inventory
     #   after_update: reindex-vectors
@@ -201,11 +205,11 @@ collections:
       #   type: geo
     timestamps: true
     indexes: [slug, is_active, verified]
-    # access:                     # Phase 2
-    #   read: public
-    #   create: [admin]
-    #   update: [admin, vendor]
-    #   delete: [admin]
+    access:
+      read: public
+      create: [admin]             # vendors are onboarded, not self-serve
+      update: [admin, vendor]
+      delete: [admin]
 
   # ── Customers ──────────────────────────────────────────────────────────
   customers:
@@ -244,11 +248,11 @@ collections:
         default: true
     timestamps: true
     indexes: [email, is_active]
-    # access:                     # Phase 2
-    #   read: [admin]
-    #   create: public            # self-registration
-    #   update: [admin, owner]
-    #   delete: [admin]
+    access:
+      read: [admin]               # PII — never public
+      create: public              # self-registration at checkout
+      update: [admin]             # NOTE: a rule is one kind; `[admin, owner]`
+      delete: [admin]             # (roles OR owner) is not expressible yet.
 
   # ── Orders ─────────────────────────────────────────────────────────────
   orders:
@@ -278,6 +282,10 @@ collections:
       payment_reference:
         type: string
         label: "Payment gateway transaction ID"
+        access:
+          read: [admin]           # field-level (ADR-0016 M2): the owning customer
+                                  # still gets the order, but the raw gateway txn id
+                                  # is masked out of the response for non-admins.
       shipping_address:
         type: json
         label: "Snapshot of delivery address at order time"
@@ -296,11 +304,15 @@ collections:
     # hooks:                      # Phase 3
     #   after_create: send-order-confirmation
     #   after_update: notify-status-change
-    # access:                     # Phase 2
-    #   read: [admin, owner]
-    #   create: authenticated
-    #   update: [admin]
-    #   delete: [admin]
+    access:
+      read: owner                 # you see only the orders you placed: list is
+                                  # filtered by created_by, get-one 404s.
+                                  # CAVEAT: a rule is a single kind, so this also
+                                  # hides orders from admins. "[admin] OR owner"
+                                  # needs composite rules (not built yet).
+      create: authenticated
+      update: [admin]             # status changes are staff-only
+      delete: [admin]
 
   # ── Order items ────────────────────────────────────────────────────────
   order_items:
@@ -331,6 +343,11 @@ collections:
     indexes:
       - order_id
       - product_id
+    access:
+      read: owner                 # line items follow their order's owner
+      create: authenticated
+      update: [admin]
+      delete: [admin]
 
   # ── Stories (editorial content) ────────────────────────────────────────
   stories:
@@ -373,11 +390,11 @@ collections:
     indexes: [status, vendor_id]
     # vectorize: [headline, content, excerpt]  # Phase 2
     # draft: true                 # Phase 2
-    # access:                     # Phase 2
-    #   read: public
-    #   create: [admin, vendor]
-    #   update: [admin, vendor]
-    #   delete: [admin]
+    access:
+      read: public
+      create: [admin, vendor]
+      update: [admin, vendor]
+      delete: [admin]
 
   # ── Reviews ────────────────────────────────────────────────────────────
   reviews:
@@ -398,14 +415,21 @@ collections:
       is_verified_purchase:
         type: boolean
         default: false
+        access:
+          write: [admin]          # field-level (ADR-0016 M2): a customer POSTing a
+                                  # review cannot self-verify — the value is silently
+                                  # dropped and only staff can set it.
       status:
         type: enum
         values: [pending, approved, rejected]
         default: pending
+        access:
+          write: [admin]          # likewise a customer cannot self-approve; new
+                                  # reviews stay `pending` until staff moderate.
     timestamps: true
     indexes: [product_id, customer_id, status]
-    # access:                     # Phase 2
-    #   read: public
-    #   create: authenticated
-    #   update: [admin]
-    #   delete: [admin]
+    access:
+      read: public                # moderation is via `status`, not access
+      create: authenticated       # only signed-in customers may review
+      update: [admin]
+      delete: [admin]

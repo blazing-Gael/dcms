@@ -164,8 +164,17 @@ a full users API is a later increment). `_sessions` is never client-writable.
 1. **(this ADR) Authz spine + local login + bootstrap admin** — principal
    middleware, `access:` parsing + enforcement, opaque sessions, `/auth/*`,
    `dcms admin create` + env seed, `_users`/`_sessions` injection.
-2. **Field-level access** — the `fields.<name>.access` read/write masks reserved
-   in SCHEMA_SPEC (strip on read, ignore on write for unauthorized roles).
+2. **Field-level access (delivered)** — the `fields.<name>.access` `read`/`write`
+   rules. `read` is a *mask*: an unauthorized reader still gets the record, minus
+   the field. `write` is a *filter*: an unauthorized writer's value is silently
+   dropped (not rejected), so round-tripping a masked record never 4xxs. Both use
+   the same rule grammar as collection access (public/authenticated/roles/owner)
+   and are enforced only when auth is enabled and the collection actually declares
+   a field rule (`HasFieldAccess`), so the common path pays nothing. Masking runs
+   at the serialization choke points (`writeRecord`/`writeRecords`/`coerceExpanded`)
+   *after* response-contract validation; write-stripping runs in the create/update
+   handlers before validation. An `owner` write rule on update loads the current
+   row lazily (once, only when such a field is present) — no extra read otherwise.
 3. **External identity** — OIDC/JWKS `Authenticator`, claims→roles mapping,
    `auth.provider: oidc|both`, the reserved `jwt:`/`oidc:` config.
 

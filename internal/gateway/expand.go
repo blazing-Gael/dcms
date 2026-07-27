@@ -204,7 +204,7 @@ func (s *Server) findRelatedM2M(ctx context.Context, inv schema.M2MInverse, targ
 		return nil, err
 	}
 	for _, r := range page.Data {
-		s.coerceExpanded(inv.Source, r)
+		s.coerceExpanded(ctx, inv.Source, r)
 	}
 	if page.Data == nil {
 		return []store.Record{}, nil
@@ -230,7 +230,7 @@ func (s *Server) expandBelongsTo(ctx context.Context, target string, rec store.R
 	if !s.recordVisible(target, related, visibilityFromContext(ctx)) {
 		return nil // hidden target: keep the id, don't inline
 	}
-	s.coerceExpanded(target, related)
+	s.coerceExpanded(ctx, target, related)
 	rec[field] = related
 	return nil
 }
@@ -247,7 +247,7 @@ func (s *Server) findRelated(ctx context.Context, inv schema.Inverse, parentID s
 		return nil, err
 	}
 	for _, r := range page.Data {
-		s.coerceExpanded(inv.Source, r)
+		s.coerceExpanded(ctx, inv.Source, r)
 	}
 	if page.Data == nil {
 		return []store.Record{}, nil
@@ -316,7 +316,7 @@ func (s *Server) expandBelongsToBatch(ctx context.Context, target string, recs [
 	}
 	byID := make(map[string]store.Record, len(page.Data))
 	for _, tr := range page.Data {
-		s.coerceExpanded(target, tr)
+		s.coerceExpanded(ctx, target, tr)
 		if idv, ok := tr["id"].(string); ok {
 			byID[idv] = tr
 		}

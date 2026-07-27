@@ -74,6 +74,17 @@ func fieldJSONSchema(f FieldDef) obj {
 	if f.Hint != "" {
 		m["description"] = f.Hint
 	}
+	// Field-level access (ADR-0016 M2): read masks the field out of a response for
+	// an unauthorized reader; write drops an unauthorized writer's value. Surfaced
+	// so generated clients/docs know a field may be absent or ignored per identity.
+	if f.Access != nil {
+		if f.Access.Read != nil {
+			m["x-access-read"] = accessNote(*f.Access.Read)
+		}
+		if f.Access.Write != nil {
+			m["x-access-write"] = accessNote(*f.Access.Write)
+		}
+	}
 	return m
 }
 
