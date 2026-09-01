@@ -30,6 +30,12 @@ func fieldJSONSchema(f FieldDef) obj {
 		m["type"] = "number"
 	case TypeInteger:
 		m["type"] = "integer"
+	case TypeDecimal:
+		// Exact fixed-point money: a quoted decimal string, never a JSON number
+		// (ADR-0017). x-decimal-scale tells a generator the fixed fractional digits.
+		m["type"] = "string"
+		m["pattern"] = `^-?\d+(\.\d+)?$`
+		m["x-decimal-scale"] = f.DecimalScale()
 	case TypeBoolean:
 		m["type"] = "boolean"
 	case TypeDate:

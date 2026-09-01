@@ -87,6 +87,20 @@ Rule grammar (already reserved in SCHEMA_SPEC):
 - `authenticated` — any valid principal, regardless of role.
 - `[role, …]` — the principal holds at least one listed role.
 - `owner` — the principal is the record's `created_by` (record-scoped).
+- `any: [rule, …]` — a **composite** OR of the above; the caller satisfies the
+  rule if they satisfy any sub-rule. Each element is itself a rule (a keyword, a
+  role, a role list, or a nested composite), so `any: [admin, owner]` grants
+  admins full access while narrowing everyone else to the rows they own.
+
+The composite is evaluated by combining its sub-decisions with the precedence
+`allow > owner-scope > deny`: an admin resolves to a plain *allow* (sees every
+row, no `created_by` filter), while a non-admin resolves to *owner-scope* (the
+same `created_by` narrowing a bare `owner` rule produces). Because the outcome
+is still one of the three decisions the enforcement layer already handles, no
+enforcement path changed and no extra query is issued — a list read emits at
+most one `created_by` filter, exactly as before. This fills the gap a bare
+`owner` rule left: `owner` alone also hid records from admins, which
+`any: [admin, owner]` now expresses correctly.
 
 Enforcement lives in the gateway, above the store, and is the mirror image of
 lifecycle filtering:
@@ -175,7 +189,13 @@ a full users API is a later increment). `_sessions` is never client-writable.
    *after* response-contract validation; write-stripping runs in the create/update
    handlers before validation. An `owner` write rule on update loads the current
    row lazily (once, only when such a field is present) — no extra read otherwise.
-3. **External identity** — OIDC/JWKS `Authenticator`, claims→roles mapping,
+   The lazy-load trigger is "the rule tree mentions owner" (`Rule.MentionsOwner`),
+   so a composite `any: [admin, owner]` write rule loads the row too.
+3. **Composite rules (delivered)** — the `any: [rule, …]` OR combinator (see §3).
+   Both collection and field rules accept it; roles named anywhere in the tree are
+   validated against `auth.roles`. Zero enforcement-path or query-cost change: the
+   evaluator folds the composite into the existing allow/owner-scope/deny decision.
+4. **External identity** — OIDC/JWKS `Authenticator`, claims→roles mapping,
    `auth.provider: oidc|both`, the reserved `jwt:`/`oidc:` config.
 
 ## Consequences
@@ -203,5 +223,9 @@ a full users API is a later increment). `_sessions` is never client-writable.
   couples policy to one adapter. The gateway is the single policy plane already
   holding lifecycle and referential rules.
 - **A generic policy DSL (CEL/OPA)** — over-scoped for M1. The `access:` grammar
-  covers the CMS cases (public/authenticated/roles/owner); a richer expression
-  layer can grow later without changing the enforcement location.
+  covers the CMS cases (public/authenticated/roles/owner, plus `any:` OR); a
+  richer expression layer can grow later without changing the enforcement location.
+- **An `all:` (AND) composite alongside `any:`** — not built: no CMS case has
+  needed it, and its decision-folding is less obvious (an owner-scope AND a role
+  gate would have to intersect a filter with a boolean). Additive when a use case
+  appears; `any:` alone keeps the grammar honest about what it supports today.

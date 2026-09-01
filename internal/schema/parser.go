@@ -38,6 +38,8 @@ func Parse(src []byte) (*SchemaDefinition, error) {
 	def.injectRevisions()
 	// Inject the engine-managed identity collections _users/_sessions (ADR-0016).
 	def.injectAuth()
+	// Inject the engine-managed _idempotency collection (ADR-0018).
+	def.injectIdempotency()
 	return def, nil
 }
 
@@ -68,6 +70,7 @@ type rawField struct {
 	Max      *float64 `yaml:"max"`
 	Pattern  string   `yaml:"pattern"`
 	Values   []string `yaml:"values"`
+	Scale    *int     `yaml:"scale"`
 	Label    string   `yaml:"label"`
 	Hint     string   `yaml:"hint"`
 	Target   string   `yaml:"target"`
@@ -197,6 +200,7 @@ func toFields(node *yaml.Node) ([]FieldDef, error) {
 			f.Max = rf.Max
 			f.Pattern = rf.Pattern
 			f.Values = rf.Values
+			f.Scale = rf.Scale
 			f.Label = rf.Label
 			f.Hint = rf.Hint
 			f.Target = rf.Target

@@ -70,10 +70,20 @@ func Apply(ctx context.Context, db store.Adapter, def *schema.SchemaDefinition) 
 // shuts down gracefully (draining in-flight requests). opts tunes gateway
 // behavior (e.g. strict response validation).
 func Serve(ctx context.Context, def *schema.SchemaDefinition, db store.Adapter, addr string, logger *slog.Logger, opts gateway.Options) error {
+	gw := gateway.New(def, db, logger, opts)
 	srv := &http.Server{
 		Addr:    addr,
-		Handler: gateway.New(def, db, logger, opts).Handler(),
+		Handler: gw.Handler(),
+		// Bound how long a client may take to send request headers, so a
+		// slow-header (Slowloris) client can't hold a connection open for free.
+		// The per-request body/handler deadline is the gateway's withTimeout
+		// middleware; this covers the pre-handler header phase it can't see.
+		ReadHeaderTimeout: 10 * time.Second,
 	}
+
+	// Background maintenance (e.g. sweeping expired idempotency keys) runs until
+	// ctx is cancelled. Tests that build a gateway directly never start it.
+	go gw.RunMaintenance(ctx)
 
 	errCh := make(chan error, 1)
 	go func() {

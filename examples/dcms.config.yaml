@@ -27,6 +27,40 @@ server:
   # set it explicitly here to override. (Response *shaping* — e.g. booleans as
   # true/false — always happens regardless of this setting.)
   # validate_responses: true
+  # Cap on a single JSON request body (create/update/auth) in bytes; omit for the
+  # 1 MiB default. Media uploads are capped separately by media.max_upload_bytes.
+  # Env override: DCMS_MAX_BODY_BYTES. An over-cap body answers 413.
+  # max_body_bytes: 1048576
+  # Per-request deadline in seconds for JSON requests; omit for the 15s default,
+  # 0 also means the default, and a negative value disables it (e.g. when a proxy
+  # already enforces timeouts). Env override: DCMS_REQUEST_TIMEOUT_SECONDS. A
+  # request that outlives it answers 504. Media byte routes are exempt.
+  # request_timeout_seconds: 15
+  # Request rate limiting. Enabled by default with generous limits; set
+  # enabled: false (or DCMS_RATE_LIMIT_ENABLED=false) to turn it off. The API
+  # tier is keyed per authenticated principal (falling back to client IP); the
+  # auth tier is keyed per client IP and guards the unauthenticated /auth
+  # endpoints. Over-limit requests answer 429 with a Retry-After header. Health
+  # probes and media byte routes are never limited. Omit any value for its
+  # default (shown).
+  # rate_limit:
+  #   enabled: true
+  #   api_per_minute: 6000     # ~100 req/s sustained, per principal/IP
+  #   api_burst: 200
+  #   auth_per_minute: 60      # per client IP
+  #   auth_burst: 20
+  #   # Honor X-Forwarded-For for client-IP keying. Enable ONLY behind a trusted
+  #   # proxy that sets it — otherwise a client can spoof it. Env: DCMS_TRUST_PROXY.
+  #   trust_proxy: false
+  # Idempotency keys for POST creates (ADR-0018). A create carrying an
+  # `Idempotency-Key` header is safe to retry — the original response is replayed
+  # rather than creating a duplicate. On by default; it is inert until a client
+  # sends the header, so it costs nothing otherwise. Set enabled: false (or
+  # DCMS_IDEMPOTENCY_ENABLED=false) to ignore the header. Omit any value for its
+  # default (shown).
+  # idempotency:
+  #   enabled: true
+  #   ttl_hours: 24            # how long a key is remembered for replay
 
 media:
   # Where uploaded files (the media library) are stored: "local" or "s3".

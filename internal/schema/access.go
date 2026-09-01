@@ -26,13 +26,50 @@ const (
 	RuleAuthenticated RuleKind = "authenticated" // any valid principal
 	RuleRoles         RuleKind = "roles"         // principal holds one of Roles
 	RuleOwner         RuleKind = "owner"         // principal is the record's created_by
+	RuleAny           RuleKind = "any"           // satisfied if ANY sub-rule is (logical OR)
 )
 
 // Rule is a single access rule. For RuleRoles, Roles lists the accepted role
-// names; for the other kinds Roles is empty.
+// names; for RuleAny, Any lists the OR-combined sub-rules (e.g. `[admin] OR
+// owner`); for the other kinds both are empty.
+//
+// A composite (RuleAny) lets one rule mix gates that resolve differently per
+// caller: `any: [admin, owner]` grants admins full access while narrowing
+// everyone else to the rows they own. The evaluator ORs the sub-decisions
+// (allow beats owner-scope beats deny), so the enforcement layer needs no new
+// cases — an admin resolves to plain allow, an owner to owner-scope.
 type Rule struct {
 	Kind  RuleKind `json:"kind"`
 	Roles []string `json:"roles,omitempty"`
+	Any   []Rule   `json:"any,omitempty"`
+}
+
+// roleNames returns every role name referenced anywhere in the rule tree, so
+// validation can check them against the declared roles regardless of nesting.
+func (r Rule) roleNames() []string {
+	if r.Kind == RuleRoles {
+		return r.Roles
+	}
+	var out []string
+	for _, sub := range r.Any {
+		out = append(out, sub.roleNames()...)
+	}
+	return out
+}
+
+// MentionsOwner reports whether the rule tree contains an `owner` gate. Callers
+// use it to decide whether an owner comparison (and thus the record it needs)
+// can come into play — a composite hides its `owner` sub-rule behind RuleAny.
+func (r Rule) MentionsOwner() bool {
+	if r.Kind == RuleOwner {
+		return true
+	}
+	for _, sub := range r.Any {
+		if sub.MentionsOwner() {
+			return true
+		}
+	}
+	return false
 }
 
 // AccessRules is a collection's per-operation authorization policy. A nil field
@@ -209,7 +246,8 @@ func parseAccess(node *yaml.Node) (*AccessRules, error) {
 
 // parseRule decodes one access rule value. A scalar is a keyword
 // (public/authenticated/owner) or a single role name; a list is a set of role
-// names. This mirrors the field shorthand (scalar-or-mapping) style.
+// names; a mapping with an `any:` key is a composite OR of sub-rules. This
+// mirrors the field shorthand (scalar-or-mapping) style.
 func parseRule(node *yaml.Node) (*Rule, error) {
 	switch node.Kind {
 	case yaml.ScalarNode:
@@ -236,9 +274,42 @@ func parseRule(node *yaml.Node) (*Rule, error) {
 			return nil, fmt.Errorf("empty role list")
 		}
 		return &Rule{Kind: RuleRoles, Roles: roles}, nil
+	case yaml.MappingNode:
+		return parseCompositeRule(node)
 	default:
-		return nil, fmt.Errorf("expected a keyword, a role name, or a list of roles, got %s", kindName(node.Kind))
+		return nil, fmt.Errorf("expected a keyword, a role name, a list of roles, or an {any: [...]} composite, got %s", kindName(node.Kind))
 	}
+}
+
+// parseCompositeRule decodes a mapping-form rule. The only supported key is
+// `any:` (logical OR); its value is a sequence of rules, each parsed recursively
+// so a sub-rule may itself be a keyword, a role, a role list, or a nested
+// composite. An `all:` (AND) counterpart is intentionally not offered yet — no
+// use case has needed it, and adding it later is additive.
+func parseCompositeRule(node *yaml.Node) (*Rule, error) {
+	entries, err := mappingEntries(node)
+	if err != nil {
+		return nil, err
+	}
+	if len(entries) != 1 || entries[0].Key != "any" {
+		return nil, fmt.Errorf("a composite access rule takes exactly one key, `any`")
+	}
+	seq := entries[0].Val
+	if seq.Kind != yaml.SequenceNode {
+		return nil, fmt.Errorf("any: expected a list of rules, got %s", kindName(seq.Kind))
+	}
+	subs := make([]Rule, 0, len(seq.Content))
+	for _, item := range seq.Content {
+		sub, err := parseRule(item)
+		if err != nil {
+			return nil, fmt.Errorf("any: %w", err)
+		}
+		subs = append(subs, *sub)
+	}
+	if len(subs) < 2 {
+		return nil, fmt.Errorf("any: needs at least two rules to combine")
+	}
+	return &Rule{Kind: RuleAny, Any: subs}, nil
 }
 
 // parseAuth decodes the top-level `auth:` block. provider/session are scalars;

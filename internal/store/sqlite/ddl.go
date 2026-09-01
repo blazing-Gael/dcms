@@ -22,7 +22,8 @@ func sqliteType(t string) string {
 		return "TEXT"
 	case "number", "real":
 		return "REAL"
-	case "integer", "boolean":
+	case "integer", "boolean", "decimal":
+		// decimal is stored as int64 minor units (ADR-0017).
 		return "INTEGER"
 	case "blob":
 		return "BLOB"

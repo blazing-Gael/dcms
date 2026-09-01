@@ -81,7 +81,9 @@ func (s *Server) stripUnwritableFields(ctx context.Context, collection, id strin
 		}
 		rule := *f.Access.Write
 		var cur store.Record
-		if rule.Kind == schema.RuleOwner && !isCreate {
+		// Load the stored row only when an owner comparison can matter — a bare
+		// `owner` rule or a composite that includes one (e.g. any: [admin, owner]).
+		if rule.MentionsOwner() && !isCreate {
 			cur = loadCurrent()
 		}
 		if !s.fieldWritable(rule, p, cur) {

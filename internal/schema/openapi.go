@@ -97,6 +97,12 @@ func accessNote(rule Rule) string {
 	switch rule.Kind {
 	case RuleRoles:
 		return "roles: " + strings.Join(rule.Roles, ", ")
+	case RuleAny:
+		parts := make([]string, len(rule.Any))
+		for i, sub := range rule.Any {
+			parts[i] = accessNote(sub)
+		}
+		return "any(" + strings.Join(parts, " | ") + ")"
 	default:
 		return string(rule.Kind)
 	}
@@ -287,12 +293,24 @@ func listOp(collection, name string) obj {
 func createOp(collection, name string) obj {
 	return obj{
 		"summary":     "Create a " + collection + " record",
+		"parameters":  []any{idempotencyKeyParam()},
 		"requestBody": reqBody(name + "CreateInput"),
 		"responses": obj{
 			"201": jsonResponse("created", dataEnvelope(name)),
-			"409": jsonResponse("conflict (unique constraint)", errorEnvelope()),
-			"422": jsonResponse("validation error", errorEnvelope()),
+			"409": jsonResponse("conflict (unique constraint, or an in-flight request with the same Idempotency-Key)", errorEnvelope()),
+			"422": jsonResponse("validation error (or Idempotency-Key reused with a different body)", errorEnvelope()),
 		},
+	}
+}
+
+// idempotencyKeyParam documents the optional Idempotency-Key request header
+// (ADR-0018): a client-generated key that makes a retried create safe — the
+// original response is replayed instead of creating a duplicate.
+func idempotencyKeyParam() obj {
+	return obj{
+		"name": "Idempotency-Key", "in": "header", "required": false,
+		"schema":      obj{"type": "string", "maxLength": 255},
+		"description": "Optional client-generated key (e.g. a UUID) that makes this create idempotent: a retry with the same key replays the original response instead of creating a duplicate. Reusing a key with a different body is a 422.",
 	}
 }
 

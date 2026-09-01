@@ -78,6 +78,11 @@ func TestApplyEnv_OverridesAndValidates(t *testing.T) {
 	t.Setenv("DCMS_DB", "/var/lib/dcms/store.db")
 	t.Setenv("DCMS_DB_DRIVER", "postgres")
 	t.Setenv("DCMS_PORT", "9090")
+	t.Setenv("DCMS_MAX_BODY_BYTES", "2097152")
+	t.Setenv("DCMS_REQUEST_TIMEOUT_SECONDS", "30")
+	t.Setenv("DCMS_RATE_LIMIT_ENABLED", "false")
+	t.Setenv("DCMS_TRUST_PROXY", "true")
+	t.Setenv("DCMS_IDEMPOTENCY_ENABLED", "false")
 
 	cfg := Default()
 	if err := cfg.ApplyEnv(); err != nil {
@@ -94,6 +99,33 @@ func TestApplyEnv_OverridesAndValidates(t *testing.T) {
 	}
 	if cfg.Server.Port != 9090 {
 		t.Errorf("port = %d", cfg.Server.Port)
+	}
+	if cfg.Server.MaxBodyBytes != 2097152 {
+		t.Errorf("max_body_bytes = %d", cfg.Server.MaxBodyBytes)
+	}
+	if cfg.Server.RequestTimeoutSeconds != 30 {
+		t.Errorf("request_timeout_seconds = %d", cfg.Server.RequestTimeoutSeconds)
+	}
+	if cfg.Server.RateLimit.Enabled == nil || *cfg.Server.RateLimit.Enabled {
+		t.Errorf("rate_limit.enabled = %v, want explicit false", cfg.Server.RateLimit.Enabled)
+	}
+	if !cfg.Server.RateLimit.TrustProxy {
+		t.Errorf("trust_proxy = %v, want true", cfg.Server.RateLimit.TrustProxy)
+	}
+	if cfg.Server.Idempotency.Enabled == nil || *cfg.Server.Idempotency.Enabled {
+		t.Errorf("idempotency.enabled = %v, want explicit false", cfg.Server.Idempotency.Enabled)
+	}
+}
+
+func TestApplyEnv_BadHardeningNumbersAreErrors(t *testing.T) {
+	for _, v := range []string{"DCMS_MAX_BODY_BYTES", "DCMS_REQUEST_TIMEOUT_SECONDS"} {
+		t.Run(v, func(t *testing.T) {
+			t.Setenv(v, "huge")
+			cfg := Default()
+			if err := cfg.ApplyEnv(); err == nil {
+				t.Fatalf("expected error for non-numeric %s", v)
+			}
+		})
 	}
 }
 

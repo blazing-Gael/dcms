@@ -97,12 +97,12 @@ collections:
         max: 300
         label: "Short description (used in cards)"
       price:
-        type: number
+        type: decimal          # exact money (ADR-0017) — scale 2, paired with `currency` below
         required: true
         min: 0
         label: "Price"
       compare_at_price:
-        type: number
+        type: decimal
         min: 0
         label: "Original price (shown as struck-through)"
       currency:
@@ -251,8 +251,9 @@ collections:
     access:
       read: [admin]               # PII — never public
       create: public              # self-registration at checkout
-      update: [admin]             # NOTE: a rule is one kind; `[admin, owner]`
-      delete: [admin]             # (roles OR owner) is not expressible yet.
+      update:                     # admins, or the customer editing their own row
+        any: [admin, owner]
+      delete: [admin]             # only admins may remove a customer record
 
   # ── Orders ─────────────────────────────────────────────────────────────
   orders:
@@ -265,7 +266,7 @@ collections:
         values: [pending, confirmed, processing, shipped, delivered, cancelled, refunded]
         default: pending
       total_amount:
-        type: number
+        type: decimal          # exact money (ADR-0017)
         required: true
         min: 0
       currency:
@@ -305,11 +306,9 @@ collections:
     #   after_create: send-order-confirmation
     #   after_update: notify-status-change
     access:
-      read: owner                 # you see only the orders you placed: list is
-                                  # filtered by created_by, get-one 404s.
-                                  # CAVEAT: a rule is a single kind, so this also
-                                  # hides orders from admins. "[admin] OR owner"
-                                  # needs composite rules (not built yet).
+      read:                       # admins see every order; a customer sees only
+        any: [admin, owner]       # their own (list filtered by created_by,
+                                  # get-one on someone else's order 404s).
       create: authenticated
       update: [admin]             # status changes are staff-only
       delete: [admin]
@@ -328,7 +327,7 @@ collections:
         required: true
         min: 1
       unit_price:
-        type: number
+        type: decimal          # exact money (ADR-0017)
         required: true
         min: 0
         label: "Price at time of order (snapshot)"

@@ -124,10 +124,10 @@ func (s *SchemaDefinition) Validate() error {
 			// Field-level access roles must be declared too (ADR-0016 M2).
 			if f.Access != nil {
 				for dir, rule := range map[string]*Rule{"read": f.Access.Read, "write": f.Access.Write} {
-					if rule == nil || rule.Kind != RuleRoles {
+					if rule == nil {
 						continue
 					}
-					for _, role := range rule.Roles {
+					for _, role := range rule.roleNames() {
 						if !roleSet[role] {
 							add("%s.access.%s: role %q is not declared in auth.roles", fpath, dir, role)
 						}
@@ -149,6 +149,8 @@ func (s *SchemaDefinition) Validate() error {
 			case f.Type == TypeRichText:
 				// Structured content (ADR-0014). Its per-field allowlists are
 				// validated just below.
+			case f.Type == TypeDecimal:
+				// Exact fixed-point (ADR-0017). Scale + default validated just below.
 			default:
 				if phase, ok := deferredTypes[f.Type]; ok {
 					add("%s: type %q is not supported until phase %s", fpath, f.Type, phase)
@@ -203,6 +205,24 @@ func (s *SchemaDefinition) Validate() error {
 				}
 			}
 
+			// Decimal scale + default (ADR-0017). Scale is bounded so int64 minor
+			// units keep a large whole-number range; a default is a decimal string
+			// that must parse to the declared scale (it becomes the column's integer
+			// SQL DEFAULT at migration time).
+			if f.Type == TypeDecimal {
+				scale := f.DecimalScale()
+				if scale < 0 || scale > MaxDecimalScale {
+					add("%s: scale must be between 0 and %d", fpath, MaxDecimalScale)
+				} else if f.Default != nil {
+					s, ok := f.Default.(string)
+					if !ok {
+						add("%s: default must be a decimal string, e.g. \"12.50\"", fpath)
+					} else if _, err := ParseDecimal(s, scale); err != nil {
+						add("%s: default %v", fpath, err)
+					}
+				}
+			}
+
 			// Rich content allowlists (ADR-0014): marks/blocks must be known.
 			if f.Type == TypeRichText {
 				for _, msg := range f.validateRichTextConfig() {
@@ -227,10 +247,10 @@ func (s *SchemaDefinition) Validate() error {
 				ActionRead: col.Access.Read, ActionCreate: col.Access.Create,
 				ActionUpdate: col.Access.Update, ActionDelete: col.Access.Delete,
 			} {
-				if rule == nil || rule.Kind != RuleRoles {
+				if rule == nil {
 					continue
 				}
-				for _, role := range rule.Roles {
+				for _, role := range rule.roleNames() {
 					if !roleSet[role] {
 						add("%s.access.%s: role %q is not declared in auth.roles", cpath, action, role)
 					}

@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -216,6 +217,10 @@ func writeStoreError(w http.ResponseWriter, logger *slog.Logger, r *http.Request
 		writeError(w, http.StatusUnprocessableEntity, apiError{
 			Code: "VALIDATION_ERROR", Message: "validation failed", Fields: ve.Fields,
 		})
+	case errors.Is(err, context.DeadlineExceeded):
+		// The per-request timeout (withTimeout) fired before the store finished.
+		// The work is abandoned, not failed — a 504 tells the client it may retry.
+		writeError(w, http.StatusGatewayTimeout, apiError{Code: "TIMEOUT", Message: "request timed out"})
 	case errors.Is(err, store.ErrNotFound):
 		writeError(w, http.StatusNotFound, apiError{Code: "NOT_FOUND", Message: "record not found"})
 	case errors.Is(err, store.ErrConflict):

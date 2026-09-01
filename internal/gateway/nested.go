@@ -110,6 +110,7 @@ func (s *Server) createRecord(ctx context.Context, tx store.DB, collection strin
 	if errs := s.collections[collection].ValidateCreate(data); errs != nil {
 		return nil, &store.ValidationError{Fields: errs}
 	}
+	s.collections[collection].EncodeDecimals(data) // decimal strings → int64 minor units (ADR-0017)
 	if err := s.checkReferences(ctx, tx, collection, data); err != nil {
 		return nil, err
 	}
@@ -138,6 +139,7 @@ func (s *Server) updateRecord(ctx context.Context, tx store.DB, collection strin
 	if errs := s.collections[collection].ValidateUpdate(data); errs != nil {
 		return nil, &store.ValidationError{Fields: errs}
 	}
+	s.collections[collection].EncodeDecimals(data) // decimal strings → int64 minor units (ADR-0017)
 	if err := s.checkReferences(ctx, tx, collection, data); err != nil {
 		return nil, err
 	}

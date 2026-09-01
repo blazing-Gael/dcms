@@ -25,7 +25,7 @@ func (s *Server) handlePublish(w http.ResponseWriter, r *http.Request) {
 	}
 	body, err := decodeBody(r)
 	if err != nil {
-		writeError(w, http.StatusUnprocessableEntity, apiError{Code: "VALIDATION_ERROR", Message: err.Error()})
+		writeDecodeError(w, err)
 		return
 	}
 	at := nowUTC()

@@ -55,7 +55,8 @@ func tsType(f Field, record bool) string {
 // tsScalar maps a neutral Kind to a TypeScript type expression.
 func tsScalar(f Field) string {
 	switch f.Kind {
-	case KindString, KindText, KindDate, KindDateTime:
+	case KindString, KindText, KindDate, KindDateTime, KindDecimal:
+		// A decimal is an exact string ("12.50"), not a JS number (ADR-0017).
 		return "string"
 	case KindNumber, KindInteger:
 		return "number"

@@ -104,8 +104,9 @@ fields:
 |-----------|-------------|----------------------|--------------------------------------------|
 | `string`  | `string`    | VARCHAR(255)         | Short text                                 |
 | `text`    | `string`    | TEXT                 | Long-form content                          |
-| `number`  | `float64`   | NUMERIC(12,4)        | Decimal / float                            |
+| `number`  | `float64`   | NUMERIC(12,4)        | Approximate / float — **not** for money    |
 | `integer` | `int64`     | BIGINT               | Whole number                               |
+| `decimal` | `string`    | INTEGER minor units (SQLite) / NUMERIC(p,s) (Postgres) | Exact fixed-point money — see below |
 | `boolean` | `bool`      | BOOLEAN              | true / false                               |
 | `date`    | `time.Time` | DATE                 | ISO 8601 date only                         |
 | `datetime`| `time.Time` | TIMESTAMPTZ          | ISO 8601 datetime with timezone            |
@@ -121,6 +122,39 @@ status:
 ```
 
 Stored as VARCHAR. Validated on write. Admin UI renders as a select.
+
+#### Decimal — exact money (ADR-0017)
+
+```yaml
+price:  { type: decimal, scale: 2 }   # money — two fractional digits (the default)
+weight: { type: decimal, scale: 3 }   # any exact fixed-point quantity
+cost:   decimal                        # shorthand → scale 2
+```
+
+`decimal` is an **exact** fixed-point number — use it for any value where
+floating-point drift is unacceptable (prices, taxes, totals). `number` is
+IEEE-754 and will accumulate rounding error (`0.1 + 0.2 != 0.3`); never store
+money in it.
+
+- **`scale`** is the fixed number of fractional digits (0–9, default **2**):
+  `2` for USD/EUR, `0` for JPY, `3` for BHD/KWD, `8` for most crypto.
+- **On the wire a decimal is a quoted string**, never a JSON number — `"12.50"`,
+  `"-3.00"`, `"0.001"` — and is always returned at the full declared scale. A
+  bare JSON number is **rejected** (it is already a lossy float by the time it
+  arrives), as is a value with more fractional digits than the scale (money is
+  never silently rounded). A `default` is likewise a decimal string.
+- **Storage** is an exact integer count of minor units (value × 10^scale), so
+  sorting, range filters (`filter[price][gte]=10.00`), and `SUM` are exact.
+- **Currency/unit is a companion field, not part of the type** — pair the amount
+  with an `enum` or a relation:
+
+  ```yaml
+  amount:   { type: decimal, scale: 2 }
+  currency: { type: enum, values: [USD, EUR, JPY] }
+  ```
+
+  Conversion, exchange rates, and mixed-currency arithmetic are application
+  concerns; DCMS guarantees each amount is stored and returned exactly.
 
 #### Relation (Phase 2)
 
@@ -373,14 +407,25 @@ revisions: true
 access:
   read:    public              # anyone, no auth required
   create:  [admin, vendor]     # authenticated users with one of these roles
-  update:  owner               # the user who created the record
+  update:                      # admins OR the record's creator (composite)
+    any: [admin, owner]
   delete:  [admin]
   # rule values:
   #   public         — no authentication required
   #   authenticated  — any valid principal, regardless of role
   #   [role, ...]    — the principal holds at least one listed role
   #   owner          — the principal is the record's created_by
+  #   {any: [...]}   — composite OR: satisfied if any listed sub-rule is
 ```
+
+The `any:` composite lets one rule mix gates that resolve differently per caller.
+`any: [admin, owner]` is the canonical case: an admin gets full access (list is
+unfiltered), while everyone else is narrowed to the rows they created — exactly
+what a bare `owner` could **not** express, since `owner` alone also hides records
+from admins. Each element of `any:` is itself a rule (keyword, role, role list,
+or nested `any:`), roles named anywhere in it must be declared, and it needs at
+least two sub-rules. There is no query-cost or `N+1` change: an admin resolves to
+a plain allow, a non-owner to the same single `created_by` filter as `owner`.
 
 Enforcement (ADR-0016) is at the gateway, above the store:
 
@@ -405,8 +450,8 @@ fields:
 ```
 
 - Uses the same rule grammar as collection access
-  (`public` | `authenticated` | `[role, …]` | `owner`); an omitted direction is
-  `public` (the collection rule is the real gate).
+  (`public` | `authenticated` | `[role, …]` | `owner` | `{any: [...]}`); an omitted
+  direction is `public` (the collection rule is the real gate).
 - **`read` is a mask, not a gate:** an unauthorized reader still receives the
   record — just without that field (in single, list, and `?expand`ed responses).
 - **`write` is a filter, not a rejection:** an unauthorized writer's value for the
@@ -673,7 +718,7 @@ schema validation failed:
 
 For Phase 1, implement only:
 
-**Supported field types:** `string`, `text`, `number`, `integer`, `boolean`, `date`, `datetime`, `enum`, `json`, `richtext`, `relation`, `file`
+**Supported field types:** `string`, `text`, `number`, `integer`, `decimal`, `boolean`, `date`, `datetime`, `enum`, `json`, `richtext`, `relation`, `file`
 
 **Supported collection directives:** `fields`, `timestamps`, `indexes`,
 `publishing`, `soft_delete`, `revisions`

@@ -84,6 +84,17 @@ func (c CollectionDef) validateRecord(data map[string]any, isCreate bool) FieldE
 			continue
 		}
 
+		// A decimal crosses the wire as an exact string, never a JSON number
+		// (ADR-0017): a number would already be a lossy float by the time it
+		// arrives. Reject numbers explicitly, and validate the string parses to
+		// the declared scale with no silent rounding and no int64 overflow.
+		if f.Type == TypeDecimal {
+			if msg := f.validateDecimal(v); msg != "" {
+				errs[f.Name] = msg
+			}
+			continue
+		}
+
 		if !typeMatches(f.Type, v) {
 			errs[f.Name] = "must be of type " + string(f.Type)
 			continue
@@ -112,8 +123,9 @@ func (c CollectionDef) validateRecord(data map[string]any, isCreate bool) FieldE
 // compatible with the field's declared type.
 func typeMatches(t FieldType, v any) bool {
 	switch t {
-	case TypeString, TypeText, TypeEnum, TypeDate, TypeDateTime, TypeRelation:
-		// A relation value is the target record's id (a string).
+	case TypeString, TypeText, TypeEnum, TypeDate, TypeDateTime, TypeRelation, TypeDecimal:
+		// A relation value is the target record's id (a string); a decimal is an
+		// exact string on the wire and (after CoerceResponse) in a response.
 		_, ok := v.(string)
 		return ok
 	case TypeBoolean:

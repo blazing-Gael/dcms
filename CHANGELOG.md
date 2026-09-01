@@ -9,6 +9,47 @@ While on **0.x**, minor versions may include breaking changes.
 ## [Unreleased]
 
 ### Added
+- **Idempotency keys (M-A, ADR-0018).** A `POST` create carrying an
+  `Idempotency-Key` header is safe to retry: the original response is replayed
+  (with `Idempotent-Replay: true`) instead of creating a duplicate. Reusing a key
+  with a different body is a `422`; a still-in-flight duplicate is a `409`. Keys
+  are recorded durably in an engine-managed `_idempotency` collection and honored
+  for a TTL (default 24h); reserve → create → finalize run in one transaction so a
+  concurrent duplicate can never execute twice, and a failed create leaves the key
+  free to retry. On by default (inert until a client sends the header;
+  `server.idempotency` / `DCMS_IDEMPOTENCY_ENABLED` to configure); expired rows
+  are swept in the background. The header is documented in the generated OpenAPI.
+  **This completes the M-A hardening milestone.**
+- **Rate limiting (M-A).** Two in-memory token-bucket tiers, on by default with
+  generous limits (`server.rate_limit`; `enabled: false` or
+  `DCMS_RATE_LIMIT_ENABLED=false` disables). The **API** tier is keyed per
+  authenticated principal (client-IP fallback) so one client's flood never
+  throttles another (default ~100 req/s, burst 200); the **auth** tier is keyed
+  per client IP and guards the unauthenticated `/auth` endpoints (default 60/min,
+  burst 20). Over-limit requests answer `429` (`RATE_LIMITED`) with a
+  `Retry-After` header; health probes and media byte routes are never limited.
+  `trust_proxy` (`DCMS_TRUST_PROXY`) opts into X-Forwarded-For keying for
+  deployments behind a trusted proxy. The `RateLimiter` interface leaves room for
+  a distributed backend later without touching call sites.
+- **Request hardening (M-A): body-size cap + per-request timeout.** JSON request
+  bodies on the collection API and `/auth` are now capped (default **1 MiB**,
+  `server.max_body_bytes` / `DCMS_MAX_BODY_BYTES`); an over-cap body is a `413`
+  (`PAYLOAD_TOO_LARGE`) instead of an unbounded buffer. Every such request also
+  carries a deadline (default **15s**, `server.request_timeout_seconds` /
+  `DCMS_REQUEST_TIMEOUT_SECONDS`; negative disables); a query that outlives it is
+  abandoned and returns `504` (`TIMEOUT`) rather than pinning a connection. Media
+  byte uploads keep their own `max_upload_bytes` and are exempt from both. The
+  HTTP server also gained a 10s `ReadHeaderTimeout` (Slowloris guard).
+- **`decimal` — exact fixed-point money type (ADR-0017).** A new scalar field
+  type for values floats can't represent safely (prices, taxes, totals). Declared
+  with an optional `scale` (fractional digits, 0–9, default 2). On the wire it is
+  a **quoted string** (`"12.50"`), never a JSON number — a bare number is rejected
+  (`422`) because it is already a lossy float on arrival, and excess precision is
+  rejected rather than silently rounded. Stored as an exact int64 count of minor
+  units, so sort, range filters (`filter[price][gte]=10.00`), and `SUM` are exact;
+  the store stays type-agnostic (all conversion is gateway-side, mirroring
+  richtext). OpenAPI advertises `type: string` + `x-decimal-scale`; the TS SDK
+  types it as `string`. Currency/unit is a companion field, not part of the type.
 - Authentication & authorization — milestone 1 (ADR-0016): the first
   security-bearing layer of the engine.
   - **Authorization** — collection `access:` rules are now live and enforced at
@@ -58,8 +99,24 @@ While on **0.x**, minor versions may include breaking changes.
   - **Reference schema (M1)** — `examples/farmly.schema.yaml` also declares `auth:`
     (roles `admin`/`vendor`/`customer`, 7-day sessions) and a real `access:`
     policy per collection: public storefront reads, role-gated authoring,
-    admin-only PII, and `owner`-scoped orders. A new schema test compiles every
-    shipped example and pins farmly's access wiring.
+    admin-only PII, and composite `admin`-or-`owner` orders. A new schema test
+    compiles every shipped example and pins farmly's access wiring.
+- Authentication & authorization — composite access rules (ADR-0016): an access
+  rule value may now be `{any: [rule, …]}`, a logical **OR** of sub-rules, in both
+  collection `access:` and field `fields.<name>.access`.
+  - Fills the gap a bare `owner` left: `any: [admin, owner]` grants admins full
+    access (unfiltered list) while narrowing everyone else to the rows they
+    created — whereas `owner` alone also hid records from admins.
+  - Each element of `any:` is itself a rule (keyword, role, role list, or nested
+    `any:`); roles named anywhere in the tree must be declared; a composite needs
+    at least two sub-rules; the only supported key is `any` (an `all:`/AND form is
+    intentionally deferred).
+  - **No enforcement-path or query-cost change** — the evaluator folds a composite
+    into the existing allow/owner-scope/deny decision (precedence
+    `allow > owner-scope > deny`), so a list read still emits at most one
+    `created_by` filter and issues no extra query.
+  - **Reference schema** — `examples/farmly.schema.yaml` uses `any: [admin, owner]`
+    for `orders.read` and `customers.update`.
 - Record lifecycle (ADR-0012): opt-in per collection via `publishing: true`
   and/or `soft_delete: true`.
   - **Publishing** adds engine-managed `_status` (draft/published/archived) and

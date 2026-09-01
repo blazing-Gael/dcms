@@ -19,6 +19,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"syscall"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -171,6 +172,31 @@ func newDevCmd() *cobra.Command {
 				return err
 			}
 
+			// Rate limiting defaults ON (a production-hardening default); an
+			// explicit `enabled: false` (or DCMS_RATE_LIMIT_ENABLED=false) turns it
+			// off by leaving the option nil. Zero per-tier values take engine
+			// defaults inside the gateway.
+			var rateLimit *gateway.RateLimitOptions
+			rlEnabled := cfg.Server.RateLimit.Enabled == nil || *cfg.Server.RateLimit.Enabled
+			if rlEnabled {
+				rateLimit = &gateway.RateLimitOptions{
+					APIPerMinute:  cfg.Server.RateLimit.APIPerMinute,
+					APIBurst:      cfg.Server.RateLimit.APIBurst,
+					AuthPerMinute: cfg.Server.RateLimit.AuthPerMinute,
+					AuthBurst:     cfg.Server.RateLimit.AuthBurst,
+					TrustProxy:    cfg.Server.RateLimit.TrustProxy,
+				}
+			}
+
+			// Idempotency defaults ON (inert until a client sends the header); an
+			// explicit `enabled: false` leaves the option nil to disable it.
+			var idempotency *gateway.IdempotencyOptions
+			if cfg.Server.Idempotency.Enabled == nil || *cfg.Server.Idempotency.Enabled {
+				idempotency = &gateway.IdempotencyOptions{
+					TTL: time.Duration(cfg.Server.Idempotency.TTLHours) * time.Hour,
+				}
+			}
+
 			fmt.Printf("dcms dev — %d collection(s) from %s\n", len(def.Collections), cfg.Schema)
 			fmt.Printf("listening on http://localhost:%d  (Ctrl+C to stop)\n", cfg.Server.Port)
 			return engine.Serve(ctx, def, db, fmt.Sprintf(":%d", cfg.Server.Port), logger, gateway.Options{
@@ -180,6 +206,10 @@ func newDevCmd() *cobra.Command {
 				AllowedContentTypes: cfg.Media.AllowedContentTypes,
 				PreviewToken:        cfg.Content.PreviewToken,
 				Authenticator:       gateway.NewSessionAuthenticator(db),
+				MaxBodyBytes:        cfg.Server.MaxBodyBytes,
+				RequestTimeout:      time.Duration(cfg.Server.RequestTimeoutSeconds) * time.Second,
+				RateLimit:           rateLimit,
+				Idempotency:         idempotency,
 			})
 		},
 	}

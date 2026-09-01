@@ -219,6 +219,106 @@ collections:
 	}
 }
 
+func TestAccess_ParsesCompositeRule(t *testing.T) {
+	def, err := Parse([]byte(`
+version: "1"
+auth:
+  roles:
+    admin: { label: Administrator }
+collections:
+  orders:
+    fields:
+      total: number
+    access:
+      read:
+        any: [admin, owner]
+      update:
+        any: [admin, owner]
+`))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	var orders *CollectionDef
+	for i := range def.Collections {
+		if def.Collections[i].Name == "orders" {
+			orders = &def.Collections[i]
+		}
+	}
+	if orders == nil {
+		t.Fatal("orders collection not parsed")
+	}
+	read := orders.AccessRule(ActionRead)
+	if read.Kind != RuleAny || len(read.Any) != 2 {
+		t.Fatalf("read: expected composite of 2, got %+v", read)
+	}
+	if read.Any[0].Kind != RuleRoles || len(read.Any[0].Roles) != 1 || read.Any[0].Roles[0] != "admin" {
+		t.Errorf("read.any[0]: expected role admin, got %+v", read.Any[0])
+	}
+	if read.Any[1].Kind != RuleOwner {
+		t.Errorf("read.any[1]: expected owner, got %+v", read.Any[1])
+	}
+	if !read.MentionsOwner() {
+		t.Error("composite [admin, owner] should MentionsOwner")
+	}
+}
+
+func TestAccess_CompositeUndeclaredRoleIsError(t *testing.T) {
+	_, err := Parse([]byte(`
+version: "1"
+auth:
+  roles:
+    admin: { label: Administrator }
+collections:
+  orders:
+    fields:
+      total: number
+    access:
+      read:
+        any: [admin, ghost, owner]
+`))
+	if err == nil || !strings.Contains(err.Error(), "ghost") {
+		t.Fatalf("expected error naming undeclared role 'ghost', got: %v", err)
+	}
+}
+
+func TestAccess_CompositeNeedsTwoRules(t *testing.T) {
+	_, err := Parse([]byte(`
+version: "1"
+auth:
+  roles:
+    admin: { label: Administrator }
+collections:
+  orders:
+    fields:
+      total: number
+    access:
+      read:
+        any: [admin]
+`))
+	if err == nil || !strings.Contains(err.Error(), "at least two") {
+		t.Fatalf("expected 'at least two rules' error, got: %v", err)
+	}
+}
+
+func TestAccess_CompositeUnknownKeyIsError(t *testing.T) {
+	_, err := Parse([]byte(`
+version: "1"
+auth:
+  roles:
+    admin: { label: Administrator }
+collections:
+  orders:
+    fields:
+      total: number
+    access:
+      read:
+        all: [admin, owner]
+`))
+	if err == nil || !strings.Contains(err.Error(), "any") {
+		t.Fatalf("expected composite-key error mentioning 'any', got: %v", err)
+	}
+}
+
 func TestAuth_IdentityCollectionsInjected(t *testing.T) {
 	def, err := Parse([]byte(`
 version: "1"

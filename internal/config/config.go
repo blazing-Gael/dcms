@@ -95,6 +95,43 @@ type Server struct {
 	// `dcms dev` defaults it on (dev/CI is where you want the guardrail) while
 	// production stays off. Set it explicitly to override that.
 	ValidateResponses *bool `yaml:"validate_responses"`
+	// MaxBodyBytes caps a JSON request body (create/update/auth). 0 uses the
+	// engine default (1 MiB). Media uploads are capped by Media.MaxUploadBytes.
+	MaxBodyBytes int64 `yaml:"max_body_bytes"`
+	// RequestTimeoutSeconds bounds a single JSON request before its context is
+	// cancelled. 0 uses the engine default (15s); a negative value disables it.
+	RequestTimeoutSeconds int `yaml:"request_timeout_seconds"`
+	// RateLimit configures request rate limiting.
+	RateLimit RateLimit `yaml:"rate_limit"`
+	// Idempotency configures idempotency-key handling on POST creates.
+	Idempotency Idempotency `yaml:"idempotency"`
+}
+
+// Idempotency configures idempotent-write handling (ADR-0018). It is inert until
+// a client actually sends an Idempotency-Key header, so enabling it by default
+// costs nothing for clients that don't use it.
+type Idempotency struct {
+	// Enabled is a pointer so "unset" differs from an explicit false: unset
+	// defaults ON. When false, the Idempotency-Key header is ignored.
+	Enabled *bool `yaml:"enabled"`
+	// TTLHours is how long a recorded key is honored for replay; 0 uses 24h.
+	TTLHours int `yaml:"ttl_hours"`
+}
+
+// RateLimit configures the two rate-limit tiers (see gateway.RateLimitOptions).
+// Zero per-tier values take the engine defaults.
+type RateLimit struct {
+	// Enabled is a pointer so "unset" differs from an explicit false: unset
+	// defaults ON (rate limiting is a production-hardening default). Set it false
+	// to turn limiting off entirely.
+	Enabled       *bool `yaml:"enabled"`
+	APIPerMinute  int   `yaml:"api_per_minute"`
+	APIBurst      int   `yaml:"api_burst"`
+	AuthPerMinute int   `yaml:"auth_per_minute"`
+	AuthBurst     int   `yaml:"auth_burst"`
+	// TrustProxy honors X-Forwarded-For for client-IP keying. Enable ONLY behind
+	// a trusted proxy that sets it — otherwise it is client-spoofable.
+	TrustProxy bool `yaml:"trust_proxy"`
 }
 
 // Default returns the built-in configuration used when nothing overrides it.
@@ -164,6 +201,41 @@ func (c *Config) ApplyEnv() error {
 			return fmt.Errorf("DCMS_PORT %q: not a number", v)
 		}
 		c.Server.Port = port
+	}
+	if v, ok := os.LookupEnv("DCMS_MAX_BODY_BYTES"); ok {
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil {
+			return fmt.Errorf("DCMS_MAX_BODY_BYTES %q: not a number", v)
+		}
+		c.Server.MaxBodyBytes = n
+	}
+	if v, ok := os.LookupEnv("DCMS_REQUEST_TIMEOUT_SECONDS"); ok {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return fmt.Errorf("DCMS_REQUEST_TIMEOUT_SECONDS %q: not a number", v)
+		}
+		c.Server.RequestTimeoutSeconds = n
+	}
+	if v, ok := os.LookupEnv("DCMS_RATE_LIMIT_ENABLED"); ok {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return fmt.Errorf("DCMS_RATE_LIMIT_ENABLED %q: not a bool", v)
+		}
+		c.Server.RateLimit.Enabled = &b
+	}
+	if v, ok := os.LookupEnv("DCMS_TRUST_PROXY"); ok {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return fmt.Errorf("DCMS_TRUST_PROXY %q: not a bool", v)
+		}
+		c.Server.RateLimit.TrustProxy = b
+	}
+	if v, ok := os.LookupEnv("DCMS_IDEMPOTENCY_ENABLED"); ok {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return fmt.Errorf("DCMS_IDEMPOTENCY_ENABLED %q: not a bool", v)
+		}
+		c.Server.Idempotency.Enabled = &b
 	}
 	if v, ok := os.LookupEnv("DCMS_MEDIA_DIR"); ok {
 		c.Media.Dir = v

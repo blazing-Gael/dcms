@@ -17,7 +17,7 @@ collections:
         required: true
         unique: true
       price:
-        type: number
+        type: decimal          # exact money (ADR-0017)
         required: true
         min: 0
       stock:

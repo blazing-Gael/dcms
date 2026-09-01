@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -28,6 +29,19 @@ const mediaBasePath = "/__media"
 
 // defaultMaxUploadBytes caps a single upload when none is configured (32 MiB).
 const defaultMaxUploadBytes = 32 << 20
+
+// defaultMaxBodyBytes caps a JSON request body when none is configured (1 MiB).
+// This bounds the memory a single create/update/auth request can force us to
+// buffer, closing a trivial memory-exhaustion DoS. Media byte uploads are capped
+// separately by MaxUploadBytes on their own byte path — this never applies there.
+const defaultMaxBodyBytes = 1 << 20
+
+// defaultRequestTimeout bounds how long a single JSON request may run before its
+// context is cancelled when none is configured. It is cooperative: the store
+// honors the deadline at query boundaries, so a pathological query can't pin a
+// connection indefinitely. Media byte routes are exempt (large uploads over slow
+// links legitimately outlast it).
+const defaultRequestTimeout = 15 * time.Second
 
 // engineColTypes are the columns the engine adds to every collection; they are
 // valid for filtering/sorting even though they aren't declared in the schema.
@@ -68,6 +82,30 @@ type Options struct {
 	// configured and enforcement is bypassed (pre-auth behavior). Production wires
 	// the session-backed authenticator; tests may leave it nil or supply a stub.
 	Authenticator Authenticator
+
+	// MaxBodyBytes caps a JSON request body on the collection API and /auth; 0
+	// uses defaultMaxBodyBytes (1 MiB). Media uploads use MaxUploadBytes instead.
+	MaxBodyBytes int64
+	// RequestTimeout bounds a single JSON request's lifetime before its context is
+	// cancelled; 0 uses defaultRequestTimeout (15s). A negative value disables it.
+	// Media byte routes are exempt.
+	RequestTimeout time.Duration
+
+	// RateLimit configures request rate limiting (per-principal on the API,
+	// per-IP on /auth). Nil disables limiting entirely — the zero-value gateway
+	// and tests do none; production wires it. Zero fields inside take defaults.
+	RateLimit *RateLimitOptions
+
+	// Idempotency enables Idempotency-Key handling on POST creates (ADR-0018).
+	// Nil disables it (the zero-value gateway and tests do none); production wires
+	// it. A zero TTL inside takes the default (24h).
+	Idempotency *IdempotencyOptions
+}
+
+// IdempotencyOptions configures idempotent-write handling (ADR-0018).
+type IdempotencyOptions struct {
+	// TTL is how long a recorded key is honored for replay; 0 uses 24h.
+	TTL time.Duration
 }
 
 // Server wires a parsed schema and a storage adapter into an http.Handler.
@@ -106,6 +144,21 @@ func (s *Server) Handler() http.Handler {
 	r.Use(s.withPrincipal)  // resolve the request's identity once (ADR-0016)
 	r.Use(s.withVisibility) // resolve the request's lifecycle view once (ADR-0012)
 
+	// Rate limiters (opt-in via Options.RateLimit). Built once here and shared
+	// across requests so their buckets persist. The API tier keys per principal
+	// (IP fallback) and so must run after withPrincipal, above; the auth tier
+	// keys per client IP. Probes (/__health etc.) and media sit outside these
+	// groups and are deliberately unlimited.
+	var apiLimit, authLimit func(http.Handler) http.Handler
+	if rl := s.opts.RateLimit; rl != nil {
+		c := rl.withDefaults()
+		apiLimiter := newMemoryLimiter(c.APIPerMinute, c.APIBurst)
+		authLimiter := newMemoryLimiter(c.AuthPerMinute, c.AuthBurst)
+		trust := c.TrustProxy
+		apiLimit = s.rateLimit(apiLimiter, func(r *http.Request) string { return s.apiRateKey(r, trust) })
+		authLimit = s.rateLimit(authLimiter, func(r *http.Request) string { return "ip:" + clientIP(r, trust) })
+	}
+
 	r.NotFound(s.handleNotFound)
 	r.MethodNotAllowed(s.handleMethodNotAllowed)
 
@@ -116,8 +169,14 @@ func (s *Server) Handler() http.Handler {
 	r.Get("/__openapi", s.handleOpenAPI)
 	r.Get("/__docs", s.handleDocs)
 
-	// Local authentication (ADR-0016) — outside the collection API.
+	// Local authentication (ADR-0016) — outside the collection API. JSON bodies,
+	// so it gets the same body cap and request timeout as the collection API.
 	r.Route("/auth", func(r chi.Router) {
+		if authLimit != nil {
+			r.Use(authLimit) // shed abusive auth traffic before any work
+		}
+		r.Use(s.limitBody)
+		r.Use(s.withTimeout)
 		r.Post("/login", s.handleLogin)
 		r.Post("/logout", s.handleLogout)
 		r.Get("/me", s.handleMe)
@@ -134,8 +193,15 @@ func (s *Server) Handler() http.Handler {
 		r.Get("/{id}/raw", s.handleMediaRaw)
 	})
 
-	// Virtual collection routes under the configured base URL.
+	// Virtual collection routes under the configured base URL. All JSON, so the
+	// body cap and request timeout apply; the media byte path (registered above)
+	// is deliberately left out — it has its own size cap and latency profile.
 	r.Route(s.baseURL(), func(r chi.Router) {
+		if apiLimit != nil {
+			r.Use(apiLimit) // shed early, before body read / timeout setup
+		}
+		r.Use(s.limitBody)
+		r.Use(s.withTimeout)
 		r.Get("/{collection}", s.handleList)
 		r.Post("/{collection}", s.handleCreate)
 		r.Get("/{collection}/{id}", s.handleGetOne)
@@ -162,6 +228,26 @@ func (s *Server) Handler() http.Handler {
 // the generated OpenAPI spec always agree on the prefix.
 func (s *Server) baseURL() string {
 	return s.schema.BaseURL()
+}
+
+// maxBodyBytes is the configured JSON body cap, falling back to the default.
+func (s *Server) maxBodyBytes() int64 {
+	if s.opts.MaxBodyBytes > 0 {
+		return s.opts.MaxBodyBytes
+	}
+	return defaultMaxBodyBytes
+}
+
+// requestTimeout is the configured per-request timeout, falling back to the
+// default. A negative RequestTimeout disables the timeout (returns 0).
+func (s *Server) requestTimeout() time.Duration {
+	if s.opts.RequestTimeout < 0 {
+		return 0
+	}
+	if s.opts.RequestTimeout > 0 {
+		return s.opts.RequestTimeout
+	}
+	return defaultRequestTimeout
 }
 
 // knownCollection reports whether name is a collection declared in the schema.

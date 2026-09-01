@@ -209,7 +209,7 @@ func (s *Server) handleMediaPatch(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	data, err := decodeBody(r)
 	if err != nil {
-		writeError(w, http.StatusUnprocessableEntity, apiError{Code: "VALIDATION_ERROR", Message: err.Error()})
+		writeDecodeError(w, err)
 		return
 	}
 	upd := store.Record{"id": id}

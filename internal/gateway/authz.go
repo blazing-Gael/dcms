@@ -47,6 +47,22 @@ func evalRule(rule schema.Rule, p principal) decision {
 			return deny
 		}
 		return ownerScope
+	case schema.RuleAny:
+		// Logical OR over sub-rules. Combine their decisions by precedence:
+		// an outright allow (e.g. an admin) beats owner-scope (narrow to own
+		// rows) beats deny. This lets `any: [admin, owner]` give admins full
+		// access while everyone else stays owner-scoped — with no new cases in
+		// the enforcement helpers, which already handle allow/ownerScope/deny.
+		result := deny
+		for _, sub := range rule.Any {
+			switch evalRule(sub, p) {
+			case allow:
+				return allow
+			case ownerScope:
+				result = ownerScope
+			}
+		}
+		return result
 	default:
 		return deny
 	}

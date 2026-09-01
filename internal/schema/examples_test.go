@@ -71,7 +71,7 @@ func TestFarmlyAccessWiring(t *testing.T) {
 		{"products", ActionDelete, Rule{Kind: RuleRoles, Roles: []string{"admin"}}},
 		{"customers", ActionRead, Rule{Kind: RuleRoles, Roles: []string{"admin"}}},
 		{"customers", ActionCreate, Rule{Kind: RulePublic}},
-		{"orders", ActionRead, Rule{Kind: RuleOwner}},
+		{"orders", ActionRead, Rule{Kind: RuleAny}},
 		{"orders", ActionCreate, Rule{Kind: RuleAuthenticated}},
 		{"reviews", ActionCreate, Rule{Kind: RuleAuthenticated}},
 		// order_items declares no separate update rule beyond admin; stories
@@ -87,6 +87,29 @@ func TestFarmlyAccessWiring(t *testing.T) {
 		got := col.AccessRule(tc.action)
 		if got.Kind != tc.want.Kind || !equalStrings(got.Roles, tc.want.Roles) {
 			t.Errorf("%s.%s = %+v, want %+v", tc.collection, tc.action, got, tc.want)
+		}
+	}
+
+	// Composite rules (ADR-0016): orders.read and customers.update are both
+	// `any: [admin, owner]` — admins see/edit everything, customers are scoped to
+	// their own rows. A regression to a bare `owner` here would hide records from
+	// admins again (the exact gap composite rules closed).
+	for _, tc := range []struct {
+		collection string
+		action     AccessAction
+	}{
+		{"orders", ActionRead},
+		{"customers", ActionUpdate},
+	} {
+		got := byName[tc.collection].AccessRule(tc.action)
+		if got.Kind != RuleAny || len(got.Any) != 2 {
+			t.Fatalf("%s.%s: want composite of 2, got %+v", tc.collection, tc.action, got)
+		}
+		if got.Any[0].Kind != RuleRoles || !equalStrings(got.Any[0].Roles, []string{"admin"}) {
+			t.Errorf("%s.%s any[0]: want roles[admin], got %+v", tc.collection, tc.action, got.Any[0])
+		}
+		if got.Any[1].Kind != RuleOwner {
+			t.Errorf("%s.%s any[1]: want owner, got %+v", tc.collection, tc.action, got.Any[1])
 		}
 	}
 

@@ -89,9 +89,16 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A create carrying an Idempotency-Key takes the reserve/replay path so a
+	// retried POST can't create a duplicate (ADR-0018).
+	if rawKey := idempotencyKeyHeader(r); rawKey != "" && s.idempotencyEnabled() {
+		s.createWithIdempotency(w, r, collection, rawKey)
+		return
+	}
+
 	data, err := decodeBody(r)
 	if err != nil {
-		writeError(w, http.StatusUnprocessableEntity, apiError{Code: "VALIDATION_ERROR", Message: err.Error()})
+		writeDecodeError(w, err)
 		return
 	}
 	stripManagedFields(data) // _status/_published_at/_deleted_at change only via transitions
@@ -124,6 +131,8 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnprocessableEntity, apiError{Code: "VALIDATION_ERROR", Message: "validation failed", Fields: errs})
 		return
 	}
+	// Decimal strings → int64 minor units before the store write (ADR-0017).
+	s.collections[collection].EncodeDecimals(data)
 	if err := s.checkReferences(r.Context(), s.db, collection, data); err != nil {
 		writeStoreError(w, s.logger, r, err)
 		return
@@ -174,7 +183,7 @@ func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
 
 	data, err := decodeBody(r)
 	if err != nil {
-		writeError(w, http.StatusUnprocessableEntity, apiError{Code: "VALIDATION_ERROR", Message: err.Error()})
+		writeDecodeError(w, err)
 		return
 	}
 	stripManagedFields(data) // _status/_published_at/_deleted_at change only via transitions
@@ -209,6 +218,8 @@ func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnprocessableEntity, apiError{Code: "VALIDATION_ERROR", Message: "validation failed", Fields: errs})
 		return
 	}
+	// Decimal strings → int64 minor units before the store write (ADR-0017).
+	s.collections[collection].EncodeDecimals(data)
 	if err := s.checkReferences(r.Context(), s.db, collection, data); err != nil {
 		writeStoreError(w, s.logger, r, err)
 		return
@@ -267,8 +278,14 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
+// errBodyTooLarge is returned by decodeBody when the request body exceeds the
+// configured cap (enforced by the limitBody middleware's MaxBytesReader). It maps
+// to a 413, distinct from the 422 a malformed body gets.
+var errBodyTooLarge = errors.New("request body too large")
+
 // decodeBody decodes a JSON object request body into a store.Record. An empty
-// body is treated as an empty object (valid for create-with-defaults).
+// body is treated as an empty object (valid for create-with-defaults). A body
+// over the size cap returns errBodyTooLarge.
 func decodeBody(r *http.Request) (store.Record, error) {
 	data := store.Record{}
 	dec := json.NewDecoder(r.Body)
@@ -276,9 +293,23 @@ func decodeBody(r *http.Request) (store.Record, error) {
 		if errors.Is(err, io.EOF) {
 			return data, nil // empty body → empty object
 		}
+		var mbe *http.MaxBytesError
+		if errors.As(err, &mbe) {
+			return nil, errBodyTooLarge
+		}
 		return nil, errors.New("request body must be a JSON object")
 	}
 	return data, nil
+}
+
+// writeDecodeError maps a decodeBody error to the right status: an over-cap body
+// is a 413, anything else a 422.
+func writeDecodeError(w http.ResponseWriter, err error) {
+	if errors.Is(err, errBodyTooLarge) {
+		writeError(w, http.StatusRequestEntityTooLarge, apiError{Code: "PAYLOAD_TOO_LARGE", Message: "request body too large"})
+		return
+	}
+	writeError(w, http.StatusUnprocessableEntity, apiError{Code: "VALIDATION_ERROR", Message: err.Error()})
 }
 
 // effectiveLimit mirrors the store's default so the list meta reports the limit

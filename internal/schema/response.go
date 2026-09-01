@@ -33,6 +33,12 @@ func (c CollectionDef) CoerceResponse(data map[string]any) {
 			if decoded, ok := decodeJSONColumn(v); ok {
 				data[f.Name] = decoded
 			}
+		case TypeDecimal:
+			// Stored as int64 minor units; render back to an exact fixed-scale
+			// string at the declared scale (ADR-0017).
+			if n, ok := decimalMinorUnits(v); ok {
+				data[f.Name] = FormatDecimal(n, f.DecimalScale())
+			}
 		}
 	}
 }

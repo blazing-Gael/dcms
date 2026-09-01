@@ -100,6 +100,27 @@ func (s *Server) parseFilters(values url.Values, collection string) ([]store.Fil
 			return nil, badRequest(key, fmt.Sprintf("unknown field %q", field))
 		}
 
+		// A decimal filter value is coerced to int64 minor units at the field's
+		// scale so it compares against the stored integer (ADR-0017). Unlike other
+		// types, a value that doesn't parse is a 422 — not silently kept as text —
+		// because comparing a price filter as a string would give wrong results.
+		if ft == schema.TypeDecimal {
+			scale := s.decimalScale(collection, field)
+			coerceDec := func(p string) (any, error) {
+				n, err := schema.ParseDecimal(strings.TrimSpace(p), scale)
+				if err != nil {
+					return nil, badRequest(key, "value "+err.Error())
+				}
+				return n, nil
+			}
+			value, err := coerceList(vals[0], op, coerceDec)
+			if err != nil {
+				return nil, err
+			}
+			filters = append(filters, store.Filter{Field: field, Operator: op, Value: value})
+			continue
+		}
+
 		raw := vals[0]
 		var value any
 		if op == store.In || op == store.NotIn {
@@ -116,6 +137,40 @@ func (s *Server) parseFilters(values url.Values, collection string) ([]store.Fil
 		filters = append(filters, store.Filter{Field: field, Operator: op, Value: value})
 	}
 	return filters, nil
+}
+
+// coerceList applies a fallible per-value coercion to a filter value, splitting
+// on commas for the in/nin operators and coercing a single value otherwise. It
+// surfaces the first coercion error (a 422), so a malformed filter is rejected
+// rather than silently misinterpreted.
+func coerceList(raw string, op store.Op, coerce func(string) (any, error)) (any, error) {
+	if op == store.In || op == store.NotIn {
+		parts := strings.Split(raw, ",")
+		list := make([]any, 0, len(parts))
+		for _, p := range parts {
+			v, err := coerce(p)
+			if err != nil {
+				return nil, err
+			}
+			list = append(list, v)
+		}
+		return list, nil
+	}
+	return coerce(raw)
+}
+
+// decimalScale returns the effective scale for a decimal field, defaulting to
+// the schema default when the field can't be found (it always can here — the
+// caller has already confirmed the field type).
+func (s *Server) decimalScale(collection, field string) int {
+	if cd, ok := s.collections[collection]; ok {
+		for _, f := range cd.Fields {
+			if f.Name == field {
+				return f.DecimalScale()
+			}
+		}
+	}
+	return schema.DefaultDecimalScale
 }
 
 // coerce converts a string query value to the Go type implied by the field's

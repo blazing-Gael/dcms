@@ -22,6 +22,7 @@ const (
 	KindText
 	KindNumber
 	KindInteger
+	KindDecimal
 	KindBoolean
 	KindDate
 	KindDateTime
@@ -88,6 +89,9 @@ func kindOf(t schema.FieldType) Kind {
 		return KindNumber
 	case schema.TypeInteger:
 		return KindInteger
+	case schema.TypeDecimal:
+		// Exact money: a decimal string on the wire, never a JS number (ADR-0017).
+		return KindDecimal
 	case schema.TypeBoolean:
 		return KindBoolean
 	case schema.TypeDate:

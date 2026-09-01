@@ -15,6 +15,7 @@ const (
 	TypeText     FieldType = "text"
 	TypeNumber   FieldType = "number"
 	TypeInteger  FieldType = "integer"
+	TypeDecimal  FieldType = "decimal" // exact fixed-point (money), stored as int64 minor units (ADR-0017)
 	TypeBoolean  FieldType = "boolean"
 	TypeDate     FieldType = "date"
 	TypeDateTime FieldType = "datetime"
@@ -39,6 +40,7 @@ type FieldDef struct {
 	Max      *float64  `json:"max,omitempty"`     // string: max length; number/integer: max value
 	Pattern  string    `json:"pattern,omitempty"` // string: regex pattern
 	Values   []string  `json:"values,omitempty"`  // enum: allowed values
+	Scale    *int      `json:"scale,omitempty"`   // decimal: fixed fractional digits (default 2)
 	Label    string    `json:"label,omitempty"`   // admin UI label
 	Hint     string    `json:"hint,omitempty"`    // admin UI helper text
 

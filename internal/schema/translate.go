@@ -115,11 +115,22 @@ func (c CollectionDef) ToCollectionMeta() store.CollectionMeta {
 		if f.Type == TypeRichText {
 			colType = string(TypeJSON)
 		}
+		// A decimal is stored as int64 minor units (ADR-0017), so its column
+		// default — authored as a decimal string — is converted to that integer
+		// literal here. Parse errors are caught at schema validation.
+		def := f.Default
+		if f.Type == TypeDecimal {
+			if s, ok := f.Default.(string); ok {
+				if n, err := ParseDecimal(s, f.DecimalScale()); err == nil {
+					def = n
+				}
+			}
+		}
 		meta.Columns = append(meta.Columns, store.ColumnMeta{
 			Name:       f.Name,
 			Type:       colType,
 			Nullable:   !f.Required,
-			Default:    f.Default,
+			Default:    def,
 			References: references,
 			OnDelete:   onDelete,
 		})

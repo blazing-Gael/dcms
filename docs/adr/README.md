@@ -33,3 +33,5 @@ future selves.
 | [0014](./0014-rich-content.md) | Rich content: a structured (portable-text-style) `richtext` field stored as JSON, with per-field allowlists and batched in-content reference validation | Accepted |
 | [0015](./0015-reference-manifest.md) | Reference resolution via a deduplicated root `included` manifest (pure AST); media returned as a public projection | Accepted |
 | [0016](./0016-authentication-and-authorization.md) | Auth: a principal spine + gateway-enforced `access:` rules (authz), with opaque DB-backed sessions for local identity (authn); `_users`/`_sessions` injected; JWT reserved for external OIDC | Accepted |
+| [0017](./0017-money-decimal-type.md) | Exact `decimal` money type: string wire format, int64 minor-units storage, gateway-side conversion; currency/unit is a companion field | Accepted |
+| [0018](./0018-idempotency-keys.md) | Idempotency keys for `POST` creates via `Idempotency-Key` header; durable `_idempotency` collection, reserve→execute→finalize in one Tx; opt-in cost | Accepted |
