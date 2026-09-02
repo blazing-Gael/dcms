@@ -35,3 +35,4 @@ future selves.
 | [0016](./0016-authentication-and-authorization.md) | Auth: a principal spine + gateway-enforced `access:` rules (authz), with opaque DB-backed sessions for local identity (authn); `_users`/`_sessions` injected; JWT reserved for external OIDC | Accepted |
 | [0017](./0017-money-decimal-type.md) | Exact `decimal` money type: string wire format, int64 minor-units storage, gateway-side conversion; currency/unit is a companion field | Accepted |
 | [0018](./0018-idempotency-keys.md) | Idempotency keys for `POST` creates via `Idempotency-Key` header; durable `_idempotency` collection, reserve→execute→finalize in one Tx; opt-in cost | Accepted |
+| [0019](./0019-account-lifecycle.md) | Account lifecycle: self-registration, password change/reset, users admin API, runtime roles, log-out-everywhere; thin identity vs. app profile; `Notifier` email seam | Accepted |

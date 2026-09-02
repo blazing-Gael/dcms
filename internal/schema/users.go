@@ -16,6 +16,14 @@ const (
 	UserPasswordHash = "password_hash" // never serialized in a response
 	UserRoles        = "roles"         // JSON list of role names
 	UserName         = "name"
+	UserStatus       = "status" // active | disabled (empty treated as active)
+)
+
+// _users status values (ADR-0019). An empty/absent status is treated as active
+// so the additive migration needs no backfill.
+const (
+	UserStatusActive   = "active"
+	UserStatusDisabled = "disabled"
 )
 
 // _sessions field names.
@@ -36,6 +44,7 @@ func usersCollectionDef() CollectionDef {
 			{Name: UserPasswordHash, Type: TypeString},
 			{Name: UserRoles, Type: TypeJSON},
 			{Name: UserName, Type: TypeString},
+			{Name: UserStatus, Type: TypeString}, // ADR-0019; empty ⇒ active
 		},
 	}
 }

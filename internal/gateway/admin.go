@@ -18,12 +18,20 @@ import (
 // ErrUserExists is returned by CreateUser when the email is already taken.
 var ErrUserExists = errors.New("a user with that email already exists")
 
-// CreateUser hashes password and inserts a _users row with the given roles. roles
-// is stored as a JSON list (the roles field is a json column). It fails with
-// ErrUserExists if the email is taken, so a caller can report a clean message.
+// ErrInvalidEmail is returned by CreateUser when the email is not a valid address.
+var ErrInvalidEmail = errors.New("a valid email is required")
+
+// CreateUser hashes password and inserts a _users row with the given roles. The
+// email is normalized (trimmed + lower-cased) so accounts are case-insensitive
+// and a header-injection payload can't reach the mailer. roles is stored as a
+// JSON list. It fails with ErrUserExists if the (normalized) email is taken.
 func CreateUser(ctx context.Context, db store.Adapter, email, password string, roles []string) (store.Record, error) {
-	if email == "" || password == "" {
+	if password == "" {
 		return nil, errors.New("email and password are required")
+	}
+	email, ok := normalizeEmail(email)
+	if !ok {
+		return nil, ErrInvalidEmail
 	}
 	page, err := db.Find(ctx, store.Query{
 		Collection: schema.UsersCollection,

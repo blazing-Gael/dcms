@@ -8,7 +8,46 @@ While on **0.x**, minor versions may include breaking changes.
 
 ## [Unreleased]
 
+### Fixed
+- **Emails are now case-insensitive.** Addresses are validated and normalized
+  (trimmed + lower-cased) on every account write and lookup, so a user who
+  registered as `Ann@Example.com` can log in as `ann@example.com`, and case
+  variants no longer create duplicate accounts. Validation also rejects malformed
+  addresses (including CR/LF), closing an email-header-injection path into the
+  reset mailer. (Found by end-to-end auth testing.)
+- **The last active admin can no longer be removed.** Demoting, disabling, or
+  deleting a user who is the only remaining active admin is refused with a `409`
+  (`LAST_ADMIN`), so an operator can't accidentally lock the whole backend out of
+  administration. With two or more admins, self-demotion is allowed as before.
+
 ### Added
+- **Accounts — Phase 1: local account lifecycle (ADR-0019).** Self-service and
+  admin operations over the identity spine, all reusing opaque DB sessions so
+  revocation is immediate.
+  - **Self-service** (`/auth`): `POST /register` (self-registration, **off by
+    default**, config-gated with a non-admin default role; enumeration-safe),
+    `POST /password` (change own password; revokes the caller's *other*
+    sessions), `POST /logout-all` (revoke all own sessions).
+  - **Admin** (`/admin/users`, gated by configurable `auth.admin_roles`, default
+    `[admin]`): list / create / get / update (name, roles, status, password
+    reset) / delete, plus `POST /{id}/logout-all`. Role changes are validated
+    against the schema-declared roles; `password_hash` is never serialized.
+  - **User `status`** (`active`/`disabled`) added to `_users`: a disabled account
+    is refused login with the same flat `401`, and admins can suspend without
+    deleting history. Additive column, no backfill (empty ⇒ active).
+  - **Password policy:** configurable minimum length (`auth.password.min_length`,
+    default 8) and a hard 72-byte cap (bcrypt truncates beyond it).
+- **Accounts — Phase 2: password reset via email (ADR-0019).** `POST /auth/forgot`
+  (always `200`, enumeration-safe — a link is minted and sent only for a real,
+  active account) → `POST /auth/reset` (`{token, new}`). Reset tokens are
+  single-use, short-TTL (default 1h), stored **hashed** in a new engine-managed
+  `_auth_tokens` collection; a successful reset revokes **all** of the user's
+  sessions. Delivery goes through a pluggable **`Notifier`** seam: a dev-log
+  mailer by default (prints the link to the console — reset works with zero
+  config) or SMTP when `auth.smtp.host` is set (STARTTLS; credentials env-only).
+  Expired tokens are swept in the background alongside idempotency keys. Email
+  verification remains a later increment (the `_auth_tokens` table already
+  supports a `verify` purpose).
 - **Edge/serving readiness: CORS, native TLS, and proxy-aware secure cookies.**
   - **CORS** — configurable cross-origin access (`server.cors`), off by default
     (empty `allowed_origins` ⇒ same-origin only). Preflight `OPTIONS` is answered

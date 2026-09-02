@@ -38,6 +38,9 @@ func Parse(src []byte) (*SchemaDefinition, error) {
 	def.injectRevisions()
 	// Inject the engine-managed identity collections _users/_sessions (ADR-0016).
 	def.injectAuth()
+	// Inject the engine-managed _auth_tokens collection (ADR-0019); after
+	// injectAuth so its user_id relation target (_users) exists.
+	def.injectAuthTokens()
 	// Inject the engine-managed _idempotency collection (ADR-0018).
 	def.injectIdempotency()
 	return def, nil

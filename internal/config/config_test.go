@@ -86,6 +86,8 @@ func TestApplyEnv_OverridesAndValidates(t *testing.T) {
 	t.Setenv("DCMS_CORS_ALLOWED_ORIGINS", "https://a.example, https://b.example")
 	t.Setenv("DCMS_TLS_CERT_FILE", "/etc/tls/cert.pem")
 	t.Setenv("DCMS_TLS_KEY_FILE", "/etc/tls/key.pem")
+	t.Setenv("DCMS_ADMIN_ROLES", "admin, staff")
+	t.Setenv("DCMS_REGISTRATION_ENABLED", "true")
 
 	cfg := Default()
 	if err := cfg.ApplyEnv(); err != nil {
@@ -123,6 +125,12 @@ func TestApplyEnv_OverridesAndValidates(t *testing.T) {
 	}
 	if cfg.Server.TLS.CertFile != "/etc/tls/cert.pem" || cfg.Server.TLS.KeyFile != "/etc/tls/key.pem" {
 		t.Errorf("tls = %+v", cfg.Server.TLS)
+	}
+	if got := cfg.Auth.AdminRoles; len(got) != 2 || got[0] != "admin" || got[1] != "staff" {
+		t.Errorf("admin_roles = %v", got)
+	}
+	if !cfg.Auth.Registration.Enabled {
+		t.Errorf("registration.enabled = %v, want true", cfg.Auth.Registration.Enabled)
 	}
 }
 

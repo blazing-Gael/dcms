@@ -153,30 +153,33 @@ func (s *Server) createWithIdempotency(w http.ResponseWriter, r *http.Request, c
 const idempotencySweepInterval = time.Hour
 
 // RunMaintenance runs the gateway's periodic background upkeep until ctx is
-// cancelled: for now, sweeping expired idempotency rows so keys that are never
-// retried don't accumulate (lazy reclaim only frees a key when it is hit again).
-// Engine.Serve launches this; tests that build a gateway directly do not, so no
-// goroutine leaks in tests. It is a no-op when idempotency is disabled.
+// cancelled: sweeping expired idempotency keys and expired auth tokens (reset
+// links) so rows that are never consumed don't accumulate. Engine.Serve launches
+// this; tests that build a gateway directly do not, so no goroutine leaks.
 func (s *Server) RunMaintenance(ctx context.Context) {
-	if !s.idempotencyEnabled() {
-		return
-	}
 	ticker := time.NewTicker(idempotencySweepInterval)
 	defer ticker.Stop()
 	for {
-		if n, err := s.sweepExpiredIdempotency(ctx); err != nil {
-			if ctx.Err() != nil {
-				return
-			}
-			s.logger.Warn("idempotency sweep failed", "err", err)
-		} else if n > 0 {
-			s.logger.Debug("idempotency sweep", "deleted", n)
+		if s.idempotencyEnabled() {
+			s.runSweep(ctx, "idempotency", s.sweepExpiredIdempotency)
 		}
+		s.runSweep(ctx, "auth-tokens", s.sweepExpiredAuthTokens)
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
 		}
+	}
+}
+
+// runSweep executes one background delete-sweep, logging its outcome.
+func (s *Server) runSweep(ctx context.Context, name string, sweep func(context.Context) (int64, error)) {
+	if n, err := sweep(ctx); err != nil {
+		if ctx.Err() == nil {
+			s.logger.Warn("sweep failed", "sweep", name, "err", err)
+		}
+	} else if n > 0 {
+		s.logger.Debug("sweep", "sweep", name, "deleted", n)
 	}
 }
 
@@ -233,15 +236,7 @@ func (s *Server) respondFromIdem(w http.ResponseWriter, rec store.Record, fp str
 
 // idemExpired reports whether a recorded row's TTL has passed.
 func (s *Server) idemExpired(rec store.Record) bool {
-	exp, _ := rec[schema.IdempExpiresAt].(string)
-	if exp == "" {
-		return true
-	}
-	t, err := time.Parse(time.RFC3339, exp)
-	if err != nil {
-		return true
-	}
-	return !t.After(nowUTC())
+	return pastRFC3339(rec[schema.IdempExpiresAt])
 }
 
 // decodeBytes decodes an already-read JSON object body, mirroring decodeBody: an

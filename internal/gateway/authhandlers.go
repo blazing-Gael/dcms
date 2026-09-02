@@ -40,7 +40,16 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	hash, _ := user[schema.UserPasswordHash].(string)
-	if user == nil || !checkPassword(hash, req.Password) {
+	// Fail closed on all of: no such user, no local password (an
+	// externally-authenticated account — e.g. OIDC — must never be reachable via
+	// the local login path), or a wrong password. All are the same flat 401.
+	if user == nil || hash == "" || !checkPassword(hash, req.Password) {
+		writeError(w, http.StatusUnauthorized, apiError{Code: "UNAUTHORIZED", Message: "invalid email or password"})
+		return
+	}
+	// A suspended account is refused with the same flat 401 (ADR-0019) — no
+	// distinction between disabled and wrong-password is leaked.
+	if userDisabled(user) {
 		writeError(w, http.StatusUnauthorized, apiError{Code: "UNAUTHORIZED", Message: "invalid email or password"})
 		return
 	}
@@ -76,10 +85,15 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	clearSessionCookie(w)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// clearSessionCookie expires the session cookie on the client.
+func clearSessionCookie(w http.ResponseWriter) {
 	http.SetCookie(w, &http.Cookie{
 		Name: sessionCookie, Value: "", Path: "/", HttpOnly: true, MaxAge: -1,
 	})
-	w.WriteHeader(http.StatusNoContent)
 }
 
 // handleMe returns the current principal. It is the client's way to discover who
@@ -136,10 +150,12 @@ func (s *Server) sessionTTL() time.Duration {
 }
 
 // findUserByEmail returns the _users row for an email, or nil if none exists.
+// The email is canonicalized (trim + lower-case) so lookups are case-insensitive
+// and match the normalized form stored by CreateUser.
 func (s *Server) findUserByEmail(ctx context.Context, email string) (store.Record, error) {
 	page, err := s.db.Find(ctx, store.Query{
 		Collection: schema.UsersCollection,
-		Filters:    []store.Filter{{Field: schema.UserEmail, Operator: store.Eq, Value: email}},
+		Filters:    []store.Filter{{Field: schema.UserEmail, Operator: store.Eq, Value: canonEmail(email)}},
 		Limit:      1,
 		SkipCount:  true,
 	})
@@ -172,10 +188,15 @@ func (s *Server) findSessionByHash(ctx context.Context, tokenHash string) (store
 // publicUser projects a _users row to the fields safe to return to a client —
 // never the password hash.
 func publicUser(user store.Record) map[string]any {
+	status, _ := user[schema.UserStatus].(string)
+	if status == "" {
+		status = schema.UserStatusActive
+	}
 	return map[string]any{
-		"id":    user["id"],
-		"email": user[schema.UserEmail],
-		"name":  user[schema.UserName],
-		"roles": rolesOf(user),
+		"id":     user["id"],
+		"email":  user[schema.UserEmail],
+		"name":   user[schema.UserName],
+		"roles":  rolesOf(user),
+		"status": status,
 	}
 }

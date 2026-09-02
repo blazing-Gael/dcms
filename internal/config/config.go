@@ -44,6 +44,50 @@ type Config struct {
 type Auth struct {
 	AdminEmail    string `yaml:"-"`
 	AdminPassword string `yaml:"-"`
+	// AdminRoles are the roles permitted to use the /admin/users API (ADR-0019).
+	// Empty defaults to ["admin"].
+	AdminRoles []string `yaml:"admin_roles"`
+	// Registration configures self-registration (off unless enabled).
+	Registration Registration `yaml:"registration"`
+	// Password tunes the password policy.
+	Password Password `yaml:"password"`
+	// Reset configures the password-reset flow (ADR-0019 phase 2).
+	Reset AuthReset `yaml:"reset"`
+	// SMTP configures the mailer for account emails. Host empty ⇒ a dev-log
+	// mailer that prints reset links to the console.
+	SMTP SMTP `yaml:"smtp"`
+}
+
+// AuthReset configures password reset (ADR-0019).
+type AuthReset struct {
+	// LinkBase is the frontend URL a reset link points at; the token is appended
+	// as ?token=. Empty ⇒ the raw token is delivered (dev).
+	LinkBase string `yaml:"link_base"`
+	// TTLMinutes is how long a reset token is valid; 0 uses the default (60).
+	TTLMinutes int `yaml:"ttl_minutes"`
+}
+
+// SMTP configures outbound mail. Credentials are env-only (secrets rule).
+type SMTP struct {
+	Host     string `yaml:"host"`
+	Port     int    `yaml:"port"`
+	From     string `yaml:"from"`
+	Username string `yaml:"-"` // DCMS_SMTP_USERNAME
+	Password string `yaml:"-"` // DCMS_SMTP_PASSWORD
+}
+
+// Registration configures self-registration (ADR-0019). Off by default.
+type Registration struct {
+	Enabled bool `yaml:"enabled"`
+	// DefaultRoles are granted to a self-registered user. Must be declared roles,
+	// and none may be an admin role (a self-registrant can't self-grant admin).
+	DefaultRoles []string `yaml:"default_roles"`
+}
+
+// Password tunes the password policy (ADR-0019).
+type Password struct {
+	// MinLength is the minimum password length; 0 uses the engine default (8).
+	MinLength int `yaml:"min_length"`
 }
 
 // Content configures record-lifecycle behavior (ADR-0012).
@@ -315,6 +359,30 @@ func (c *Config) ApplyEnv() error {
 	}
 	if v, ok := os.LookupEnv("DCMS_ADMIN_PASSWORD"); ok {
 		c.Auth.AdminPassword = v
+	}
+	if v, ok := os.LookupEnv("DCMS_ADMIN_ROLES"); ok {
+		c.Auth.AdminRoles = splitList(v)
+	}
+	if v, ok := os.LookupEnv("DCMS_REGISTRATION_ENABLED"); ok {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return fmt.Errorf("DCMS_REGISTRATION_ENABLED %q: not a bool", v)
+		}
+		c.Auth.Registration.Enabled = b
+	}
+	// SMTP credentials are env-only (secrets rule); host/from may also come from
+	// env for 12-factor deployments.
+	if v, ok := os.LookupEnv("DCMS_SMTP_USERNAME"); ok {
+		c.Auth.SMTP.Username = v
+	}
+	if v, ok := os.LookupEnv("DCMS_SMTP_PASSWORD"); ok {
+		c.Auth.SMTP.Password = v
+	}
+	if v, ok := os.LookupEnv("DCMS_SMTP_HOST"); ok {
+		c.Auth.SMTP.Host = v
+	}
+	if v, ok := os.LookupEnv("DCMS_SMTP_FROM"); ok {
+		c.Auth.SMTP.From = v
 	}
 	return nil
 }

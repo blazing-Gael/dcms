@@ -110,6 +110,32 @@ type Options struct {
 	// CORS enables cross-origin access when non-nil (and its AllowedOrigins is
 	// non-empty). Nil ⇒ no CORS headers (same-origin only), the safe default.
 	CORS *CORSOptions
+
+	// AdminRoles are the roles permitted to use the /admin/users API (ADR-0019).
+	// Empty defaults to ["admin"].
+	AdminRoles []string
+	// Registration enables self-registration when non-nil (ADR-0019). Nil ⇒
+	// disabled (POST /auth/register is 403).
+	Registration *RegistrationOptions
+	// PasswordMinLength is the minimum accepted password length; 0 uses the
+	// default (8). A hard 72-byte maximum always applies (bcrypt truncates there).
+	PasswordMinLength int
+
+	// Notifier delivers account emails (password reset). Nil uses a dev-log
+	// notifier that prints the link to the console (ADR-0019 phase 2).
+	Notifier Notifier
+	// ResetLinkBase is the frontend URL a reset link points at; the token is
+	// appended as ?token=. Empty ⇒ the raw token is delivered (dev).
+	ResetLinkBase string
+	// ResetTokenTTL is how long a reset token is valid; 0 uses the default (1h).
+	ResetTokenTTL time.Duration
+}
+
+// RegistrationOptions configures self-registration (ADR-0019).
+type RegistrationOptions struct {
+	// DefaultRoles are granted to a self-registered user (validated at construction
+	// against declared, non-admin roles).
+	DefaultRoles []string
 }
 
 // IdempotencyOptions configures idempotent-write handling (ADR-0018).
@@ -195,6 +221,28 @@ func (s *Server) Handler() http.Handler {
 		r.Post("/login", s.handleLogin)
 		r.Post("/logout", s.handleLogout)
 		r.Get("/me", s.handleMe)
+		// Account self-service (ADR-0019).
+		r.Post("/register", s.handleRegister)
+		r.Post("/password", s.handlePasswordChange)
+		r.Post("/logout-all", s.handleLogoutAll)
+		r.Post("/forgot", s.handleForgotPassword)
+		r.Post("/reset", s.handleResetPassword)
+	})
+
+	// User administration (ADR-0019) — admin-role-gated, JSON bodies. Gets the
+	// API-tier rate limit (per principal) plus the body cap and timeout.
+	r.Route("/admin/users", func(r chi.Router) {
+		if apiLimit != nil {
+			r.Use(apiLimit)
+		}
+		r.Use(s.limitBody)
+		r.Use(s.withTimeout)
+		r.Get("/", s.handleAdminUserList)
+		r.Post("/", s.handleAdminUserCreate)
+		r.Get("/{id}", s.handleAdminUserGet)
+		r.Patch("/{id}", s.handleAdminUserUpdate)
+		r.Delete("/{id}", s.handleAdminUserDelete)
+		r.Post("/{id}/logout-all", s.handleAdminUserLogoutAll)
 	})
 
 	// Media library (byte path) — outside the collection API (ADR-0011).

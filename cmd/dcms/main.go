@@ -209,6 +209,36 @@ func newDevCmd() *cobra.Command {
 				}
 			}
 
+			// Self-registration (ADR-0019): off unless enabled. Default roles must
+			// be declared and must not be admin roles — a self-registrant can never
+			// self-grant administration.
+			adminRoles := cfg.Auth.AdminRoles
+			if len(adminRoles) == 0 {
+				adminRoles = []string{"admin"}
+			}
+			var registration *gateway.RegistrationOptions
+			if cfg.Auth.Registration.Enabled {
+				for _, role := range cfg.Auth.Registration.DefaultRoles {
+					if !def.HasRole(role) {
+						return fmt.Errorf("registration default_role %q is not a declared role", role)
+					}
+					for _, ar := range adminRoles {
+						if role == ar {
+							return fmt.Errorf("registration default_role %q may not be an admin role", role)
+						}
+					}
+				}
+				registration = &gateway.RegistrationOptions{DefaultRoles: cfg.Auth.Registration.DefaultRoles}
+			}
+
+			// Mailer for account emails (ADR-0019). SMTP host set ⇒ send via SMTP;
+			// otherwise the gateway falls back to a dev-log notifier.
+			var notifier gateway.Notifier
+			if cfg.Auth.SMTP.Host != "" {
+				notifier = gateway.NewSMTPNotifier(cfg.Auth.SMTP.Host, cfg.Auth.SMTP.Port,
+					cfg.Auth.SMTP.From, cfg.Auth.SMTP.Username, cfg.Auth.SMTP.Password)
+			}
+
 			tlsCfg := engine.TLSConfig{CertFile: cfg.Server.TLS.CertFile, KeyFile: cfg.Server.TLS.KeyFile}
 			scheme := "http"
 			if tlsCfg.CertFile != "" && tlsCfg.KeyFile != "" {
@@ -230,6 +260,12 @@ func newDevCmd() *cobra.Command {
 				Idempotency:         idempotency,
 				TrustProxy:          cfg.Server.TrustProxy,
 				CORS:                cors,
+				AdminRoles:          adminRoles,
+				Registration:        registration,
+				PasswordMinLength:   cfg.Auth.Password.MinLength,
+				Notifier:            notifier,
+				ResetLinkBase:       cfg.Auth.Reset.LinkBase,
+				ResetTokenTTL:       time.Duration(cfg.Auth.Reset.TTLMinutes) * time.Minute,
 			}, tlsCfg)
 		},
 	}

@@ -118,3 +118,42 @@ content:
   #   DCMS_PREVIEW_TOKEN=<a long random string>
   # Then send it as the `X-DCMS-Preview` header (or ?preview_token=) with
   # ?status= / ?include_deleted= to widen the view. Unset ⇒ public reads only.
+
+auth:
+  # Account lifecycle (ADR-0019). Roles themselves are declared in the SCHEMA's
+  # `auth.roles:` block; this section configures the runtime account behaviors.
+  # The bootstrap admin credentials are SECRETS and env-only (never in this file):
+  #   DCMS_ADMIN_EMAIL, DCMS_ADMIN_PASSWORD  (seed the first admin on first run)
+  #
+  # Roles allowed to use the /admin/users API. Default ["admin"].
+  # Env override: DCMS_ADMIN_ROLES (comma-separated).
+  # admin_roles: [admin]
+  #
+  # Self-registration (POST /auth/register). OFF by default — enable for stores
+  # that onboard customers. default_roles are granted to each new account; they
+  # must be declared roles and must NOT be admin roles (no self-granting admin).
+  # Env: DCMS_REGISTRATION_ENABLED.
+  # registration:
+  #   enabled: true
+  #   default_roles: [customer]
+  #
+  # Password policy. min_length default 8; a hard 72-byte maximum always applies
+  # (bcrypt truncates beyond that).
+  # password:
+  #   min_length: 8
+  #
+  # Password reset (POST /auth/forgot → email → POST /auth/reset). link_base is
+  # your frontend reset page; the one-time token is appended as ?token=. ttl
+  # default 60 min.
+  # reset:
+  #   link_base: "https://blog.example/reset"
+  #   ttl_minutes: 60
+  #
+  # Mailer for account emails. Omit (no host) to use a dev-log mailer that prints
+  # the reset link to the console — handy for local testing. SMTP credentials are
+  # SECRETS and env-only: DCMS_SMTP_USERNAME / DCMS_SMTP_PASSWORD (host/from may
+  # also come from DCMS_SMTP_HOST / DCMS_SMTP_FROM). STARTTLS (port 587).
+  # smtp:
+  #   host: smtp.example.com
+  #   port: 587
+  #   from: "no-reply@blog.example"
