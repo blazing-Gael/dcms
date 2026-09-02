@@ -184,7 +184,19 @@ func newDevCmd() *cobra.Command {
 					APIBurst:      cfg.Server.RateLimit.APIBurst,
 					AuthPerMinute: cfg.Server.RateLimit.AuthPerMinute,
 					AuthBurst:     cfg.Server.RateLimit.AuthBurst,
-					TrustProxy:    cfg.Server.RateLimit.TrustProxy,
+				}
+			}
+
+			// CORS is off unless origins are configured (same-origin only).
+			var cors *gateway.CORSOptions
+			if len(cfg.Server.CORS.AllowedOrigins) > 0 {
+				cors = &gateway.CORSOptions{
+					AllowedOrigins:   cfg.Server.CORS.AllowedOrigins,
+					AllowedMethods:   cfg.Server.CORS.AllowedMethods,
+					AllowedHeaders:   cfg.Server.CORS.AllowedHeaders,
+					ExposedHeaders:   cfg.Server.CORS.ExposedHeaders,
+					AllowCredentials: cfg.Server.CORS.AllowCredentials,
+					MaxAgeSeconds:    cfg.Server.CORS.MaxAgeSeconds,
 				}
 			}
 
@@ -197,8 +209,14 @@ func newDevCmd() *cobra.Command {
 				}
 			}
 
+			tlsCfg := engine.TLSConfig{CertFile: cfg.Server.TLS.CertFile, KeyFile: cfg.Server.TLS.KeyFile}
+			scheme := "http"
+			if tlsCfg.CertFile != "" && tlsCfg.KeyFile != "" {
+				scheme = "https"
+			}
+
 			fmt.Printf("dcms dev — %d collection(s) from %s\n", len(def.Collections), cfg.Schema)
-			fmt.Printf("listening on http://localhost:%d  (Ctrl+C to stop)\n", cfg.Server.Port)
+			fmt.Printf("listening on %s://localhost:%d  (Ctrl+C to stop)\n", scheme, cfg.Server.Port)
 			return engine.Serve(ctx, def, db, fmt.Sprintf(":%d", cfg.Server.Port), logger, gateway.Options{
 				ValidateResponses:   validateResponses,
 				Blob:                bs,
@@ -210,7 +228,9 @@ func newDevCmd() *cobra.Command {
 				RequestTimeout:      time.Duration(cfg.Server.RequestTimeoutSeconds) * time.Second,
 				RateLimit:           rateLimit,
 				Idempotency:         idempotency,
-			})
+				TrustProxy:          cfg.Server.TrustProxy,
+				CORS:                cors,
+			}, tlsCfg)
 		},
 	}
 	cmd.Flags().String("schema", "./dcms.schema.yaml", "path to the schema file")

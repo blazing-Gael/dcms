@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -105,6 +106,36 @@ type Server struct {
 	RateLimit RateLimit `yaml:"rate_limit"`
 	// Idempotency configures idempotency-key handling on POST creates.
 	Idempotency Idempotency `yaml:"idempotency"`
+	// TrustProxy trusts a fronting reverse proxy's X-Forwarded-* headers:
+	// X-Forwarded-For for client-IP rate-limit keying, and X-Forwarded-Proto for
+	// the session cookie's Secure flag when TLS is terminated at the proxy. Enable
+	// ONLY behind a proxy you control — otherwise a client can spoof these.
+	TrustProxy bool `yaml:"trust_proxy"`
+	// CORS configures cross-origin access. Empty allowed_origins ⇒ CORS off
+	// (same-origin only), the safe default.
+	CORS CORS `yaml:"cors"`
+	// TLS optionally serves HTTPS directly. When both files are set the server
+	// terminates TLS itself; otherwise it serves HTTP (terminate TLS at a proxy).
+	TLS TLS `yaml:"tls"`
+}
+
+// CORS configures cross-origin resource sharing (see gateway.CORSOptions). It is
+// off unless AllowedOrigins is non-empty.
+type CORS struct {
+	AllowedOrigins   []string `yaml:"allowed_origins"`
+	AllowedMethods   []string `yaml:"allowed_methods"`
+	AllowedHeaders   []string `yaml:"allowed_headers"`
+	ExposedHeaders   []string `yaml:"exposed_headers"`
+	AllowCredentials bool     `yaml:"allow_credentials"`
+	MaxAgeSeconds    int      `yaml:"max_age_seconds"`
+}
+
+// TLS points at a certificate/key pair for native HTTPS. Both must be set to
+// enable it; DCMS does not manage or renew certificates (front it with a proxy
+// that does ACME, or supply certs here).
+type TLS struct {
+	CertFile string `yaml:"cert_file"`
+	KeyFile  string `yaml:"key_file"`
 }
 
 // Idempotency configures idempotent-write handling (ADR-0018). It is inert until
@@ -129,9 +160,17 @@ type RateLimit struct {
 	APIBurst      int   `yaml:"api_burst"`
 	AuthPerMinute int   `yaml:"auth_per_minute"`
 	AuthBurst     int   `yaml:"auth_burst"`
-	// TrustProxy honors X-Forwarded-For for client-IP keying. Enable ONLY behind
-	// a trusted proxy that sets it — otherwise it is client-spoofable.
-	TrustProxy bool `yaml:"trust_proxy"`
+}
+
+// splitList parses a comma-separated env value into trimmed, non-empty entries.
+func splitList(v string) []string {
+	var out []string
+	for _, p := range strings.Split(v, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // Default returns the built-in configuration used when nothing overrides it.
@@ -228,7 +267,16 @@ func (c *Config) ApplyEnv() error {
 		if err != nil {
 			return fmt.Errorf("DCMS_TRUST_PROXY %q: not a bool", v)
 		}
-		c.Server.RateLimit.TrustProxy = b
+		c.Server.TrustProxy = b
+	}
+	if v, ok := os.LookupEnv("DCMS_CORS_ALLOWED_ORIGINS"); ok {
+		c.Server.CORS.AllowedOrigins = splitList(v)
+	}
+	if v, ok := os.LookupEnv("DCMS_TLS_CERT_FILE"); ok {
+		c.Server.TLS.CertFile = v
+	}
+	if v, ok := os.LookupEnv("DCMS_TLS_KEY_FILE"); ok {
+		c.Server.TLS.KeyFile = v
 	}
 	if v, ok := os.LookupEnv("DCMS_IDEMPOTENCY_ENABLED"); ok {
 		b, err := strconv.ParseBool(v)

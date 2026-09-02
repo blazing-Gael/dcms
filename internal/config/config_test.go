@@ -83,6 +83,9 @@ func TestApplyEnv_OverridesAndValidates(t *testing.T) {
 	t.Setenv("DCMS_RATE_LIMIT_ENABLED", "false")
 	t.Setenv("DCMS_TRUST_PROXY", "true")
 	t.Setenv("DCMS_IDEMPOTENCY_ENABLED", "false")
+	t.Setenv("DCMS_CORS_ALLOWED_ORIGINS", "https://a.example, https://b.example")
+	t.Setenv("DCMS_TLS_CERT_FILE", "/etc/tls/cert.pem")
+	t.Setenv("DCMS_TLS_KEY_FILE", "/etc/tls/key.pem")
 
 	cfg := Default()
 	if err := cfg.ApplyEnv(); err != nil {
@@ -109,11 +112,17 @@ func TestApplyEnv_OverridesAndValidates(t *testing.T) {
 	if cfg.Server.RateLimit.Enabled == nil || *cfg.Server.RateLimit.Enabled {
 		t.Errorf("rate_limit.enabled = %v, want explicit false", cfg.Server.RateLimit.Enabled)
 	}
-	if !cfg.Server.RateLimit.TrustProxy {
-		t.Errorf("trust_proxy = %v, want true", cfg.Server.RateLimit.TrustProxy)
+	if !cfg.Server.TrustProxy {
+		t.Errorf("trust_proxy = %v, want true", cfg.Server.TrustProxy)
 	}
 	if cfg.Server.Idempotency.Enabled == nil || *cfg.Server.Idempotency.Enabled {
 		t.Errorf("idempotency.enabled = %v, want explicit false", cfg.Server.Idempotency.Enabled)
+	}
+	if got := cfg.Server.CORS.AllowedOrigins; len(got) != 2 || got[0] != "https://a.example" || got[1] != "https://b.example" {
+		t.Errorf("cors.allowed_origins = %v, want two trimmed origins", got)
+	}
+	if cfg.Server.TLS.CertFile != "/etc/tls/cert.pem" || cfg.Server.TLS.KeyFile != "/etc/tls/key.pem" {
+		t.Errorf("tls = %+v", cfg.Server.TLS)
 	}
 }
 

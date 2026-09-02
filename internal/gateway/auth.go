@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"net/http"
+	"strings"
 
 	"github.com/blazing-Gael/dcms/internal/store"
 )
@@ -79,3 +80,14 @@ func principalFromContext(ctx context.Context) principal {
 // no Authenticator is configured, which keeps the pre-auth behavior for callers
 // (and tests) that don't wire one. Production always wires one.
 func (s *Server) authEnabled() bool { return s.opts.Authenticator != nil }
+
+// requestIsSecure reports whether the request reached the client over HTTPS —
+// directly, or (when TrustProxy is set) via a proxy that terminated TLS and set
+// X-Forwarded-Proto. It drives the session cookie's Secure flag, so a
+// proxy-terminated deployment still marks the cookie HTTPS-only.
+func (s *Server) requestIsSecure(r *http.Request) bool {
+	if r.TLS != nil {
+		return true
+	}
+	return s.opts.TrustProxy && strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
+}

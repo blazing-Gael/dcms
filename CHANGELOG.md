@@ -9,6 +9,21 @@ While on **0.x**, minor versions may include breaking changes.
 ## [Unreleased]
 
 ### Added
+- **Edge/serving readiness: CORS, native TLS, and proxy-aware secure cookies.**
+  - **CORS** — configurable cross-origin access (`server.cors`), off by default
+    (empty `allowed_origins` ⇒ same-origin only). Preflight `OPTIONS` is answered
+    `204` before auth or rate-limiting; credentialed CORS correctly echoes the
+    specific origin with `Vary: Origin` (a wildcard `*` is used only without
+    credentials). Sensible default methods/headers; `DCMS_CORS_ALLOWED_ORIGINS`
+    env override.
+  - **Native TLS** — set `server.tls.cert_file` + `key_file` (or the `DCMS_TLS_*`
+    envs) to serve HTTPS directly; otherwise DCMS serves HTTP for a
+    TLS-terminating proxy (the recommended topology). No cert management/renewal.
+  - **Proxy-aware secure cookie (fix)** — the session cookie's `Secure` flag now
+    also honors `X-Forwarded-Proto: https` when `server.trust_proxy` is set, so a
+    proxy-terminated HTTPS deployment still marks the cookie HTTPS-only (previously
+    it only saw direct TLS). `trust_proxy` moved from `server.rate_limit` up to
+    `server` since it now governs both IP keying and cookie security.
 - **Idempotency keys (M-A, ADR-0018).** A `POST` create carrying an
   `Idempotency-Key` header is safe to retry: the original response is replayed
   (with `Idempotent-Replay: true`) instead of creating a duplicate. Reusing a key

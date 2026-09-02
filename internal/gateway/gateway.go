@@ -100,6 +100,16 @@ type Options struct {
 	// Nil disables it (the zero-value gateway and tests do none); production wires
 	// it. A zero TTL inside takes the default (24h).
 	Idempotency *IdempotencyOptions
+
+	// TrustProxy trusts a fronting proxy's X-Forwarded-* headers: X-Forwarded-For
+	// for rate-limit client-IP keying, and X-Forwarded-Proto for the session
+	// cookie's Secure flag when TLS is terminated at the proxy. Off by default —
+	// enable only behind a proxy you control, or these become client-spoofable.
+	TrustProxy bool
+
+	// CORS enables cross-origin access when non-nil (and its AllowedOrigins is
+	// non-empty). Nil ⇒ no CORS headers (same-origin only), the safe default.
+	CORS *CORSOptions
 }
 
 // IdempotencyOptions configures idempotent-write handling (ADR-0018).
@@ -141,6 +151,11 @@ func (s *Server) Handler() http.Handler {
 	r.Use(middleware.RequestID)
 	r.Use(s.requestLogger)
 	r.Use(s.recoverer)
+	// CORS runs before auth and the route-group limiters so a preflight OPTIONS is
+	// answered without being authenticated or rate-limited.
+	if s.opts.CORS != nil {
+		r.Use(s.opts.CORS.withDefaults().middleware())
+	}
 	r.Use(s.withPrincipal)  // resolve the request's identity once (ADR-0016)
 	r.Use(s.withVisibility) // resolve the request's lifecycle view once (ADR-0012)
 
@@ -154,7 +169,7 @@ func (s *Server) Handler() http.Handler {
 		c := rl.withDefaults()
 		apiLimiter := newMemoryLimiter(c.APIPerMinute, c.APIBurst)
 		authLimiter := newMemoryLimiter(c.AuthPerMinute, c.AuthBurst)
-		trust := c.TrustProxy
+		trust := s.opts.TrustProxy
 		apiLimit = s.rateLimit(apiLimiter, func(r *http.Request) string { return s.apiRateKey(r, trust) })
 		authLimit = s.rateLimit(authLimiter, func(r *http.Request) string { return "ip:" + clientIP(r, trust) })
 	}

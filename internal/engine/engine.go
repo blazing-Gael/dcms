@@ -66,10 +66,21 @@ func Apply(ctx context.Context, db store.Adapter, def *schema.SchemaDefinition) 
 	return nil
 }
 
-// Serve starts the HTTP gateway on addr and blocks until ctx is cancelled, then
-// shuts down gracefully (draining in-flight requests). opts tunes gateway
-// behavior (e.g. strict response validation).
-func Serve(ctx context.Context, def *schema.SchemaDefinition, db store.Adapter, addr string, logger *slog.Logger, opts gateway.Options) error {
+// TLSConfig points at a certificate/key pair for native HTTPS. When both are
+// set, Serve terminates TLS itself; otherwise it serves plain HTTP (the norm
+// behind a TLS-terminating proxy). DCMS does not manage or renew certificates.
+type TLSConfig struct {
+	CertFile string
+	KeyFile  string
+}
+
+// enabled reports whether both a cert and key were supplied.
+func (t TLSConfig) enabled() bool { return t.CertFile != "" && t.KeyFile != "" }
+
+// Serve starts the HTTP(S) gateway on addr and blocks until ctx is cancelled,
+// then shuts down gracefully (draining in-flight requests). opts tunes gateway
+// behavior; tls, when both files are set, makes the server terminate TLS itself.
+func Serve(ctx context.Context, def *schema.SchemaDefinition, db store.Adapter, addr string, logger *slog.Logger, opts gateway.Options, tls TLSConfig) error {
 	gw := gateway.New(def, db, logger, opts)
 	srv := &http.Server{
 		Addr:    addr,
@@ -87,8 +98,14 @@ func Serve(ctx context.Context, def *schema.SchemaDefinition, db store.Adapter, 
 
 	errCh := make(chan error, 1)
 	go func() {
-		logger.Info("listening", "addr", addr)
-		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		logger.Info("listening", "addr", addr, "tls", tls.enabled())
+		var err error
+		if tls.enabled() {
+			err = srv.ListenAndServeTLS(tls.CertFile, tls.KeyFile)
+		} else {
+			err = srv.ListenAndServe()
+		}
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 		}
 	}()

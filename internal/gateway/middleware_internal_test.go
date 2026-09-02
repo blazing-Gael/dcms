@@ -54,6 +54,29 @@ func TestWriteStoreError_DeadlineIs504(t *testing.T) {
 	}
 }
 
+// requestIsSecure recognizes HTTPS directly, and via X-Forwarded-Proto only when
+// the proxy is trusted — so a proxy-terminated deployment still marks the session
+// cookie Secure, while an untrusted XFP can't force it.
+func TestRequestIsSecure(t *testing.T) {
+	plain := httptest.NewRequest(http.MethodGet, "http://x/login", nil)
+	plain.Header.Set("X-Forwarded-Proto", "https")
+
+	// No trust: a forwarded-proto header is ignored.
+	s := &Server{}
+	if s.requestIsSecure(plain) {
+		t.Fatal("without TrustProxy, X-Forwarded-Proto must not be honored")
+	}
+	// Trust: forwarded https counts as secure.
+	st := &Server{opts: Options{TrustProxy: true}}
+	if !st.requestIsSecure(plain) {
+		t.Fatal("with TrustProxy, X-Forwarded-Proto: https should be secure")
+	}
+	// A plain request with no https signal is not secure.
+	if st.requestIsSecure(httptest.NewRequest(http.MethodGet, "http://x/login", nil)) {
+		t.Fatal("plain http request should not be secure")
+	}
+}
+
 // maxBodyBytes and requestTimeout fall back to the engine defaults when unset.
 func TestHardeningDefaults(t *testing.T) {
 	s := &Server{}

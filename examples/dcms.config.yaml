@@ -49,9 +49,30 @@ server:
   #   api_burst: 200
   #   auth_per_minute: 60      # per client IP
   #   auth_burst: 20
-  #   # Honor X-Forwarded-For for client-IP keying. Enable ONLY behind a trusted
-  #   # proxy that sets it — otherwise a client can spoof it. Env: DCMS_TRUST_PROXY.
-  #   trust_proxy: false
+  # Trust a fronting reverse proxy's X-Forwarded-* headers: X-Forwarded-For for
+  # rate-limit client-IP keying, and X-Forwarded-Proto for the session cookie's
+  # Secure flag when the proxy terminates TLS. Enable ONLY behind a proxy you
+  # control — otherwise a client can spoof these. Env: DCMS_TRUST_PROXY.
+  # trust_proxy: false
+  # Cross-origin access (CORS). OFF by default (allowed_origins empty ⇒ same-origin
+  # only). List the exact browser origins your frontend is served from. Over-limit
+  # is not involved; disallowed origins simply get no CORS headers. Env override
+  # for origins: DCMS_CORS_ALLOWED_ORIGINS (comma-separated). Methods/headers below
+  # have sensible defaults (shown) — omit to use them.
+  # cors:
+  #   allowed_origins: ["https://blog.example", "https://shop.example"]
+  #   # allow_credentials: true   # needed for cookie-based sessions; then origins
+  #   #                           # must be explicit (a wildcard "*" is rejected).
+  #   # allowed_methods: [GET, POST, PATCH, DELETE, OPTIONS]
+  #   # allowed_headers: [Authorization, Content-Type, Idempotency-Key, If-None-Match, X-DCMS-Preview]
+  #   # exposed_headers: [ETag, Retry-After, Idempotent-Replay]
+  #   # max_age_seconds: 600
+  # Native HTTPS. Omit to serve plain HTTP (terminate TLS at a reverse proxy — the
+  # recommended production topology). Set BOTH files to have DCMS terminate TLS
+  # itself (it does not manage or renew certs). Env: DCMS_TLS_CERT_FILE / DCMS_TLS_KEY_FILE.
+  # tls:
+  #   cert_file: /etc/dcms/tls/fullchain.pem
+  #   key_file: /etc/dcms/tls/privkey.pem
   # Idempotency keys for POST creates (ADR-0018). A create carrying an
   # `Idempotency-Key` header is safe to retry — the original response is replayed
   # rather than creating a duplicate. On by default; it is inert until a client

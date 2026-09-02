@@ -45,11 +45,6 @@ type RateLimitOptions struct {
 	APIBurst      int
 	AuthPerMinute int // unauthenticated /auth endpoints, keyed per client IP
 	AuthBurst     int
-	// TrustProxy makes client-IP keying honor X-Forwarded-For. Enable it ONLY
-	// when DCMS sits behind a trusted proxy that sets the header — otherwise a
-	// client can spoof it to dodge per-IP limits. Off by default: key on the
-	// socket's RemoteAddr.
-	TrustProxy bool
 }
 
 func (o RateLimitOptions) withDefaults() RateLimitOptions {
