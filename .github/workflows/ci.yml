@@ -6,7 +6,10 @@ on:
   pull_request:
 
 jobs:
-  build-test:
+  # Formatting and vet run once on Linux. gofmt in particular must NOT run on the
+  # Windows runner: its checkout can carry CRLF line endings, which gofmt -l would
+  # report as "unformatted" for every file — a false failure.
+  lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -27,11 +30,52 @@ jobs:
       - name: Vet
         run: go vet ./...
 
+  # Build and test on all three platforms we ship binaries for, so an
+  # OS-specific bug (e.g. SQLite timing / path handling on Windows) is caught
+  # before release rather than by a user. The race detector needs a C toolchain,
+  # which the hosted Windows runner lacks, so Windows runs the plain test.
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+
       - name: Build
         run: go build ./...
 
-      - name: Test
+      - name: Test (race)
+        if: runner.os != 'Windows'
         run: go test -race ./...
+
+      - name: Test
+        if: runner.os == 'Windows'
+        run: go test ./...
+
+  # Fail the build on a known vulnerability in a dependency or the Go stdlib.
+  govulncheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+
+      - name: Run govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
 
   # Validate the release config on every push so a broken .goreleaser.yaml is
   # caught here rather than at tag time (release.yml only runs on a v* tag).
