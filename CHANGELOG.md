@@ -8,7 +8,20 @@ While on **0.x**, minor versions may include breaking changes.
 
 ## [Unreleased]
 
+## [0.1.0-beta.1] - 2026-09-04
+
+First public beta. DCMS now installs as a single prebuilt binary — no Go toolchain
+— and goes from install to a running backend for your frontend in two commands.
+SQLite-backed; suitable for blogs, small sites, and prototypes. The schema
+language and API may still change before 1.0.
+
 ### Added
+- **Prebuilt binary releases + one-line install.** Every release publishes
+  checksummed archives for Linux, macOS, and Windows (amd64 + arm64) built with a
+  pure-Go SQLite driver, so there is no cgo and no runtime dependency. Install with
+  `curl -fsSL …/install.sh | sh` (macOS/Linux), `irm …/install.ps1 | iex`
+  (Windows), a prebuilt binary from the releases page, or the
+  `ghcr.io/blazing-gael/dcms` Docker image — none of which require Go.
 - **`dcms init` — scaffold a runnable project in one command.** `dcms init [dir]`
   writes a starter `dcms.schema.yaml` (a `posts` collection), a `dcms.config.yaml`,
   a `.env.example` for the bootstrap admin credentials, and a `.gitignore`, then
@@ -373,4 +386,5 @@ While on **0.x**, minor versions may include breaking changes.
   module) so the binary, HTTP API, and SDKs are the only public surface; the Go
   package API stays unstable until a facade is deliberately promoted out.
 
-[Unreleased]: https://github.com/blazing-Gael/dcms/commits/main
+[Unreleased]: https://github.com/blazing-Gael/dcms/compare/v0.1.0-beta.1...HEAD
+[0.1.0-beta.1]: https://github.com/blazing-Gael/dcms/releases/tag/v0.1.0-beta.1

@@ -55,11 +55,14 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/blazing-gael/dcms
-          # Tags: the full version, the major.minor, and latest for a stable release.
+          # Tags: the exact version (e.g. 0.1.0-beta.1) plus `latest`. During the
+          # 0.x beta there is no stable release, so `latest` tracks the newest
+          # release — that is what the bare `docker run ghcr.io/blazing-gael/dcms`
+          # in the README resolves to. Revisit (gate `latest` on non-prerelease)
+          # once stable 1.x releases begin.
           tags: |
             type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest,enable=${{ !contains(github.ref, '-') }}
+            type=raw,value=latest
 
       - name: Build and push
         uses: docker/build-push-action@v6
