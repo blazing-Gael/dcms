@@ -72,20 +72,28 @@ That's the whole setup.
 ## Quick start
 
 ```bash
-# Install
-curl -fsSL https://get.dcms.dev/dcms | sh
+# Install (needs Go 1.25+ for now; prebuilt binaries + a curl installer are
+# coming with the first beta release)
+go install github.com/blazing-Gael/dcms/cmd/dcms@latest
 
-# Scaffold a new project
-dcms new --template ecom --dir ./mystore
+# Scaffold a ready-to-run project (schema + config + .env template)
+dcms init myapp
+cd myapp
 
-# Start dev server (SQLite, hot-reload)
-cd mystore && dcms dev
+# Set the first admin (seeded on first run), then start the server
+cp .env.example .env      # edit: DCMS_ADMIN_EMAIL / DCMS_ADMIN_PASSWORD
+dcms dev                  # migrates, seeds the admin, serves on :8080
+```
 
-# Generate TypeScript types
+That's a working backend: REST API at `http://localhost:8080/api/v1`, interactive
+docs at `/__docs`, and login at `POST /auth/login`. The scaffold pre-allows the
+usual localhost frontend origins (`:3000`, `:5173`) for CORS, so a separate
+frontend can call it immediately. Edit `dcms.schema.yaml` and restart to change
+your model.
+
+```bash
+# Generate TypeScript types (coming: full typed SDK)
 dcms codegen --lang ts --out ./types
-
-# Migrate to Postgres
-dcms migrate --db postgres://user:pass@localhost/mystore
 ```
 
 ---

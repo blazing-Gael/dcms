@@ -50,6 +50,7 @@ func newRootCmd() *cobra.Command {
 	// --config is a persistent flag: every subcommand inherits it.
 	root.PersistentFlags().String("config", config.DefaultConfigPath, "path to the config file")
 	root.AddCommand(
+		newInitCmd(),
 		newDevCmd(),
 		newValidateCmd(),
 		newCodegenCmd(),
@@ -124,6 +125,9 @@ func newDevCmd() *cobra.Command {
 			}
 			if err := requireSQLite(cfg); err != nil {
 				return err
+			}
+			if _, statErr := os.Stat(cfg.Schema); os.IsNotExist(statErr) {
+				return fmt.Errorf("no schema at %s — run `dcms init` here to scaffold a project first", cfg.Schema)
 			}
 			def, err := engine.LoadSchema(cfg.Schema)
 			if err != nil {

@@ -72,11 +72,11 @@ collections:
 		t.Fatalf("TypeScript: %v", err)
 	}
 	wants := []string{
-		"readonly _status: string;",             // managed field in the record type
-		"readonly _published_at?: string;",       // nullable managed field, optional
-		"readonly _deleted_at?: string;",         // soft-delete marker
-		"& Publishable<Articles>",                // client field gains publish methods
-		"& SoftDeletable<Articles>",              // ...and restore/purge
+		"readonly _status: string;",        // managed field in the record type
+		"readonly _published_at?: string;", // nullable managed field, optional
+		"readonly _deleted_at?: string;",   // soft-delete marker
+		"& Publishable<Articles>",          // client field gains publish methods
+		"& SoftDeletable<Articles>",        // ...and restore/purge
 		"publishable<Articles>(cfg, \"articles\")",
 		"softDeletable<Articles>(cfg, \"articles\")",
 	}
@@ -105,12 +105,12 @@ collections:
 		t.Fatalf("TypeScript: %v", err)
 	}
 	wants := []string{
-		"export type RichText =",          // the shared document type is emitted
-		"export interface RichTextBlock",  // node shape
-		"body?: RichText;",                // the field types to it
-		"export type Included =",          // the reference manifest type (ADR-0015)
-		"export function resolveRef(",     // the manifest resolver helper
-		"included?: Included;",            // list results carry the manifest
+		"export type RichText =",         // the shared document type is emitted
+		"export interface RichTextBlock", // node shape
+		"body?: RichText;",               // the field types to it
+		"export type Included =",         // the reference manifest type (ADR-0015)
+		"export function resolveRef(",    // the manifest resolver helper
+		"included?: Included;",           // list results carry the manifest
 	}
 	for _, w := range wants {
 		if !strings.Contains(out, w) {

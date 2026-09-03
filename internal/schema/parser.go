@@ -65,20 +65,20 @@ type rawSchema struct {
 // rawField is the full ("long") form of a field definition. Unknown keys
 // (Phase 2+ directives like access) are ignored by yaml's struct decoder.
 type rawField struct {
-	Type     string   `yaml:"type"`
-	Required bool     `yaml:"required"`
-	Default  any      `yaml:"default"`
-	Unique   bool     `yaml:"unique"`
-	Min      *float64 `yaml:"min"`
-	Max      *float64 `yaml:"max"`
-	Pattern  string   `yaml:"pattern"`
-	Values   []string `yaml:"values"`
-	Scale    *int     `yaml:"scale"`
-	Label    string   `yaml:"label"`
-	Hint     string   `yaml:"hint"`
-	Target   string   `yaml:"target"`
-	Many     bool     `yaml:"many"`
-	OnDelete string   `yaml:"on_delete"`
+	Type     string    `yaml:"type"`
+	Required bool      `yaml:"required"`
+	Default  any       `yaml:"default"`
+	Unique   bool      `yaml:"unique"`
+	Min      *float64  `yaml:"min"`
+	Max      *float64  `yaml:"max"`
+	Pattern  string    `yaml:"pattern"`
+	Values   []string  `yaml:"values"`
+	Scale    *int      `yaml:"scale"`
+	Label    string    `yaml:"label"`
+	Hint     string    `yaml:"hint"`
+	Target   string    `yaml:"target"`
+	Many     bool      `yaml:"many"`
+	OnDelete string    `yaml:"on_delete"`
 	Styles   []string  `yaml:"styles"`
 	Marks    []string  `yaml:"marks"`
 	Blocks   []string  `yaml:"blocks"`

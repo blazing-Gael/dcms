@@ -110,7 +110,7 @@ func TestNormalizeEndpoint(t *testing.T) {
 	}{
 		{"https://s3.amazonaws.com", nil, "s3.amazonaws.com", true},
 		{"http://localhost:9000", nil, "localhost:9000", false},
-		{"localhost:9000", nil, "localhost:9000", true},          // default TLS
+		{"localhost:9000", nil, "localhost:9000", true},             // default TLS
 		{"http://localhost:9000", tt(true), "localhost:9000", true}, // explicit override wins
 		{"https://minio.local/", nil, "minio.local", true},          // trailing slash trimmed
 	}

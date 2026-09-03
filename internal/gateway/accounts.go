@@ -202,7 +202,7 @@ func (s *Server) setUserPassword(ctx context.Context, userID, plain string) erro
 		return err
 	}
 	_, err = s.db.Update(ctx, store.WriteInput{Collection: schema.UsersCollection, Data: store.Record{
-		"id":                     userID,
+		"id":                    userID,
 		schema.UserPasswordHash: hash,
 	}})
 	return err

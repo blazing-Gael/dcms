@@ -255,7 +255,6 @@ func (s *Server) findRelated(ctx context.Context, inv schema.Inverse, parentID s
 	return page.Data, nil
 }
 
-
 // expandListRecords expands a page of records. Only belongs-to tokens are
 // allowed on lists (has-many on a list is expensive and disallowed for now);
 // belongs-to is batched — distinct ids fetched once — to avoid N+1 queries.

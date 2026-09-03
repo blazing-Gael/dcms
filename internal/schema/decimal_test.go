@@ -123,7 +123,7 @@ func TestValidateDecimalSchemaScaleAndDefault(t *testing.T) {
 	bad := &SchemaDefinition{Version: "1", Collections: []CollectionDef{
 		{Name: "a", Fields: []FieldDef{{Name: "x", Type: TypeDecimal, Scale: &over}}},
 		{Name: "b", Fields: []FieldDef{{Name: "y", Type: TypeDecimal, Default: "1.234"}}}, // 3 digits > default scale 2
-		{Name: "c", Fields: []FieldDef{{Name: "z", Type: TypeDecimal, Default: 5}}},        // non-string default
+		{Name: "c", Fields: []FieldDef{{Name: "z", Type: TypeDecimal, Default: 5}}},       // non-string default
 	}}
 	if err := bad.Validate(); err == nil {
 		t.Fatalf("expected scale/default validation errors, got nil")

@@ -9,6 +9,15 @@ While on **0.x**, minor versions may include breaking changes.
 ## [Unreleased]
 
 ### Added
+- **`dcms init` — scaffold a runnable project in one command.** `dcms init [dir]`
+  writes a starter `dcms.schema.yaml` (a `posts` collection), a `dcms.config.yaml`,
+  a `.env.example` for the bootstrap admin credentials, and a `.gitignore`, then
+  prints the next steps. The generated config **pre-allows the usual localhost
+  frontend origins for CORS** (`:3000`, `:5173`) and serves on `:8080`, so a
+  freshly-installed binary goes from `dcms init` to a working backend a separate
+  frontend can call with just `dcms dev`. Refuses to overwrite an existing project
+  unless `--force`. `dcms dev` now gives a friendly "run `dcms init`" hint when no
+  schema is present instead of a raw file-not-found error.
 - **Public external-identity seam — `pkg/auth` (ADR-0020).** The `Authenticator`
   interface and the `Principal` it returns are now a standalone public package
   (`github.com/blazing-Gael/dcms/pkg/auth`), so an external identity source

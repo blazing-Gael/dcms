@@ -126,8 +126,8 @@ func (s *Server) createWithIdempotency(w http.ResponseWriter, r *http.Request, c
 		cap = newResponseCapture()
 		s.writeRecord(cap, r, http.StatusCreated, collection, rec, nil)
 		_, e = tx.Update(ctx, store.WriteInput{Collection: schema.IdempotencyCollection, Data: store.Record{
-			"id":                    reserved["id"],
-			schema.IdempStatus:      schema.IdempStatusDone,
+			"id":                     reserved["id"],
+			schema.IdempStatus:       schema.IdempStatusDone,
 			schema.IdempResponseCode: cap.status,
 			schema.IdempResponseBody: cap.body.String(),
 		}})
@@ -306,4 +306,3 @@ func (c *responseCapture) flushTo(w http.ResponseWriter) {
 	w.WriteHeader(c.status)
 	_, _ = w.Write(c.body.Bytes())
 }
-
