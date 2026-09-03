@@ -71,11 +71,32 @@ That's the whole setup.
 
 ## Quick start
 
-```bash
-# Install (needs Go 1.25+ for now; prebuilt binaries + a curl installer are
-# coming with the first beta release)
-go install github.com/blazing-Gael/dcms/cmd/dcms@latest
+**Install** — a single prebuilt binary, no Go toolchain required (published with
+each [release](https://github.com/blazing-Gael/dcms/releases)):
 
+```bash
+# macOS / Linux
+curl -fsSL https://raw.githubusercontent.com/blazing-Gael/dcms/main/scripts/install.sh | sh
+```
+
+```powershell
+# Windows (PowerShell)
+irm https://raw.githubusercontent.com/blazing-Gael/dcms/main/scripts/install.ps1 | iex
+```
+
+Or run it in Docker, or grab a binary from the releases page:
+
+```bash
+docker run -p 8080:8080 -v "$PWD:/data" \
+  -e DCMS_ADMIN_EMAIL=you@example.com -e DCMS_ADMIN_PASSWORD=change-me \
+  ghcr.io/blazing-gael/dcms dev
+```
+
+(Have the Go toolchain and prefer it? `go install github.com/blazing-Gael/dcms/cmd/dcms@latest`.)
+
+**Run** — from binary to working backend in two commands:
+
+```bash
 # Scaffold a ready-to-run project (schema + config + .env template)
 dcms init myapp
 cd myapp

@@ -32,3 +32,24 @@ jobs:
 
       - name: Test
         run: go test -race ./...
+
+  # Validate the release config on every push so a broken .goreleaser.yaml is
+  # caught here rather than at tag time (release.yml only runs on a v* tag).
+  release-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+
+      - name: Check GoReleaser config
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          version: "~> v2"
+          args: check

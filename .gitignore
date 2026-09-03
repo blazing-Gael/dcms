@@ -24,3 +24,6 @@ vendor/
 # Editor
 .idea/
 .vscode/
+
+# GoReleaser build output
+dist/
