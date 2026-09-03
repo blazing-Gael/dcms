@@ -106,11 +106,35 @@ func TestRichText_SafeHrefVariants(t *testing.T) {
 		"javascript:alert(1)": false,
 		"data:text/html,x":    false,
 		"vbscript:x":          false,
+		"//evil.example":      false, // protocol-relative: cross-origin, not relative
+		"//evil.example/path": false,
 	}
 	for href, want := range cases {
 		if got := safeHref(href); got != want {
 			t.Errorf("safeHref(%q) = %v, want %v", href, got, want)
 		}
+	}
+}
+
+// TestRichText_NodeCapWithinBlock pins issue #3: the node cap must hold when the
+// overage sits inside a single block, not only across blocks. The old check ran
+// at the top of the block loop, so whatever accumulated in the final block was
+// never tested.
+func TestRichText_NodeCapWithinBlock(t *testing.T) {
+	spans := func(n int) map[string]any {
+		children := make([]any, n)
+		for i := range children {
+			children[i] = map[string]any{"_type": "span", "text": "x"}
+		}
+		return map[string]any{"_type": "block", "style": "normal", "children": children}
+	}
+	// One block whose span count exceeds the cap must be rejected.
+	if msg := richField().validateRichText([]any{spans(maxRichTextNodes + 1)}); msg == "" {
+		t.Fatal("expected over-cap single block to be rejected, got no error")
+	}
+	// A document comfortably under the cap must still validate.
+	if msg := richField().validateRichText([]any{spans(10), spans(10)}); msg != "" {
+		t.Fatalf("under-cap document rejected: %s", msg)
 	}
 }
 

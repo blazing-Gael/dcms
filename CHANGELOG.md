@@ -8,7 +8,29 @@ While on **0.x**, minor versions may include breaking changes.
 
 ## [Unreleased]
 
+### Added
+- **Public external-identity seam — `pkg/auth` (ADR-0020).** The `Authenticator`
+  interface and the `Principal` it returns are now a standalone public package
+  (`github.com/blazing-Gael/dcms/pkg/auth`), so an external identity source
+  (OIDC, a reverse proxy, a third-party auth service such as Appwrite) can be
+  wired in without forking the tree. `Principal` gains a `Claims map[string]string`
+  bag for identity-source-specific data (external subject, tenant, email) that the
+  engine does not interpret. `auth.NewContext`/`auth.FromContext` expose the
+  request principal through a single shared context key, for hosts wiring their
+  own middleware around the gateway. No new dependencies, no new endpoints, and no
+  change to authorization enforcement — the gateway consumes the public types via
+  aliases, so existing callers are unaffected. (Closes the "bring your own auth"
+  gap reported in issue #1.)
+
 ### Fixed
+- **Rich text: the node cap is now enforced within a single block.** A document
+  whose node count exceeded `maxRichTextNodes` was accepted when the overage sat
+  inside one block (the cap was only checked between top-level blocks). It is now
+  checked per span, so the documented bound holds. (Issue #3.)
+- **Rich text: protocol-relative link hrefs are rejected.** `safeHref` treated
+  `//host/path` as a relative path and allowed it, when a browser reads it as a
+  cross-origin navigation inheriting the page scheme. Such hrefs are now rejected,
+  so a validated href is genuinely same-origin or an allowlisted scheme. (Issue #4.)
 - **Emails are now case-insensitive.** Addresses are validated and normalized
   (trimmed + lower-cased) on every account write and lookup, so a user who
   registered as `Ann@Example.com` can log in as `ann@example.com`, and case

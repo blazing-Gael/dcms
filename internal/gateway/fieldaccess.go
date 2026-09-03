@@ -99,7 +99,7 @@ func (s *Server) fieldPermitted(rule schema.Rule, p principal, rec store.Record)
 		return true
 	case ownerScope:
 		owner, _ := rec[createdByField].(string)
-		return owner != "" && owner == p.id
+		return owner != "" && owner == p.ID
 	default:
 		return false
 	}
@@ -114,10 +114,10 @@ func (s *Server) fieldWritable(rule schema.Rule, p principal, current store.Reco
 		return true
 	case ownerScope:
 		if current == nil {
-			return p.authenticated
+			return p.Authenticated
 		}
 		owner, _ := current[createdByField].(string)
-		return owner != "" && owner == p.id
+		return owner != "" && owner == p.ID
 	default:
 		return false
 	}

@@ -93,10 +93,10 @@ func (s *Server) adminRoles() []string {
 }
 
 func (s *Server) isAdmin(p principal) bool {
-	if !p.authenticated {
+	if !p.Authenticated {
 		return false
 	}
-	return s.hasAdminRole(p.roles)
+	return s.hasAdminRole(p.Roles)
 }
 
 // hasAdminRole reports whether any of roles is an admin role.
@@ -152,7 +152,7 @@ func (s *Server) wouldOrphanAdmin(ctx context.Context, currentlyActiveAdmin bool
 // requireAdmin gates an admin endpoint: 401 if anonymous, 403 if not an admin.
 func (s *Server) requireAdmin(w http.ResponseWriter, r *http.Request) (principal, bool) {
 	p := principalFromContext(r.Context())
-	if !p.authenticated {
+	if !p.Authenticated {
 		writeError(w, http.StatusUnauthorized, apiError{Code: "UNAUTHORIZED", Message: "authentication required"})
 		return p, false
 	}
@@ -262,7 +262,7 @@ func (s *Server) registrationEnabled() bool { return s.opts.Registration != nil 
 // verifies the current password and then revokes the user's *other* sessions.
 func (s *Server) handlePasswordChange(w http.ResponseWriter, r *http.Request) {
 	p := principalFromContext(r.Context())
-	if !p.authenticated {
+	if !p.Authenticated {
 		writeError(w, http.StatusUnauthorized, apiError{Code: "UNAUTHORIZED", Message: "authentication required"})
 		return
 	}
@@ -277,7 +277,7 @@ func (s *Server) handlePasswordChange(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnprocessableEntity, apiError{Code: "VALIDATION_ERROR", Message: "current and new passwords are required"})
 		return
 	}
-	user, err := s.db.FindOne(r.Context(), schema.UsersCollection, p.id)
+	user, err := s.db.FindOne(r.Context(), schema.UsersCollection, p.ID)
 	if err != nil {
 		writeStoreError(w, s.logger, r, err)
 		return
@@ -290,7 +290,7 @@ func (s *Server) handlePasswordChange(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnprocessableEntity, apiError{Code: "VALIDATION_ERROR", Message: msg})
 		return
 	}
-	if err := s.setUserPassword(r.Context(), p.id, next); err != nil {
+	if err := s.setUserPassword(r.Context(), p.ID, next); err != nil {
 		writeStoreError(w, s.logger, r, err)
 		return
 	}
@@ -299,7 +299,7 @@ func (s *Server) handlePasswordChange(w http.ResponseWriter, r *http.Request) {
 	if tok := sessionTokenFromRequest(r); tok != "" {
 		keep = hashToken(tok)
 	}
-	if err := s.revokeUserSessions(r.Context(), p.id, keep); err != nil {
+	if err := s.revokeUserSessions(r.Context(), p.ID, keep); err != nil {
 		writeStoreError(w, s.logger, r, err)
 		return
 	}
@@ -310,11 +310,11 @@ func (s *Server) handlePasswordChange(w http.ResponseWriter, r *http.Request) {
 // the cookie.
 func (s *Server) handleLogoutAll(w http.ResponseWriter, r *http.Request) {
 	p := principalFromContext(r.Context())
-	if !p.authenticated {
+	if !p.Authenticated {
 		writeError(w, http.StatusUnauthorized, apiError{Code: "UNAUTHORIZED", Message: "authentication required"})
 		return
 	}
-	if err := s.revokeUserSessions(r.Context(), p.id, ""); err != nil {
+	if err := s.revokeUserSessions(r.Context(), p.ID, ""); err != nil {
 		writeStoreError(w, s.logger, r, err)
 		return
 	}

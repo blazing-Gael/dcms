@@ -21,20 +21,35 @@ required.
 - OpenAPI 3.1 spec + contract hash (versioned contracts)
 - Interactive API docs (`/__docs`)
 - `dcms` CLI: `dev`, `validate`, `migrate`
+- Local authentication + RBAC at the gateway: the `access:` authz spine,
+  field-level access, composite (`any:`) rules, opaque DB-backed sessions
+  (ADR-0016)
+- Account lifecycle: self-registration, password change, password reset over
+  email, logout-all, users admin API, user status (ADR-0019)
+- Relations + `expand` (incl. nested), draft/publish, soft delete (ADR-0012)
+- Revisions / version history (ADR-0013)
+- Rich text: structured-JSON field with per-field allowlists (ADR-0014/0015)
+- Media pipeline: file fields → `_media` relation, blob storage (local + S3)
+  (ADR-0011/0015)
+- Money / decimal type (ADR-0017)
+- Idempotency keys for POST-create (ADR-0018)
+- Request hardening: body-size cap, per-request timeout, rate limiting;
+  configurable CORS + native TLS
 
 ## Near term (the rest of v0.x)
 
 - Typed TypeScript SDK + typed query builder (codegen)
 - Response validation; more client SDKs (Python, Dart)
 - PostgreSQL adapter (production default) + pgvector
-- Authentication (local + OIDC/SSO + bring-your-own) and RBAC at the gateway
-- Relations (`expand`), i18n, draft/publish, soft delete
+- External identity: a public bring-your-own `Authenticator` seam +
+  OIDC/JWKS (ADR-0016 M4; ADR-0020)
+- Audit log, webhooks / change feed, query timeouts
 - Async embedding pipeline + semantic search
-- Audit log, webhooks, rate limiting & query timeouts
+- i18n
 
 ## Toward v1.0
 
-- Media pipeline, Wasm plugin runtime, admin UI, dashboard builder
+- Wasm plugin runtime, admin UI, dashboard builder
 - Unix-socket transport, deploy tooling
 - Relicense to Apache-2.0
 

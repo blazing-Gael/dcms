@@ -182,6 +182,9 @@ func validateTextBlock(node map[string]any, styleOK, markOK map[string]bool, cou
 	}
 	for _, rc := range children {
 		*count++
+		if *count > maxRichTextNodes {
+			return fmt.Sprintf("document is too large (over %d nodes)", maxRichTextNodes)
+		}
 		span, ok := rc.(map[string]any)
 		if !ok {
 			return "each child must be a span object"
@@ -265,6 +268,12 @@ func validateCustomBlock(typ string, node map[string]any) string {
 // safeHref reports whether a link href is safe to store/render: a relative href
 // (no scheme) or one using an allowlisted scheme. Blocks javascript:/data:/etc.
 func safeHref(href string) bool {
+	// Protocol-relative "//host/path" is a cross-origin navigation that inherits
+	// the page's scheme, not a relative path — reject it so a validated href is
+	// genuinely same-origin or an allowlisted scheme.
+	if strings.HasPrefix(href, "//") {
+		return false
+	}
 	i := strings.IndexByte(href, ':')
 	slash := strings.IndexByte(href, '/')
 	// No scheme, or the ':' comes after the first '/' (so it's part of a path,

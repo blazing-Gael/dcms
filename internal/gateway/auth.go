@@ -6,42 +6,23 @@ import (
 	"strings"
 
 	"github.com/blazing-Gael/dcms/internal/store"
+	"github.com/blazing-Gael/dcms/pkg/auth"
 )
 
-// principal is the authenticated identity behind a request (ADR-0016): who they
-// are (id) and what roles they hold. The zero value — authenticated == false —
+// principal is the gateway's alias for the public auth.Principal — the verified
+// identity behind a request (ADR-0016). The zero value (Authenticated == false)
 // is an anonymous caller. It is resolved once by withPrincipal and read by every
 // authorization check; it is the *verified* identity, so it (and only it) is what
 // feeds store.WithActor for audit attribution.
-type principal struct {
-	id            string
-	roles         []string
-	authenticated bool
-}
+type principal = auth.Principal
 
-// hasRole reports whether the principal holds the named role.
-func (p principal) hasRole(role string) bool {
-	for _, r := range p.roles {
-		if r == role {
-			return true
-		}
-	}
-	return false
-}
-
-// Authenticator resolves an *http.Request into a principal. It is the single seam
-// where identity sources plug in: M1 ships a session-backed implementation
-// (sessionAuthenticator); external OIDC/JWKS (a later milestone) is another
-// implementation of this same interface, so the rest of the gateway never learns
-// which source authenticated a request.
-//
-// A returned error is a hard failure (e.g. the store is unreachable), not "not
-// logged in" — an anonymous request returns the zero principal and a nil error.
-type Authenticator interface {
-	Authenticate(r *http.Request) (principal, error)
-}
-
-type principalCtxKey struct{}
+// Authenticator is the public seam through which identity sources plug in
+// (ADR-0016 milestone 4, ADR-0020). It is re-exported here so existing callers
+// keep working; the canonical definition lives in pkg/auth. The gateway ships a
+// session-backed implementation (sessionAuthenticator); external OIDC/JWKS or a
+// bring-your-own source is another implementation of the same interface, so the
+// rest of the gateway never learns which source authenticated a request.
+type Authenticator = auth.Authenticator
 
 // withPrincipal resolves the request's principal once and stashes it in context,
 // mirroring withVisibility. When a principal is authenticated it also seeds
@@ -61,19 +42,19 @@ func (s *Server) withPrincipal(next http.Handler) http.Handler {
 			writeError(w, http.StatusInternalServerError, apiError{Code: "INTERNAL", Message: "internal server error"})
 			return
 		}
-		ctx := context.WithValue(r.Context(), principalCtxKey{}, p)
-		if p.authenticated {
-			ctx = store.WithActor(ctx, p.id)
+		ctx := auth.NewContext(r.Context(), p)
+		if p.Authenticated {
+			ctx = store.WithActor(ctx, p.ID)
 		}
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 
 // principalFromContext returns the principal resolved by withPrincipal, or the
-// zero (anonymous) principal if none was set.
+// zero (anonymous) principal if none was set. It delegates to auth.FromContext so
+// the gateway and any host-supplied middleware share one context key.
 func principalFromContext(ctx context.Context) principal {
-	p, _ := ctx.Value(principalCtxKey{}).(principal)
-	return p
+	return auth.FromContext(ctx)
 }
 
 // authEnabled reports whether authorization is enforced. It is off exactly when

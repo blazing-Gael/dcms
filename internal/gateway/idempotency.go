@@ -90,7 +90,7 @@ func (s *Server) createWithIdempotency(w http.ResponseWriter, r *http.Request, c
 	stripManagedFields(data)
 	s.stripUnwritableFields(r.Context(), collection, "", data, true)
 
-	key := hashIdemKey(principalFromContext(r.Context()).id, rawKey)
+	key := hashIdemKey(principalFromContext(r.Context()).ID, rawKey)
 	fp := fingerprintOf(r.Method, r.URL.Path, raw)
 
 	// Fast path: a live recorded row short-circuits before any write.

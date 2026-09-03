@@ -150,8 +150,8 @@ func (s *Server) rateLimit(l RateLimiter, key func(*http.Request) string) func(h
 // apiRateKey keys the general API limiter: an authenticated caller gets their own
 // bucket (fair across shared IPs), everyone else falls back to their client IP.
 func (s *Server) apiRateKey(r *http.Request, trustProxy bool) string {
-	if p := principalFromContext(r.Context()); p.authenticated && p.id != "" {
-		return "u:" + p.id
+	if p := principalFromContext(r.Context()); p.Authenticated && p.ID != "" {
+		return "u:" + p.ID
 	}
 	return "ip:" + clientIP(r, trustProxy)
 }

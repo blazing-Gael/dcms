@@ -92,7 +92,7 @@ func (a *sessionAuthenticator) Authenticate(r *http.Request) (principal, error) 
 		// cascade should normally have removed it already.
 		return principal{}, nil
 	}
-	return principal{id: userID, roles: rolesOf(user), authenticated: true}, nil
+	return principal{ID: userID, Roles: rolesOf(user), Authenticated: true}, nil
 }
 
 // findSession returns the session row for a token hash, or nil if none exists.

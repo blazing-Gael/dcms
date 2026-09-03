@@ -31,19 +31,19 @@ func evalRule(rule schema.Rule, p principal) decision {
 	case schema.RulePublic:
 		return allow
 	case schema.RuleAuthenticated:
-		if p.authenticated {
+		if p.Authenticated {
 			return allow
 		}
 		return deny
 	case schema.RuleRoles:
 		for _, role := range rule.Roles {
-			if p.hasRole(role) {
+			if p.HasRole(role) {
 				return allow
 			}
 		}
 		return deny
 	case schema.RuleOwner:
-		if !p.authenticated {
+		if !p.Authenticated {
 			return deny
 		}
 		return ownerScope
@@ -72,7 +72,7 @@ func evalRule(rule schema.Rule, p principal) decision {
 // The route exists; the caller may not act on it (ADR-0016). An anonymous caller
 // gets 401 so a client knows to authenticate rather than give up.
 func (s *Server) denyWrite(w http.ResponseWriter, p principal) {
-	if !p.authenticated {
+	if !p.Authenticated {
 		writeError(w, http.StatusUnauthorized, apiError{Code: "UNAUTHORIZED", Message: "authentication required"})
 		return
 	}
@@ -111,7 +111,7 @@ func (s *Server) listReadFilters(w http.ResponseWriter, r *http.Request, collect
 	case allow:
 		return nil, true
 	case ownerScope:
-		return []store.Filter{{Field: createdByField, Operator: store.Eq, Value: p.id}}, true
+		return []store.Filter{{Field: createdByField, Operator: store.Eq, Value: p.ID}}, true
 	default:
 		s.denyWrite(w, p)
 		return nil, false
@@ -133,7 +133,7 @@ func (s *Server) recordReadable(ctx context.Context, collection string, rec stor
 		return true
 	case ownerScope:
 		owner, _ := rec[createdByField].(string)
-		return owner != "" && owner == p.id
+		return owner != "" && owner == p.ID
 	default:
 		return false
 	}
@@ -173,7 +173,7 @@ func (s *Server) authorizeRecordWrite(w http.ResponseWriter, r *http.Request, co
 			return false
 		}
 		owner, _ := rec[createdByField].(string)
-		if owner != "" && owner == p.id {
+		if owner != "" && owner == p.ID {
 			return true
 		}
 		s.denyWrite(w, p)

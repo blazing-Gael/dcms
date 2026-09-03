@@ -100,13 +100,13 @@ func clearSessionCookie(w http.ResponseWriter) {
 // it is authenticated as (and to check its roles).
 func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 	p := principalFromContext(r.Context())
-	if !p.authenticated {
+	if !p.Authenticated {
 		writeError(w, http.StatusUnauthorized, apiError{Code: "UNAUTHORIZED", Message: "authentication required"})
 		return
 	}
-	out := map[string]any{"id": p.id, "roles": p.roles}
+	out := map[string]any{"id": p.ID, "roles": p.Roles}
 	// Enrich with email/name when the user row is still readable.
-	if user, err := s.db.FindOne(r.Context(), schema.UsersCollection, p.id); err == nil {
+	if user, err := s.db.FindOne(r.Context(), schema.UsersCollection, p.ID); err == nil {
 		if email, ok := user[schema.UserEmail].(string); ok {
 			out["email"] = email
 		}
