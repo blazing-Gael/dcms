@@ -30,7 +30,7 @@ archives:
   - id: dcms
     ids: [dcms]
     # Version-independent names (e.g. dcms_linux_amd64.tar.gz) so the install
-    # scripts can fetch from the stable /releases/latest/download/ path.
+    # scripts can build the asset URL from a resolved tag without a version in it.
     name_template: "dcms_{{ .Os }}_{{ .Arch }}"
     formats: [tar.gz]
     format_overrides:
@@ -64,3 +64,36 @@ release:
   # 0.x pre-1.0; a tag like v0.1.0-beta.1 is marked pre-release automatically.
   prerelease: auto
   name_template: "dcms {{ .Tag }}"
+
+# Homebrew (macOS). GoReleaser deprecated formula `brews:` in favour of casks;
+# casks are macOS-only, so Homebrew-on-Linux users use the install script or
+# Docker instead. Users install with:  brew install blazing-Gael/tap/dcms
+homebrew_casks:
+  - name: dcms
+    repository:
+      owner: blazing-Gael
+      name: homebrew-tap
+      branch: main
+      # The release workflow's default GITHUB_TOKEN only reaches THIS repo, not
+      # the separate tap. A PAT with write access to the tap is required, provided
+      # as the HOMEBREW_TAP_TOKEN secret (wired in .github/workflows/release.yml).
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    ids: [dcms]
+    binaries:
+      - dcms
+    homepage: "https://github.com/blazing-Gael/dcms"
+    description: "Schema-first content engine: a validated REST backend from a YAML schema, no code."
+    # Strip the quarantine attribute macOS adds to a downloaded, unsigned binary,
+    # so `dcms` runs without a Gatekeeper "cannot be opened" prompt.
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/dcms"]
+          end
+    # During 0.x there is no stable release, so publish the cask on every release
+    # (betas included). Switch to `skip_upload: auto` once 1.x ships — same rule as
+    # the docker `latest` tag.
+    commit_author:
+      name: goreleaser-bot
+      email: bot@dcms.dev

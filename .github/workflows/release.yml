@@ -30,7 +30,12 @@ jobs:
           version: "~> v2"
           args: release --clean
         env:
+          # Creates the release + uploads assets in THIS repo.
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Pushes the Homebrew formula to the separate blazing-Gael/homebrew-tap
+          # repo. A PAT with write access to that repo; if the secret is unset the
+          # brew step is the only thing that fails, so binaries/checksums still ship.
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
 
   docker:
     runs-on: ubuntu-latest

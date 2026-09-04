@@ -84,6 +84,11 @@ curl -fsSL https://raw.githubusercontent.com/blazing-Gael/dcms/main/scripts/inst
 irm https://raw.githubusercontent.com/blazing-Gael/dcms/main/scripts/install.ps1 | iex
 ```
 
+```bash
+# macOS (Homebrew)
+brew install blazing-Gael/tap/dcms
+```
+
 Or run it in Docker, or grab a binary from the releases page:
 
 ```bash
