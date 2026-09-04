@@ -21,7 +21,7 @@ func (s *Server) writeWithLinks(
 	write func(context.Context, store.DB, store.Record) (store.Record, error),
 ) (store.Record, error) {
 	base, links := s.splitM2M(collection, data)
-	if len(links) == 0 && !s.revised(collection) {
+	if len(links) == 0 && !s.needsWriteTx(collection) {
 		return write(ctx, s.db, base)
 	}
 	var rec store.Record
@@ -36,10 +36,7 @@ func (s *Server) writeWithLinks(
 				return e
 			}
 		}
-		if s.revised(collection) {
-			return s.captureRevision(ctx, tx, collection, rec, operation)
-		}
-		return nil
+		return s.captureWrite(ctx, tx, collection, rec, operation)
 	})
 	return rec, err
 }

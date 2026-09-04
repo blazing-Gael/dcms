@@ -8,6 +8,18 @@ While on **0.x**, minor versions may include breaking changes.
 
 ## [Unreleased]
 
+### Added
+- **Change feed — events, phase 1 of M-B (ADR-0021).** A collection can opt into
+  `events: true` to record every state change — create, update, delete, and the
+  lifecycle transitions (publish/unpublish/archive/restore, soft-delete) — as an
+  append-only row in a new engine-managed `_events` log, captured **in the same
+  transaction as the write** so an event never disagrees with what happened.
+  `GET /api/v1/_changes?since=<cursor>` serves them as an `id`-keyset feed, so a
+  static-site generator or ISR frontend can poll for changes in O(changes) instead
+  of scanning records or hot-looping on `updated_at`. Admin-only; opt-in per
+  collection (a collection that doesn't declare `events:` writes no rows and costs
+  nothing). Signed webhooks on top of this log are the next phase.
+
 ## [0.1.0-beta.2] - 2026-09-04
 
 Install-channel fixes for the beta. The binaries and Docker image from beta.1 were

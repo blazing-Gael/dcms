@@ -117,10 +117,8 @@ func (s *Server) createWithIdempotency(w http.ResponseWriter, r *http.Request, c
 		if e != nil {
 			return e // rolls back the reserve too → the key stays free to retry
 		}
-		if s.revised(collection) {
-			if e := s.captureRevision(ctx, tx, collection, rec, "create"); e != nil {
-				return e
-			}
+		if e := s.captureWrite(ctx, tx, collection, rec, "create"); e != nil {
+			return e
 		}
 		// Render the real response into a buffer so it can be both stored and sent.
 		cap = newResponseCapture()

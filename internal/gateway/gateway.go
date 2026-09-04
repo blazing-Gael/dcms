@@ -265,6 +265,8 @@ func (s *Server) Handler() http.Handler {
 		}
 		r.Use(s.limitBody)
 		r.Use(s.withTimeout)
+		// Change feed (ADR-0021, M-B) — a static route, matched before /{collection}.
+		r.Get("/_changes", s.handleChanges)
 		r.Get("/{collection}", s.handleList)
 		r.Post("/{collection}", s.handleCreate)
 		r.Get("/{collection}/{id}", s.handleGetOne)

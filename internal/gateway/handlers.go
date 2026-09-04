@@ -114,10 +114,7 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 			if rec, e = s.createRecord(ctx, tx, collection, data, 0); e != nil {
 				return e
 			}
-			if s.revised(collection) {
-				return s.captureRevision(ctx, tx, collection, rec, "create")
-			}
-			return nil
+			return s.captureWrite(ctx, tx, collection, rec, "create")
 		})
 		if err != nil {
 			writeStoreError(w, s.logger, r, err)
@@ -260,7 +257,7 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.db.Delete(r.Context(), collection, id); err != nil {
+	if err := s.deleteRecord(r.Context(), collection, id); err != nil {
 		// A foreign-key violation on delete is the RESTRICT default (ADR-0010):
 		// the record is still referenced. That's a legitimate client-facing
 		// conflict, not the invariant breach it would be on a write.

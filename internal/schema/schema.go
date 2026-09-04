@@ -84,6 +84,11 @@ type CollectionDef struct {
 	// Revisions captures append-only version history for the collection in the
 	// engine-managed _revisions collection (ADR-0013), with view/restore endpoints.
 	Revisions bool `json:"revisions,omitempty"`
+	// Events appends a row to the engine-managed _events log on each state change
+	// (create/update/delete and lifecycle transitions), captured in the write
+	// transaction, and exposes them on the change feed (ADR-0021, M-B). Opt-in:
+	// a collection that never declares it writes no event rows and pays nothing.
+	Events bool `json:"events,omitempty"`
 
 	// Access is the per-operation authorization policy (ADR-0016), enforced at
 	// the gateway. Nil (or a nil action) falls back to the engine default:

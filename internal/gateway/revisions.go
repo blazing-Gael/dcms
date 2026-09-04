@@ -79,10 +79,12 @@ func (s *Server) nextRevisionVersion(ctx context.Context, db store.DB, collectio
 	}
 }
 
-// updateAndRevise performs an Update and, on a revisioned collection, captures the
-// resulting record as a revision in the same transaction.
+// updateAndRevise performs an Update and, in the same transaction, captures its
+// durable side effects (a revision snapshot and/or a change-log event) when the
+// collection opts into them. Shared by plain PATCH, lifecycle transitions, and
+// soft-delete, so all of them record history and emit events consistently.
 func (s *Server) updateAndRevise(ctx context.Context, collection string, data store.Record, operation string) (store.Record, error) {
-	if !s.revised(collection) {
+	if !s.needsWriteTx(collection) {
 		return s.db.Update(ctx, store.WriteInput{Collection: collection, Data: data})
 	}
 	var rec store.Record
@@ -91,7 +93,7 @@ func (s *Server) updateAndRevise(ctx context.Context, collection string, data st
 		if rec, e = tx.Update(ctx, store.WriteInput{Collection: collection, Data: data}); e != nil {
 			return e
 		}
-		return s.captureRevision(ctx, tx, collection, rec, operation)
+		return s.captureWrite(ctx, tx, collection, rec, operation)
 	})
 	return rec, err
 }

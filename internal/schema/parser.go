@@ -43,6 +43,9 @@ func Parse(src []byte) (*SchemaDefinition, error) {
 	def.injectAuthTokens()
 	// Inject the engine-managed _idempotency collection (ADR-0018).
 	def.injectIdempotency()
+	// Inject the engine-managed _events change log when any collection opts in
+	// (ADR-0021, M-B).
+	def.injectEvents()
 	return def, nil
 }
 
@@ -161,6 +164,10 @@ func toCollection(name string, node *yaml.Node) (CollectionDef, error) {
 		case "revisions":
 			if err := e.Val.Decode(&col.Revisions); err != nil {
 				return col, fmt.Errorf("revisions: %w", err)
+			}
+		case "events":
+			if err := e.Val.Decode(&col.Events); err != nil {
+				return col, fmt.Errorf("events: %w", err)
 			}
 		case "access":
 			col.Access, err = parseAccess(e.Val)
