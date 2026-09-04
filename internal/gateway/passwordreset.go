@@ -83,8 +83,10 @@ func (s *Server) issueResetToken(ctx context.Context, user store.Record) {
 		s.logger.Error("reset token store failed", "err", err)
 		return
 	}
-	if err := s.notifier().Notify(ctx, Notification{To: email, Kind: "password_reset", Link: s.resetLink(raw)}); err != nil {
-		s.logger.Error("reset notification failed", "err", err)
+	// Enqueue for durable, off-request-path delivery (ADR-0021 phase 3). A slow or
+	// down mailer no longer blocks the response or drops the email.
+	if err := s.enqueueNotification(ctx, Notification{To: email, Kind: "password_reset", Link: s.resetLink(raw)}); err != nil {
+		s.logger.Error("reset notification enqueue failed", "err", err)
 	}
 }
 

@@ -24,6 +24,7 @@ collections:
   posts:
     fields:
       title: { type: string, required: true }
+      slug:  { type: string, unique: true }
     publishing: true
     soft_delete: true
     events: true
@@ -31,6 +32,14 @@ collections:
       read:   public
       create: [admin, author]
       update: [admin, author]
+      delete: [admin]
+  notes:
+    fields:
+      body: { type: string, required: true }
+    events: true
+    access:
+      read:   public
+      create: [admin]
       delete: [admin]
   tags:
     fields:
@@ -63,6 +72,7 @@ func newEventsServer(t *testing.T) (*httptest.Server, store.Adapter) {
 	}
 	srv := httptest.NewServer(gateway.New(def, db, nil, gateway.Options{
 		Authenticator: gateway.NewSessionAuthenticator(db),
+		Idempotency:   &gateway.IdempotencyOptions{}, // enable the Idempotency-Key path
 	}).Handler())
 	t.Cleanup(srv.Close)
 	return srv, db
@@ -172,6 +182,156 @@ func TestChangeFeed_CursorAdvances(t *testing.T) {
 	rest, _ := changes(t, srv.URL, tok, cur)
 	if len(rest) != 1 {
 		t.Fatalf("expected 1 remaining event after cursor, got %d", len(rest))
+	}
+}
+
+// TestChangeFeed_FailedWriteEmitsNoEvent is the core outbox guarantee: an event
+// is captured in the write's transaction, so a write that rolls back leaves no
+// event behind. A second create with a duplicate unique slug must fail and emit
+// nothing.
+func TestChangeFeed_FailedWriteEmitsNoEvent(t *testing.T) {
+	srv, db := newEventsServer(t)
+	seedUser(t, db, "admin@x.com", "password123", "admin")
+	tok := login(t, srv.URL, "admin@x.com", "password123")
+
+	if st, _ := doAs(t, http.MethodPost, srv.URL+"/api/v1/posts", tok, `{"title":"A","slug":"dup"}`); st != http.StatusCreated {
+		t.Fatalf("first create: %d", st)
+	}
+	// Same slug → unique violation → the whole transaction rolls back.
+	st, _ := doAs(t, http.MethodPost, srv.URL+"/api/v1/posts", tok, `{"title":"B","slug":"dup"}`)
+	if st == http.StatusCreated {
+		t.Fatalf("duplicate slug create unexpectedly succeeded (%d)", st)
+	}
+	evs, _ := changes(t, srv.URL, tok, "")
+	if len(evs) != 1 {
+		t.Fatalf("expected exactly 1 event (the successful create), got %d: %v", len(evs), evs)
+	}
+	if got, _ := evs[0]["event"].(string); got != schema.EventCreated {
+		t.Errorf("event = %q, want %q", got, schema.EventCreated)
+	}
+}
+
+// TestChangeFeed_HardDelete covers a delete on a collection WITHOUT soft_delete,
+// which removes the row and emits `deleted` (distinct from `soft_deleted`).
+func TestChangeFeed_HardDelete(t *testing.T) {
+	srv, db := newEventsServer(t)
+	seedUser(t, db, "admin@x.com", "password123", "admin")
+	tok := login(t, srv.URL, "admin@x.com", "password123")
+
+	_, body := doAs(t, http.MethodPost, srv.URL+"/api/v1/notes", tok, `{"body":"n"}`)
+	id := recordID(t, body)
+	if st, _ := doAs(t, http.MethodDelete, srv.URL+"/api/v1/notes/"+id, tok, ""); st != http.StatusNoContent {
+		t.Fatalf("delete: %d", st)
+	}
+	evs, _ := changes(t, srv.URL, tok, "")
+	if len(evs) != 2 {
+		t.Fatalf("expected created + deleted, got %d: %v", len(evs), evs)
+	}
+	if got, _ := evs[1]["event"].(string); got != schema.EventDeleted {
+		t.Errorf("second event = %q, want %q", got, schema.EventDeleted)
+	}
+}
+
+// TestChangeFeed_AllTransitions exercises the transitions the lifecycle test
+// didn't: unpublish, archive, and restore, each with its destination status.
+func TestChangeFeed_AllTransitions(t *testing.T) {
+	srv, db := newEventsServer(t)
+	seedUser(t, db, "admin@x.com", "password123", "admin")
+	tok := login(t, srv.URL, "admin@x.com", "password123")
+
+	_, body := doAs(t, http.MethodPost, srv.URL+"/api/v1/posts", tok, `{"title":"T"}`)
+	id := recordID(t, body)
+	for _, step := range []string{"publish", "unpublish", "archive", "restore"} {
+		if st, _ := doAs(t, http.MethodPost, srv.URL+"/api/v1/posts/"+id+"/"+step, tok, `{}`); st != http.StatusOK {
+			t.Fatalf("%s: %d", step, st)
+		}
+	}
+	evs, _ := changes(t, srv.URL, tok, "")
+	want := []string{
+		schema.EventCreated, schema.EventPublished, schema.EventUnpublished,
+		schema.EventArchived, schema.EventRestored,
+	}
+	if len(evs) != len(want) {
+		t.Fatalf("expected %d events, got %d: %v", len(want), len(evs), evs)
+	}
+	for i, w := range want {
+		if got, _ := evs[i]["event"].(string); got != w {
+			t.Errorf("event[%d] = %q, want %q", i, got, w)
+		}
+	}
+}
+
+// TestChangeFeed_IdempotentCreateEmitsOnce pins that a create retried with the
+// same Idempotency-Key (ADR-0018) records exactly one `created` event — the
+// replay must not double-emit.
+func TestChangeFeed_IdempotentCreateEmitsOnce(t *testing.T) {
+	srv, db := newEventsServer(t)
+	seedUser(t, db, "admin@x.com", "password123", "admin")
+	tok := login(t, srv.URL, "admin@x.com", "password123")
+
+	post := func() int {
+		req, _ := http.NewRequest(http.MethodPost, srv.URL+"/api/v1/posts", newReader(`{"title":"once","slug":"once"}`))
+		req.Header.Set("Authorization", "Bearer "+tok)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Idempotency-Key", "key-123")
+		st, _ := doReq(t, req)
+		return st
+	}
+	post()
+	post() // replay of the same key
+
+	evs, _ := changes(t, srv.URL, tok, "")
+	if len(evs) != 1 {
+		t.Fatalf("idempotent create should emit exactly 1 event, got %d: %v", len(evs), evs)
+	}
+}
+
+// TestWebhookOps_DeadLetterViewAndRetry covers the admin operational endpoints:
+// listing deliveries (dead-letter inspection) and re-arming one for retry.
+func TestWebhookOps_DeadLetterViewAndRetry(t *testing.T) {
+	srv, db := newEventsServer(t)
+	seedUser(t, db, "admin@x.com", "password123", "admin")
+	seedUser(t, db, "author@x.com", "password123", "author")
+	admin := login(t, srv.URL, "admin@x.com", "password123")
+	author := login(t, srv.URL, "author@x.com", "password123")
+
+	// A dead delivery, inserted directly (as the worker would leave it).
+	rec, err := db.Create(context.Background(), store.WriteInput{
+		Collection: schema.WebhookDeliveriesCollection,
+		Data: store.Record{
+			schema.WebhookDeliveryEvent:    "evt-1",
+			schema.WebhookDeliveryEndpoint: "site",
+			schema.WebhookDeliveryStatus:   schema.WebhookDead,
+			schema.WebhookDeliveryAttempts: 12,
+		},
+	})
+	if err != nil {
+		t.Fatalf("seed delivery: %v", err)
+	}
+	id, _ := rec["id"].(string)
+
+	// Admin sees the dead delivery; anon is refused.
+	st, body := doAs(t, http.MethodGet, srv.URL+"/api/v1/_events/deliveries?status=dead", admin, "")
+	if st != http.StatusOK {
+		t.Fatalf("list dead: %d", st)
+	}
+	if data, _ := body["data"].([]any); len(data) != 1 {
+		t.Fatalf("expected 1 dead delivery, got %d", len(data))
+	}
+	if st, _ := do(t, http.MethodGet, srv.URL+"/api/v1/_events/deliveries", ""); st != http.StatusUnauthorized {
+		t.Fatalf("anon list: got %d, want 401", st)
+	}
+	if st, _ := doAs(t, http.MethodPost, srv.URL+"/api/v1/_events/deliveries/"+id+"/retry", author, ""); st != http.StatusForbidden {
+		t.Fatalf("non-admin retry: got %d, want 403", st)
+	}
+
+	// Admin re-arms it → pending, and it now shows under status=pending.
+	if st, _ := doAs(t, http.MethodPost, srv.URL+"/api/v1/_events/deliveries/"+id+"/retry", admin, ""); st != http.StatusOK {
+		t.Fatalf("retry: %d", st)
+	}
+	_, body = doAs(t, http.MethodGet, srv.URL+"/api/v1/_events/deliveries?status=pending", admin, "")
+	if data, _ := body["data"].([]any); len(data) != 1 {
+		t.Fatalf("expected the delivery to be pending after retry")
 	}
 }
 

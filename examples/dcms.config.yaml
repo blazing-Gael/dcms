@@ -157,3 +157,29 @@ auth:
   #   host: smtp.example.com
   #   port: 587
   #   from: "no-reply@blog.example"
+
+events:
+  # Change events (ADR-0021, M-B). A collection opts in with `events: true` in the
+  # SCHEMA; every state change is then logged to the engine-managed _events
+  # collection and served on the change feed:
+  #   GET /api/v1/_changes?since=<cursor>     (admin) — poll for changes, O(changes)
+  #
+  # Signed webhooks push those events to your endpoints. Each endpoint's HMAC
+  # secret is a SECRET and so is env-only: secret_env names the environment
+  # variable holding it (never write the secret in this file). Delivery is durable
+  # (background worker, retries with backoff, dead-letter). Requests carry
+  # X-DCMS-Signature (HMAC-SHA256 of "<timestamp>.<rawBody>"), X-DCMS-Timestamp,
+  # X-DCMS-Event, and a stable X-DCMS-Delivery id for dedup.
+  #
+  # webhook_poll_seconds: 2        # how often the worker enqueues + delivers
+  # webhooks:
+  #   - name: site-rebuild
+  #     url: https://hooks.example/dcms
+  #     secret_env: DCMS_WEBHOOK_SITE_REBUILD_SECRET
+  #     events: [published, unpublished, deleted]   # filter; omit for all
+  #     collections: [posts, pages]                  # filter; omit for all
+  #     max_attempts: 12                             # dead-letter after this many
+  #
+  # Inspect / recover deliveries (admin):
+  #   GET  /api/v1/_events/deliveries?status=dead
+  #   POST /api/v1/_events/deliveries/{id}/retry

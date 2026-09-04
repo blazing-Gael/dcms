@@ -4,53 +4,53 @@ import (
 	"context"
 	"net/http"
 	"strings"
-	"sync"
 	"testing"
 
 	"github.com/blazing-Gael/dcms/internal/gateway"
+	"github.com/blazing-Gael/dcms/internal/schema"
+	"github.com/blazing-Gael/dcms/internal/store"
 )
 
-// captureNotifier records notifications instead of sending them, so a test can
-// read the reset link back.
-type captureNotifier struct {
-	mu    sync.Mutex
-	calls int
-	last  gateway.Notification
-}
-
-func (c *captureNotifier) Notify(_ context.Context, msg gateway.Notification) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.calls++
-	c.last = msg
-	return nil
-}
-
-func (c *captureNotifier) tokenFromLink(t *testing.T) string {
+// queuedNotifications returns the rows sitting in the durable outbox. Since
+// delivery is now asynchronous (ADR-0021 phase 3), a test reads the enqueued
+// notification rather than intercepting a synchronous send.
+func queuedNotifications(t *testing.T, db store.Adapter) []store.Record {
 	t.Helper()
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	_, tok, ok := strings.Cut(c.last.Link, "token=")
+	page, err := db.Find(context.Background(), store.Query{
+		Collection: schema.NotificationsCollection,
+		SkipCount:  true,
+	})
+	if err != nil {
+		t.Fatalf("read notifications: %v", err)
+	}
+	return page.Data
+}
+
+// resetTokenFromQueue reads the single queued reset link and extracts its token.
+func resetTokenFromQueue(t *testing.T, db store.Adapter) string {
+	t.Helper()
+	ns := queuedNotifications(t, db)
+	if len(ns) != 1 {
+		t.Fatalf("expected exactly 1 queued notification, got %d", len(ns))
+	}
+	link, _ := ns[0][schema.NotificationLink].(string)
+	_, tok, ok := strings.Cut(link, "token=")
 	if !ok {
-		t.Fatalf("no token in reset link %q", c.last.Link)
+		t.Fatalf("no token in queued reset link %q", link)
 	}
 	return tok
 }
 
 func TestPasswordReset_HappyPath(t *testing.T) {
-	cap := &captureNotifier{}
-	base, db := newAccountsServer(t, gateway.Options{Notifier: cap, ResetLinkBase: "https://site/reset"})
+	base, db := newAccountsServer(t, gateway.Options{ResetLinkBase: "https://site/reset"})
 	seedUser(t, db, "u@x.com", "oldpassword", "author")
 	live := login(t, base, "u@x.com", "oldpassword")
 
-	// Forgot → 200 and a delivered link.
+	// Forgot → 200 and a durably-queued link.
 	if st, _ := do(t, http.MethodPost, base+"/auth/forgot", `{"email":"u@x.com"}`); st != http.StatusOK {
 		t.Fatalf("forgot should be 200, got %d", st)
 	}
-	if cap.calls != 1 {
-		t.Fatalf("a reset link should have been delivered once, got %d", cap.calls)
-	}
-	token := cap.tokenFromLink(t)
+	token := resetTokenFromQueue(t, db)
 
 	// Reset with the token → 200.
 	if st, body := do(t, http.MethodPost, base+"/auth/reset", `{"token":"`+token+`","new":"brandnewpass"}`); st != http.StatusOK {
@@ -71,15 +71,14 @@ func TestPasswordReset_HappyPath(t *testing.T) {
 }
 
 func TestPasswordReset_EnumerationSafeAndBadToken(t *testing.T) {
-	cap := &captureNotifier{}
-	base, _ := newAccountsServer(t, gateway.Options{Notifier: cap})
+	base, db := newAccountsServer(t, gateway.Options{})
 
-	// Forgot for an unknown email → 200, but nothing is sent (no oracle).
+	// Forgot for an unknown email → 200, but nothing is enqueued (no oracle).
 	if st, _ := do(t, http.MethodPost, base+"/auth/forgot", `{"email":"nobody@x.com"}`); st != http.StatusOK {
 		t.Fatalf("forgot for unknown email should still be 200, got %d", st)
 	}
-	if cap.calls != 0 {
-		t.Fatalf("no notification should be sent for an unknown email, got %d", cap.calls)
+	if n := len(queuedNotifications(t, db)); n != 0 {
+		t.Fatalf("no notification should be queued for an unknown email, got %d", n)
 	}
 
 	// A garbage reset token is a flat 400.

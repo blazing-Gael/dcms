@@ -95,6 +95,12 @@ func Serve(ctx context.Context, def *schema.SchemaDefinition, db store.Adapter, 
 	// Background maintenance (e.g. sweeping expired idempotency keys) runs until
 	// ctx is cancelled. Tests that build a gateway directly never start it.
 	go gw.RunMaintenance(ctx)
+	// Webhook delivery worker (ADR-0021 phase 2); a no-op when no endpoints are
+	// configured, so it is always safe to launch.
+	go gw.RunWebhooks(ctx)
+	// Notification delivery worker (ADR-0021 phase 3): durable, retried account
+	// email off the request path.
+	go gw.RunNotifications(ctx)
 
 	errCh := make(chan error, 1)
 	go func() {

@@ -129,6 +129,11 @@ type Options struct {
 	ResetLinkBase string
 	// ResetTokenTTL is how long a reset token is valid; 0 uses the default (1h).
 	ResetTokenTTL time.Duration
+
+	// Webhooks configures signed webhook delivery of change events (ADR-0021 M-B
+	// phase 2). Nil ⇒ no delivery worker runs; the change feed still works. Only
+	// meaningful for collections that opt into `events:`.
+	Webhooks *WebhookOptions
 }
 
 // RegistrationOptions configures self-registration (ADR-0019).
@@ -265,8 +270,11 @@ func (s *Server) Handler() http.Handler {
 		}
 		r.Use(s.limitBody)
 		r.Use(s.withTimeout)
-		// Change feed (ADR-0021, M-B) — a static route, matched before /{collection}.
+		// Change feed + webhook delivery ops (ADR-0021, M-B) — static routes,
+		// matched before /{collection}.
 		r.Get("/_changes", s.handleChanges)
+		r.Get("/_events/deliveries", s.handleDeliveries)
+		r.Post("/_events/deliveries/{id}/retry", s.handleRetryDelivery)
 		r.Get("/{collection}", s.handleList)
 		r.Post("/{collection}", s.handleCreate)
 		r.Get("/{collection}/{id}", s.handleGetOne)

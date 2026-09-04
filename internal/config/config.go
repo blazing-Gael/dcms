@@ -35,6 +35,30 @@ type Config struct {
 	Media    Media    `yaml:"media"`
 	Content  Content  `yaml:"content"`
 	Auth     Auth     `yaml:"auth"`
+	Events   Events   `yaml:"events"`
+}
+
+// Events configures the change-events subsystem (ADR-0021, M-B). The change feed
+// itself needs no config; this is for webhook delivery.
+type Events struct {
+	// Webhooks are the endpoints change events are POSTed to. Empty ⇒ no delivery
+	// worker runs.
+	Webhooks []Webhook `yaml:"webhooks"`
+	// WebhookPollSeconds is how often the delivery worker enqueues + delivers; 0
+	// uses the engine default (a couple of seconds).
+	WebhookPollSeconds int `yaml:"webhook_poll_seconds"`
+}
+
+// Webhook is one delivery endpoint. The HMAC secret is env-only (secrets rule):
+// secret_env names the environment variable holding it, resolved at load.
+type Webhook struct {
+	Name        string   `yaml:"name"`
+	URL         string   `yaml:"url"`
+	SecretEnv   string   `yaml:"secret_env"`  // env var NAME holding the HMAC secret
+	Secret      string   `yaml:"-"`           // resolved from SecretEnv; never from the file
+	Events      []string `yaml:"events"`      // event-type filter; empty = all
+	Collections []string `yaml:"collections"` // collection filter; empty = all
+	MaxAttempts int      `yaml:"max_attempts"`
 }
 
 // Auth carries runtime auth secrets (ADR-0016). Both fields are env-only
@@ -383,6 +407,13 @@ func (c *Config) ApplyEnv() error {
 	}
 	if v, ok := os.LookupEnv("DCMS_SMTP_FROM"); ok {
 		c.Auth.SMTP.From = v
+	}
+	// Webhook HMAC secrets: each endpoint names the env var holding its secret
+	// (secrets are never read from the config file).
+	for i := range c.Events.Webhooks {
+		if name := c.Events.Webhooks[i].SecretEnv; name != "" {
+			c.Events.Webhooks[i].Secret = os.Getenv(name)
+		}
 	}
 	return nil
 }

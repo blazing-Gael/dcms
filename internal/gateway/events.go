@@ -4,6 +4,9 @@ import (
 	"context"
 	"net/http"
 	"strconv"
+	"time"
+
+	"github.com/go-chi/chi/v5"
 
 	"github.com/blazing-Gael/dcms/internal/schema"
 	"github.com/blazing-Gael/dcms/internal/store"
@@ -169,6 +172,74 @@ func (s *Server) handleChanges(w http.ResponseWriter, r *http.Request) {
 		projectEvent(rec)
 	}
 	writeListWith(w, r, page, effectiveLimit(q.Limit), nil)
+}
+
+// handleDeliveries lists webhook delivery rows (ADR-0021 phase 2), for
+// monitoring and dead-letter inspection. Admin-only. Filter with ?status= (e.g.
+// dead) and ?endpoint=; page with ?since=<cursor>&limit=.
+func (s *Server) handleDeliveries(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireAdmin(w, r); !ok {
+		return
+	}
+	if !s.schema.AnyEvents() {
+		writeList(w, store.Page{Data: []store.Record{}}, effectiveLimit(0))
+		return
+	}
+	var filters []store.Filter
+	if st := r.URL.Query().Get("status"); st != "" {
+		filters = append(filters, store.Filter{Field: schema.WebhookDeliveryStatus, Operator: store.Eq, Value: st})
+	}
+	if ep := r.URL.Query().Get("endpoint"); ep != "" {
+		filters = append(filters, store.Filter{Field: schema.WebhookDeliveryEndpoint, Operator: store.Eq, Value: ep})
+	}
+	limit := 0
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil && n >= 0 {
+			limit = n
+		}
+	}
+	page, err := s.db.Find(r.Context(), store.Query{
+		Collection: schema.WebhookDeliveriesCollection,
+		Filters:    filters,
+		Sort:       "id",
+		Cursor:     r.URL.Query().Get("since"),
+		Limit:      limit,
+		SkipCount:  true,
+	})
+	if err != nil {
+		writeStoreError(w, s.logger, r, err)
+		return
+	}
+	writeListWith(w, r, page, effectiveLimit(limit), nil)
+}
+
+// handleRetryDelivery re-arms a failed or dead delivery (ADR-0021 phase 2): its
+// status returns to pending and it becomes due immediately, so the worker retries
+// it on the next tick. Admin-only. A delivery that already succeeded is left
+// alone (409) so recovery can't cause a duplicate.
+func (s *Server) handleRetryDelivery(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireAdmin(w, r); !ok {
+		return
+	}
+	id := chi.URLParam(r, "id")
+	d, err := s.db.FindOne(r.Context(), schema.WebhookDeliveriesCollection, id)
+	if err != nil || d == nil {
+		s.handleNotFound(w, r)
+		return
+	}
+	if status, _ := d[schema.WebhookDeliveryStatus].(string); status == schema.WebhookDelivered {
+		writeError(w, http.StatusConflict, apiError{Code: "CONFLICT", Message: "delivery already succeeded"})
+		return
+	}
+	if _, err := s.db.Update(r.Context(), store.WriteInput{Collection: schema.WebhookDeliveriesCollection, Data: store.Record{
+		"id":                         id,
+		schema.WebhookDeliveryStatus: schema.WebhookPending,
+		schema.WebhookDeliveryNextAt: nowUTC().Format(time.RFC3339),
+	}}); err != nil {
+		writeStoreError(w, s.logger, r, err)
+		return
+	}
+	writeData(w, http.StatusOK, map[string]any{"id": id, "status": schema.WebhookPending})
 }
 
 // projectEvent shapes a raw _events row into the change-feed contract: the audit

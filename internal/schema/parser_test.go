@@ -47,8 +47,8 @@ func TestParse_ShorthandAndFullForm(t *testing.T) {
 	// One user collection, plus the engine-injected collections: _media (ADR-0011),
 	// the identity pair _users/_sessions (ADR-0016), _auth_tokens (ADR-0019), and
 	// _idempotency (ADR-0018).
-	if len(def.Collections) != 6 {
-		t.Fatalf("collections: got %d, want 6 (products + _media + _users + _sessions + _auth_tokens + _idempotency)", len(def.Collections))
+	if len(def.Collections) != 7 {
+		t.Fatalf("collections: got %d, want 7 (products + _media + _users + _sessions + _auth_tokens + _idempotency + _notifications)", len(def.Collections))
 	}
 	injected := map[string]bool{}
 	for _, c := range def.Collections[1:] {

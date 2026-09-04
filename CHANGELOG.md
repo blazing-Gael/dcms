@@ -9,6 +9,27 @@ While on **0.x**, minor versions may include breaking changes.
 ## [Unreleased]
 
 ### Added
+- **Durable account email — events, phase 3 of M-B (ADR-0021).** Password-reset
+  email (and future account notifications) now goes through a durable outbox
+  instead of being sent inline. `POST /auth/forgot` enqueues the message and
+  returns immediately; a background worker delivers it via the configured
+  transport (SMTP, or the dev log mailer) with **retries, backoff, and a
+  dead-letter** state — so a slow or briefly-unavailable mailer no longer blocks
+  the request or drops the email. A delivered notification's row is deleted on
+  success, so the raw action link does not linger in the database.
+- **Signed webhooks — events, phase 2 of M-B (ADR-0021).** Configure endpoints
+  under `events.webhooks` and DCMS pushes each change event to them, built on the
+  same `_events` log (which stays webhook-agnostic). Delivery is durable and
+  runs entirely in the background: a worker fans new events into a per-endpoint
+  queue and delivers them with **exponential backoff, retries, and a dead-letter**
+  state after a configurable max. Payloads are **signed** — `X-DCMS-Signature`
+  is an HMAC-SHA256 over `timestamp + "." + rawBody` (verify before parsing; the
+  signed timestamp defeats replay), with `X-DCMS-Event` and a stable
+  `X-DCMS-Delivery` id (the event id) for consumer dedup. Per-endpoint filters by
+  event type and collection. HMAC secrets are **env-only** (`secret_env`). Admin
+  ops: `GET /api/v1/_events/deliveries?status=dead` to inspect the dead-letter set
+  and `POST /api/v1/_events/deliveries/{id}/retry` to re-arm one — so recovery is
+  never "redeploy". At-least-once and unordered by design.
 - **Change feed — events, phase 1 of M-B (ADR-0021).** A collection can opt into
   `events: true` to record every state change — create, update, delete, and the
   lifecycle transitions (publish/unpublish/archive/restore, soft-delete) — as an

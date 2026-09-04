@@ -43,9 +43,12 @@ func Parse(src []byte) (*SchemaDefinition, error) {
 	def.injectAuthTokens()
 	// Inject the engine-managed _idempotency collection (ADR-0018).
 	def.injectIdempotency()
+	// Inject the engine-managed _notifications outbox (ADR-0021 phase 3).
+	def.injectNotifications()
 	// Inject the engine-managed _events change log when any collection opts in
-	// (ADR-0021, M-B).
+	// (ADR-0021, M-B), then the webhook-delivery collections beside it.
 	def.injectEvents()
+	def.injectWebhooks()
 	return def, nil
 }
 

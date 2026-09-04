@@ -243,6 +243,30 @@ func newDevCmd() *cobra.Command {
 					cfg.Auth.SMTP.From, cfg.Auth.SMTP.Username, cfg.Auth.SMTP.Password)
 			}
 
+			// Webhook delivery (ADR-0021 phase 2). Each endpoint needs a resolved
+			// HMAC secret; a configured endpoint without one is a startup error so a
+			// misconfigured secret_env fails loudly rather than shipping unsigned.
+			var webhooks *gateway.WebhookOptions
+			if len(cfg.Events.Webhooks) > 0 {
+				eps := make([]gateway.WebhookEndpoint, 0, len(cfg.Events.Webhooks))
+				for _, wh := range cfg.Events.Webhooks {
+					if wh.Name == "" || wh.URL == "" {
+						return fmt.Errorf("webhook: name and url are required")
+					}
+					if wh.Secret == "" {
+						return fmt.Errorf("webhook %q: secret is empty (set secret_env to an environment variable holding the HMAC secret)", wh.Name)
+					}
+					eps = append(eps, gateway.WebhookEndpoint{
+						Name: wh.Name, URL: wh.URL, Secret: wh.Secret,
+						Events: wh.Events, Collections: wh.Collections, MaxAttempts: wh.MaxAttempts,
+					})
+				}
+				webhooks = &gateway.WebhookOptions{
+					Endpoints:    eps,
+					PollInterval: time.Duration(cfg.Events.WebhookPollSeconds) * time.Second,
+				}
+			}
+
 			tlsCfg := engine.TLSConfig{CertFile: cfg.Server.TLS.CertFile, KeyFile: cfg.Server.TLS.KeyFile}
 			scheme := "http"
 			if tlsCfg.CertFile != "" && tlsCfg.KeyFile != "" {
@@ -270,6 +294,7 @@ func newDevCmd() *cobra.Command {
 				Notifier:            notifier,
 				ResetLinkBase:       cfg.Auth.Reset.LinkBase,
 				ResetTokenTTL:       time.Duration(cfg.Auth.Reset.TTLMinutes) * time.Minute,
+				Webhooks:            webhooks,
 			}, tlsCfg)
 		},
 	}
