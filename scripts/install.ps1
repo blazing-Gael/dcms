@@ -18,13 +18,17 @@ $arch = if ([Environment]::Is64BitOperatingSystem) {
 }
 $asset = "dcms_windows_$arch.zip"
 
-# ── Resolve URLs ────────────────────────────────────────────────────────────
+# ── Resolve the release tag ─────────────────────────────────────────────────
+# GitHub's /releases/latest is the latest *stable* release, so before a 1.0 it
+# 404s while only pre-releases exist. Resolve the newest tag from the releases
+# list (which includes pre-releases) instead.
 $version = $env:DCMS_VERSION
 if ([string]::IsNullOrEmpty($version) -or $version -eq 'latest') {
-  $base = "https://github.com/$repo/releases/latest/download"
-} else {
-  $base = "https://github.com/$repo/releases/download/$version"
+  $releases = Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/releases" -UseBasicParsing
+  $version = ($releases | Select-Object -First 1).tag_name
+  if ([string]::IsNullOrEmpty($version)) { throw 'could not determine the latest release' }
 }
+$base = "https://github.com/$repo/releases/download/$version"
 $url = "$base/$asset"
 $sumsUrl = "$base/checksums.txt"
 

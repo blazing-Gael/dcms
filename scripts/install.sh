@@ -37,17 +37,21 @@ esac
 
 asset="${BIN}_${os}_${arch}.tar.gz"
 
-# ── Resolve the download URL ────────────────────────────────────────────────
-if [ "${DCMS_VERSION:-}" = "" ] || [ "${DCMS_VERSION:-}" = "latest" ]; then
-	url="https://github.com/${REPO}/releases/latest/download/${asset}"
-	sums="https://github.com/${REPO}/releases/latest/download/checksums.txt"
-else
-	url="https://github.com/${REPO}/releases/download/${DCMS_VERSION}/${asset}"
-	sums="https://github.com/${REPO}/releases/download/${DCMS_VERSION}/checksums.txt"
-fi
-
 command -v curl >/dev/null 2>&1 || err "curl is required"
 command -v tar >/dev/null 2>&1 || err "tar is required"
+
+# ── Resolve the release tag ─────────────────────────────────────────────────
+# GitHub's /releases/latest is the latest *stable* release, so before a 1.0 it
+# 404s while only pre-releases exist. Resolve the newest tag from the releases
+# list (which includes pre-releases) instead.
+tag="${DCMS_VERSION:-}"
+if [ "$tag" = "" ] || [ "$tag" = "latest" ]; then
+	tag=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases" \
+		| grep -m1 '"tag_name":' | sed -E 's/.*"tag_name": *"([^"]+)".*/\1/')
+	[ -n "$tag" ] || err "could not determine the latest release"
+fi
+url="https://github.com/${REPO}/releases/download/${tag}/${asset}"
+sums="https://github.com/${REPO}/releases/download/${tag}/checksums.txt"
 
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
