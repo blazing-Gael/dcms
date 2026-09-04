@@ -8,6 +8,28 @@ While on **0.x**, minor versions may include breaking changes.
 
 ## [Unreleased]
 
+## [0.1.0-beta.2] - 2026-09-04
+
+Install-channel fixes for the beta. The binaries and Docker image from beta.1 were
+fine; this makes the one-line installers work during the pre-release phase and adds
+Homebrew.
+
+### Added
+- **Homebrew (macOS):** `brew install blazing-Gael/tap/dcms`, published as a cask
+  to the `blazing-Gael/homebrew-tap` tap on each release. The cask strips the
+  macOS quarantine attribute so the unsigned binary runs without a Gatekeeper
+  prompt.
+
+### Fixed
+- **Install scripts now work during the beta.** `install.sh` and `install.ps1`
+  fetched from GitHub's `releases/latest/download/` path, which resolves only to
+  the latest *stable* release and therefore 404'd while only pre-releases existed.
+  They now resolve the newest release (pre-releases included) via the releases API
+  and download from that tag.
+- **Docker `:latest` now tracks the newest release during 0.x**, so
+  `docker run ghcr.io/blazing-gael/dcms` resolves before a stable release exists
+  (the tag was previously gated to non-pre-release versions only).
+
 ## [0.1.0-beta.1] - 2026-09-04
 
 First public beta. DCMS now installs as a single prebuilt binary — no Go toolchain
@@ -386,5 +408,6 @@ language and API may still change before 1.0.
   module) so the binary, HTTP API, and SDKs are the only public surface; the Go
   package API stays unstable until a facade is deliberately promoted out.
 
-[Unreleased]: https://github.com/blazing-Gael/dcms/compare/v0.1.0-beta.1...HEAD
+[Unreleased]: https://github.com/blazing-Gael/dcms/compare/v0.1.0-beta.2...HEAD
+[0.1.0-beta.2]: https://github.com/blazing-Gael/dcms/releases/tag/v0.1.0-beta.2
 [0.1.0-beta.1]: https://github.com/blazing-Gael/dcms/releases/tag/v0.1.0-beta.1
