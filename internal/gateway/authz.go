@@ -23,48 +23,58 @@ const (
 	// the check must be narrowed to records they created
 )
 
-// evalRule evaluates a rule at collection scope. `owner` returns ownerScope
-// (unless the caller is anonymous, which can never own anything → deny); the
-// record-level owner comparison is done by the caller, which alone has the record.
-func evalRule(rule schema.Rule, p principal) decision {
+// evalRule evaluates a rule at collection scope. When it returns ownerScope it
+// also returns the record column the caller must compare against the principal:
+// created_by for a bare `owner`, or the named relation for an `owner_field`. The
+// record-level comparison itself is done by the caller, which alone has the
+// record. For every non-owner outcome the returned field is "".
+func evalRule(rule schema.Rule, p principal) (decision, string) {
 	switch rule.Kind {
 	case schema.RulePublic:
-		return allow
+		return allow, ""
 	case schema.RuleAuthenticated:
 		if p.Authenticated {
-			return allow
+			return allow, ""
 		}
-		return deny
+		return deny, ""
 	case schema.RuleRoles:
 		for _, role := range rule.Roles {
 			if p.HasRole(role) {
-				return allow
+				return allow, ""
 			}
 		}
-		return deny
+		return deny, ""
 	case schema.RuleOwner:
 		if !p.Authenticated {
-			return deny
+			return deny, ""
 		}
-		return ownerScope
+		return ownerScope, createdByField
+	case schema.RuleOwnerField:
+		// An anonymous caller can never match a relation to their identity.
+		if !p.Authenticated {
+			return deny, ""
+		}
+		return ownerScope, rule.Field
 	case schema.RuleAny:
 		// Logical OR over sub-rules. Combine their decisions by precedence:
 		// an outright allow (e.g. an admin) beats owner-scope (narrow to own
-		// rows) beats deny. This lets `any: [admin, owner]` give admins full
-		// access while everyone else stays owner-scoped — with no new cases in
-		// the enforcement helpers, which already handle allow/ownerScope/deny.
-		result := deny
+		// rows) beats deny. This lets `any: [admin, {owner_field: user}]` give
+		// admins full access while everyone else stays owner-scoped — with no new
+		// cases in the enforcement helpers, which already handle the three
+		// outcomes. Schema validation guarantees at most one distinct owner scope
+		// in a tree, so the first ownerScope field is the only one.
+		result, field := deny, ""
 		for _, sub := range rule.Any {
-			switch evalRule(sub, p) {
+			switch d, f := evalRule(sub, p); d {
 			case allow:
-				return allow
+				return allow, ""
 			case ownerScope:
-				result = ownerScope
+				result, field = ownerScope, f
 			}
 		}
-		return result
+		return result, field
 	default:
-		return deny
+		return deny, ""
 	}
 }
 
@@ -88,7 +98,7 @@ func (s *Server) authorizeCreate(w http.ResponseWriter, r *http.Request, collect
 	}
 	p := principalFromContext(r.Context())
 	rule := s.collections[collection].AccessRule(schema.ActionCreate)
-	switch evalRule(rule, p) {
+	switch d, _ := evalRule(rule, p); d {
 	case allow, ownerScope:
 		return true
 	default:
@@ -107,11 +117,11 @@ func (s *Server) listReadFilters(w http.ResponseWriter, r *http.Request, collect
 	}
 	p := principalFromContext(r.Context())
 	rule := s.collections[collection].AccessRule(schema.ActionRead)
-	switch evalRule(rule, p) {
+	switch d, field := evalRule(rule, p); d {
 	case allow:
 		return nil, true
 	case ownerScope:
-		return []store.Filter{{Field: createdByField, Operator: store.Eq, Value: p.ID}}, true
+		return []store.Filter{{Field: field, Operator: store.Eq, Value: p.ID}}, true
 	default:
 		s.denyWrite(w, p)
 		return nil, false
@@ -128,11 +138,11 @@ func (s *Server) recordReadable(ctx context.Context, collection string, rec stor
 	}
 	p := principalFromContext(ctx)
 	rule := s.collections[collection].AccessRule(schema.ActionRead)
-	switch evalRule(rule, p) {
+	switch d, field := evalRule(rule, p); d {
 	case allow:
 		return true
 	case ownerScope:
-		owner, _ := rec[createdByField].(string)
+		owner, _ := rec[field].(string)
 		return owner != "" && owner == p.ID
 	default:
 		return false
@@ -148,7 +158,8 @@ func (s *Server) authorizeCollectionRead(r *http.Request, collection string) boo
 		return true
 	}
 	p := principalFromContext(r.Context())
-	return evalRule(s.collections[collection].AccessRule(schema.ActionRead), p) != deny
+	d, _ := evalRule(s.collections[collection].AccessRule(schema.ActionRead), p)
+	return d != deny
 }
 
 // authorizeRecordWrite authorizes an update/delete (and lifecycle transitions).
@@ -161,7 +172,7 @@ func (s *Server) authorizeRecordWrite(w http.ResponseWriter, r *http.Request, co
 	}
 	p := principalFromContext(r.Context())
 	rule := s.collections[collection].AccessRule(action)
-	switch evalRule(rule, p) {
+	switch d, field := evalRule(rule, p); d {
 	case allow:
 		return true
 	case ownerScope:
@@ -172,7 +183,7 @@ func (s *Server) authorizeRecordWrite(w http.ResponseWriter, r *http.Request, co
 			writeStoreError(w, s.logger, r, err)
 			return false
 		}
-		owner, _ := rec[createdByField].(string)
+		owner, _ := rec[field].(string)
 		if owner != "" && owner == p.ID {
 			return true
 		}

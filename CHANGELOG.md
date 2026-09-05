@@ -9,6 +9,21 @@ While on **0.x**, minor versions may include breaking changes.
 ## [Unreleased]
 
 ### Added
+- **Ownership by relation — `owner_field` access rule (issue #7).** An `access:`
+  rule can now scope to a named relation instead of `created_by`, so a row that
+  **belongs to** a user who did not create it is still reachable:
+  `read: { owner_field: user }` narrows reads/writes to rows whose `user`
+  relation equals the caller. It composes inside `any: [...]` (e.g.
+  `{ any: [admin, { owner_field: user }] }`) and works on field-level rules too.
+  A relation may now target the built-in `_users` table for real referential
+  integrity (its expansion is redacted like everywhere else, so no password hash
+  leaks). This unblocks the ordinary multi-user shapes — orders, subscriptions,
+  assignments — where "belongs to" isn't "created by", including rows a service
+  account writes for a user.
+- **Webhook events now carry `from_status`.** A lifecycle transition event
+  records both ends of the change (`from_status` and `to_status`), read in the
+  write's own transaction; only transitions on event-emitting collections pay the
+  extra read.
 - **Durable account email — events, phase 3 of M-B (ADR-0021).** Password-reset
   email (and future account notifications) now goes through a durable outbox
   instead of being sent inline. `POST /auth/forgot` enqueues the message and

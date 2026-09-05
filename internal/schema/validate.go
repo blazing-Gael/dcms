@@ -17,6 +17,17 @@ var reservedCollections = map[string]bool{
 	"_revisions": true,
 }
 
+// referenceableEngineCollections are engine-managed collections a user schema may
+// point a relation at (by name) even though it cannot declare them. _users is the
+// identity table, so a collection can model "belongs to a user" (an author byline,
+// an owner, an assignee) with real referential integrity and use it in an
+// `owner_field` access rule (issue #7). Expansion of a _users target is already
+// redacted at the serialization choke point (redactSecrets), so no password hash
+// leaks through the relation.
+var referenceableEngineCollections = map[string]bool{
+	UsersCollection: true,
+}
+
 // reservedFields are engine-managed columns; a schema must not declare them.
 // They are added automatically during compilation (see translate.go). The
 // leading-underscore lifecycle columns are added only when a collection opts into
@@ -132,6 +143,9 @@ func (s *SchemaDefinition) Validate() error {
 							add("%s.access.%s: role %q is not declared in auth.roles", fpath, dir, role)
 						}
 					}
+					for _, msg := range validateOwnerFields(*rule, col) {
+						add("%s.access.%s: %s", fpath, dir, msg)
+					}
 				}
 			}
 
@@ -166,7 +180,7 @@ func (s *SchemaDefinition) Validate() error {
 				switch {
 				case f.Target == "":
 					add("%s: relation requires a 'target' collection", fpath)
-				case !allCols[f.Target]:
+				case !allCols[f.Target] && !referenceableEngineCollections[f.Target]:
 					add("%s: relation target %q is not a declared collection", fpath, f.Target)
 				}
 			}
@@ -254,6 +268,9 @@ func (s *SchemaDefinition) Validate() error {
 					if !roleSet[role] {
 						add("%s.access.%s: role %q is not declared in auth.roles", cpath, action, role)
 					}
+				}
+				for _, msg := range validateOwnerFields(*rule, col) {
+					add("%s.access.%s: %s", cpath, action, msg)
 				}
 			}
 		}

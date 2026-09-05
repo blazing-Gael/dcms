@@ -154,9 +154,21 @@ func TestChangeFeed_CapturesLifecycle(t *testing.T) {
 			t.Errorf("event[%d] missing occurred_at", i)
 		}
 	}
-	// The publish event records the destination status.
+	// The publish event records both ends of the transition: from draft (the
+	// default status a new post carries) to published.
 	if to, _ := evs[2]["to_status"].(string); to != schema.StatusPublished {
 		t.Errorf("publish to_status = %q, want %q", to, schema.StatusPublished)
+	}
+	if from, _ := evs[2]["from_status"].(string); from != schema.StatusDraft {
+		t.Errorf("publish from_status = %q, want %q", from, schema.StatusDraft)
+	}
+	// A plain (non-transition) update carries no status fields — from_status is
+	// read only for lifecycle transitions, never for an ordinary edit.
+	if _, ok := evs[1]["from_status"]; ok {
+		t.Errorf("plain update event should have no from_status: %v", evs[1])
+	}
+	if _, ok := evs[1]["to_status"]; ok {
+		t.Errorf("plain update event should have no to_status: %v", evs[1])
 	}
 }
 
@@ -257,6 +269,21 @@ func TestChangeFeed_AllTransitions(t *testing.T) {
 	for i, w := range want {
 		if got, _ := evs[i]["event"].(string); got != w {
 			t.Errorf("event[%d] = %q, want %q", i, got, w)
+		}
+	}
+	// Each status transition records both ends. (Restore only clears the
+	// soft-delete marker, so it leaves _status where archive left it.)
+	transitions := map[int][2]string{
+		1: {schema.StatusDraft, schema.StatusPublished}, // publish
+		2: {schema.StatusPublished, schema.StatusDraft}, // unpublish
+		3: {schema.StatusDraft, schema.StatusArchived},  // archive
+	}
+	for i, ft := range transitions {
+		if from, _ := evs[i]["from_status"].(string); from != ft[0] {
+			t.Errorf("event[%d] from_status = %q, want %q", i, from, ft[0])
+		}
+		if to, _ := evs[i]["to_status"].(string); to != ft[1] {
+			t.Errorf("event[%d] to_status = %q, want %q", i, to, ft[1])
 		}
 	}
 }

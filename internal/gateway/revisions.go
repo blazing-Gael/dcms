@@ -89,11 +89,23 @@ func (s *Server) updateAndRevise(ctx context.Context, collection string, data st
 	}
 	var rec store.Record
 	err := s.db.Tx(ctx, func(ctx context.Context, tx store.DB) error {
+		// For a lifecycle transition on an event-emitting collection, read the
+		// prior status in the same transaction so the event records both ends of
+		// the change. Only transitions pay this extra read — ordinary updates and
+		// non-event collections skip it entirely.
+		fromStatus := ""
+		if s.emitsEvents(collection) && isStatusOperation(operation) {
+			if id, _ := data["id"].(string); id != "" {
+				if prev, e := tx.FindOne(ctx, collection, id); e == nil {
+					fromStatus, _ = prev[schema.LifecycleStatus].(string)
+				}
+			}
+		}
 		var e error
 		if rec, e = tx.Update(ctx, store.WriteInput{Collection: collection, Data: data}); e != nil {
 			return e
 		}
-		return s.captureWrite(ctx, tx, collection, rec, operation)
+		return s.captureWriteFrom(ctx, tx, collection, rec, operation, fromStatus)
 	})
 	return rec, err
 }

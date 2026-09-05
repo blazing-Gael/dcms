@@ -31,13 +31,20 @@ func (s *Server) needsWriteTx(collection string) bool {
 // emits events. It is the single place both are captured, so every write path
 // gets the same behaviour by calling it in place of captureRevision.
 func (s *Server) captureWrite(ctx context.Context, db store.DB, collection string, rec store.Record, operation string) error {
+	return s.captureWriteFrom(ctx, db, collection, rec, operation, "")
+}
+
+// captureWriteFrom is captureWrite with the record's prior lifecycle status
+// (empty when unknown or not a transition). Only the transition seam threads it
+// through, so the event records both ends of a status change.
+func (s *Server) captureWriteFrom(ctx context.Context, db store.DB, collection string, rec store.Record, operation, fromStatus string) error {
 	if s.revised(collection) {
 		if err := s.captureRevision(ctx, db, collection, rec, operation); err != nil {
 			return err
 		}
 	}
 	if s.emitsEvents(collection) {
-		if err := s.captureEvent(ctx, db, collection, rec, operation); err != nil {
+		if err := s.captureEvent(ctx, db, collection, rec, operation, fromStatus); err != nil {
 			return err
 		}
 	}
@@ -46,10 +53,10 @@ func (s *Server) captureWrite(ctx context.Context, db store.DB, collection strin
 
 // captureEvent appends one row to the _events log for a write, in the given
 // transaction. The event type is derived from the operation; for a lifecycle
-// transition the destination status is recorded (from_status is captured in a
-// later phase — the event type already names the destination). Audit columns
-// supply the timestamp and actor, so no separate fields are written.
-func (s *Server) captureEvent(ctx context.Context, db store.DB, collection string, rec store.Record, operation string) error {
+// transition both the destination status and (when known) the prior status are
+// recorded, so a consumer sees the full transition. Audit columns supply the
+// timestamp and actor, so no separate fields are written.
+func (s *Server) captureEvent(ctx context.Context, db store.DB, collection string, rec store.Record, operation, fromStatus string) error {
 	id, _ := rec["id"].(string)
 	if id == "" {
 		return nil
@@ -58,16 +65,19 @@ func (s *Server) captureEvent(ctx context.Context, db store.DB, collection strin
 	if isStatusOperation(operation) {
 		to, _ = rec[schema.LifecycleStatus].(string)
 	}
-	return s.captureEventRow(ctx, db, collection, id, eventForOperation(s, collection, operation), to)
+	return s.captureEventRow(ctx, db, collection, id, eventForOperation(s, collection, operation), fromStatus, to)
 }
 
 // captureEventRow appends one _events row with an explicit event type. It is the
 // low-level insert both the operation-derived path and the hard-delete path use.
-func (s *Server) captureEventRow(ctx context.Context, db store.DB, collection, recordID, event, toStatus string) error {
+func (s *Server) captureEventRow(ctx context.Context, db store.DB, collection, recordID, event, fromStatus, toStatus string) error {
 	data := store.Record{
 		schema.EventCollection: collection,
 		schema.EventRecordID:   recordID,
 		schema.EventType:       event,
+	}
+	if fromStatus != "" {
+		data[schema.EventFromStatus] = fromStatus
 	}
 	if toStatus != "" {
 		data[schema.EventToStatus] = toStatus
@@ -88,7 +98,7 @@ func (s *Server) deleteRecord(ctx context.Context, collection, id string) error 
 		if err := tx.Delete(ctx, collection, id); err != nil {
 			return err
 		}
-		return s.captureEventRow(ctx, tx, collection, id, schema.EventDeleted, "")
+		return s.captureEventRow(ctx, tx, collection, id, schema.EventDeleted, "", "")
 	})
 }
 

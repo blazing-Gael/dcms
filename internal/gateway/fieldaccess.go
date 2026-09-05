@@ -94,11 +94,11 @@ func (s *Server) stripUnwritableFields(ctx context.Context, collection, id strin
 
 // fieldPermitted evaluates a field read rule against a specific record.
 func (s *Server) fieldPermitted(rule schema.Rule, p principal, rec store.Record) bool {
-	switch evalRule(rule, p) {
+	switch d, field := evalRule(rule, p); d {
 	case allow:
 		return true
 	case ownerScope:
-		owner, _ := rec[createdByField].(string)
+		owner, _ := rec[field].(string)
 		return owner != "" && owner == p.ID
 	default:
 		return false
@@ -109,14 +109,14 @@ func (s *Server) fieldPermitted(rule schema.Rule, p principal, rec store.Record)
 // for an update (owner comparison), or nil for a create — where `owner` collapses
 // to authenticated, mirroring authorizeCreate.
 func (s *Server) fieldWritable(rule schema.Rule, p principal, current store.Record) bool {
-	switch evalRule(rule, p) {
+	switch d, field := evalRule(rule, p); d {
 	case allow:
 		return true
 	case ownerScope:
 		if current == nil {
 			return p.Authenticated
 		}
-		owner, _ := current[createdByField].(string)
+		owner, _ := current[field].(string)
 		return owner != "" && owner == p.ID
 	default:
 		return false

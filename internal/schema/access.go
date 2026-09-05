@@ -26,6 +26,7 @@ const (
 	RuleAuthenticated RuleKind = "authenticated" // any valid principal
 	RuleRoles         RuleKind = "roles"         // principal holds one of Roles
 	RuleOwner         RuleKind = "owner"         // principal is the record's created_by
+	RuleOwnerField    RuleKind = "owner_field"   // principal.ID equals the record's named relation
 	RuleAny           RuleKind = "any"           // satisfied if ANY sub-rule is (logical OR)
 )
 
@@ -42,6 +43,9 @@ type Rule struct {
 	Kind  RuleKind `json:"kind"`
 	Roles []string `json:"roles,omitempty"`
 	Any   []Rule   `json:"any,omitempty"`
+	// Field names the relation an `owner_field` rule matches against
+	// (principal.ID == this row's <Field>). Empty for every other kind.
+	Field string `json:"field,omitempty"`
 }
 
 // roleNames returns every role name referenced anywhere in the rule tree, so
@@ -57,11 +61,13 @@ func (r Rule) roleNames() []string {
 	return out
 }
 
-// MentionsOwner reports whether the rule tree contains an `owner` gate. Callers
-// use it to decide whether an owner comparison (and thus the record it needs)
-// can come into play — a composite hides its `owner` sub-rule behind RuleAny.
+// MentionsOwner reports whether the rule tree contains an owner-ish gate — a bare
+// `owner` (matches created_by) or an `owner_field` (matches a named relation).
+// Callers use it to decide whether a per-record owner comparison (and thus the
+// record it needs) can come into play — a composite hides its owner sub-rule
+// behind RuleAny.
 func (r Rule) MentionsOwner() bool {
-	if r.Kind == RuleOwner {
+	if r.Kind == RuleOwner || r.Kind == RuleOwnerField {
 		return true
 	}
 	for _, sub := range r.Any {
@@ -70,6 +76,65 @@ func (r Rule) MentionsOwner() bool {
 		}
 	}
 	return false
+}
+
+// ownerFields returns every field an owner-ish rule in the tree scopes on: the
+// audit column created_by for a bare `owner`, or the named relation for an
+// `owner_field`. Validation uses it to reject an unsupported combination (an OR
+// of two different owner scopes cannot be expressed as one query filter).
+func (r Rule) ownerFields(createdBy string) []string {
+	switch r.Kind {
+	case RuleOwner:
+		return []string{createdBy}
+	case RuleOwnerField:
+		return []string{r.Field}
+	}
+	var out []string
+	for _, sub := range r.Any {
+		out = append(out, sub.ownerFields(createdBy)...)
+	}
+	return out
+}
+
+// validateOwnerFields checks the owner-ish rules in a tree against a collection:
+// every `owner_field` must name an existing relation on the collection (a
+// relation, not a bare string, so referential integrity stays in play), and a
+// rule tree may reference at most one distinct owner scope — an OR of two
+// different owner scopes (e.g. created_by OR a relation) cannot be expressed as a
+// single query filter for list reads. Returns human-readable problems, empty if
+// the rule is sound.
+func validateOwnerFields(rule Rule, col CollectionDef) []string {
+	var msgs []string
+	seen := map[string]bool{}
+	for _, f := range rule.ownerFields("created_by") {
+		seen[f] = true
+		if f == "created_by" {
+			continue // the always-present audit column backing a bare `owner`
+		}
+		fd, ok := col.field(f)
+		switch {
+		case !ok:
+			msgs = append(msgs, fmt.Sprintf("owner_field %q is not a field of this collection", f))
+		case fd.Type != TypeRelation:
+			msgs = append(msgs, fmt.Sprintf("owner_field %q must be a relation, not %q", f, fd.Type))
+		case fd.Many:
+			msgs = append(msgs, fmt.Sprintf("owner_field %q cannot be a many-to-many relation (it has no column to match on)", f))
+		}
+	}
+	if len(seen) > 1 {
+		msgs = append(msgs, "a rule may reference at most one owner scope (an OR of different owners is not supported)")
+	}
+	return msgs
+}
+
+// field returns the field with the given name, if declared.
+func (c CollectionDef) field(name string) (FieldDef, bool) {
+	for _, f := range c.Fields {
+		if f.Name == name {
+			return f, true
+		}
+	}
+	return FieldDef{}, false
 }
 
 // AccessRules is a collection's per-operation authorization policy. A nil field
@@ -275,9 +340,35 @@ func parseRule(node *yaml.Node) (*Rule, error) {
 		}
 		return &Rule{Kind: RuleRoles, Roles: roles}, nil
 	case yaml.MappingNode:
-		return parseCompositeRule(node)
+		return parseMappingRule(node)
 	default:
-		return nil, fmt.Errorf("expected a keyword, a role name, a list of roles, or an {any: [...]} composite, got %s", kindName(node.Kind))
+		return nil, fmt.Errorf("expected a keyword, a role name, a list of roles, an {owner_field: name} rule, or an {any: [...]} composite, got %s", kindName(node.Kind))
+	}
+}
+
+// parseMappingRule decodes a mapping-form rule. Exactly one key is allowed:
+// `any` (a logical-OR composite) or `owner_field` (match a named relation
+// against the principal). Splitting the two shapes here keeps parseCompositeRule
+// focused on the OR combinator.
+func parseMappingRule(node *yaml.Node) (*Rule, error) {
+	entries, err := mappingEntries(node)
+	if err != nil {
+		return nil, err
+	}
+	if len(entries) != 1 {
+		return nil, fmt.Errorf("a mapping access rule takes exactly one key (`any` or `owner_field`)")
+	}
+	switch entries[0].Key {
+	case "any":
+		return parseCompositeRule(node)
+	case "owner_field":
+		field := entries[0].Val.Value
+		if entries[0].Val.Kind != yaml.ScalarNode || field == "" {
+			return nil, fmt.Errorf("owner_field: expected a field name")
+		}
+		return &Rule{Kind: RuleOwnerField, Field: field}, nil
+	default:
+		return nil, fmt.Errorf("unknown access rule key %q (want `any` or `owner_field`)", entries[0].Key)
 	}
 }
 

@@ -97,6 +97,8 @@ func accessNote(rule Rule) string {
 	switch rule.Kind {
 	case RuleRoles:
 		return "roles: " + strings.Join(rule.Roles, ", ")
+	case RuleOwnerField:
+		return "owner_field: " + rule.Field
 	case RuleAny:
 		parts := make([]string, len(rule.Any))
 		for i, sub := range rule.Any {
