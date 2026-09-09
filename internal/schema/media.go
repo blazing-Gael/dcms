@@ -51,6 +51,20 @@ func mediaCollectionDef() CollectionDef {
 // _media is injected unconditionally — the media library is a standalone feature,
 // so an operator can upload and manage assets even with no `file` field declared.
 func (s *SchemaDefinition) injectMedia() {
+	// A schema may name _media purely to attach an `access:` block (validated in
+	// Validate). Lift that policy off and drop the placeholder, so the engine's
+	// definition is the only _media collection that survives.
+	var access *AccessRules
+	kept := s.Collections[:0]
+	for _, c := range s.Collections {
+		if c.Name == MediaCollection {
+			access = c.Access
+			continue
+		}
+		kept = append(kept, c)
+	}
+	s.Collections = kept
+
 	for ci := range s.Collections {
 		for fi := range s.Collections[ci].Fields {
 			f := &s.Collections[ci].Fields[fi]
@@ -60,5 +74,7 @@ func (s *SchemaDefinition) injectMedia() {
 			}
 		}
 	}
-	s.Collections = append(s.Collections, mediaCollectionDef())
+	def := mediaCollectionDef()
+	def.Access = access // nil ⇒ the engine default: public read, authenticated write
+	s.Collections = append(s.Collections, def)
 }

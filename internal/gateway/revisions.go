@@ -128,7 +128,7 @@ func (s *Server) handleRevisionList(w http.ResponseWriter, r *http.Request) {
 		s.handleNotFound(w, r)
 		return
 	}
-	if s.previewDenied(r) || !s.authorizeCollectionRead(r, collection) {
+	if s.previewDenied(r) || !s.authorizeRecordRead(r.Context(), collection, chi.URLParam(r, "id")) {
 		s.handleNotFound(w, r)
 		return
 	}
@@ -159,7 +159,7 @@ func (s *Server) handleRevisionGet(w http.ResponseWriter, r *http.Request) {
 		s.handleNotFound(w, r)
 		return
 	}
-	if s.previewDenied(r) || !s.authorizeCollectionRead(r, collection) {
+	if s.previewDenied(r) || !s.authorizeRecordRead(r.Context(), collection, chi.URLParam(r, "id")) {
 		s.handleNotFound(w, r)
 		return
 	}
@@ -169,7 +169,11 @@ func (s *Server) handleRevisionGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	meta := revisionMeta(rev)
-	meta["data"] = decodeSnapshot(rev)
+	// A snapshot is a whole record, so it passes the same field-access mask a live
+	// read applies — otherwise history would expose a field the record hides.
+	snapshot := decodeSnapshot(rev)
+	s.maskReadFields(r.Context(), collection, store.Record(snapshot))
+	meta["data"] = snapshot
 	writeData(w, http.StatusOK, meta)
 }
 

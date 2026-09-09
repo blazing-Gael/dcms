@@ -26,7 +26,19 @@ import (
 // while everything else (referencing media from a record, expanding it,
 // referential integrity, "where used") reuses the relation machinery.
 
+// _media is a collection like any other as far as authorization goes: these
+// handlers run the same access rules the collection API runs (ADR-0016), against
+// the _media collection. With no `access:` block declared on it, the engine
+// default applies — public read, authenticated write — so serving an image stays
+// open while upload, replace, edit and delete require a principal.
+
 func (s *Server) mediaEnabled() bool { return s.opts.Blob != nil }
+
+// mediaNotFound is the response for a media record the caller may not read: a
+// 404, never a 403, so an owner boundary does not leak (ADR-0016).
+func (s *Server) mediaNotFound(w http.ResponseWriter) {
+	writeError(w, http.StatusNotFound, apiError{Code: "NOT_FOUND", Message: "record not found"})
+}
 
 func (s *Server) mediaUnavailable(w http.ResponseWriter) {
 	writeError(w, http.StatusServiceUnavailable, apiError{
@@ -113,13 +125,39 @@ func withVersion(u, ver string) string {
 // coerceExpanded shapes a related record for a response, adding the derived media
 // URL when the related record is a media asset (so an expanded product.image
 // carries its url like a directly-fetched media record does).
-func (s *Server) coerceExpanded(ctx context.Context, collection string, rec store.Record) {
+//
+// It also reports whether the record may be included at all. Expanding a relation
+// is a read of the target collection, so it passes that collection's read rule
+// (ADR-0016) exactly as a direct read would — otherwise ?expand= would be a way
+// around a rule the direct route enforces. A false is never a 403: the caller
+// leaves a belongs-to as its bare id, or drops the record from a list, so an
+// expansion cannot be used to probe for records the caller may not read.
+func (s *Server) coerceExpanded(ctx context.Context, collection string, rec store.Record) bool {
+	if !s.recordReadable(ctx, collection, rec) {
+		return false
+	}
 	s.collections[collection].CoerceResponse(rec)
 	if collection == schema.MediaCollection {
 		s.addMediaURL(rec)
 	}
 	redactSecrets(collection, rec)
 	s.maskReadFields(ctx, collection, rec)
+	return true
+}
+
+// coerceExpandedList is the batch form of coerceExpanded: it shapes a freshly
+// loaded set of related records and drops the ones the caller may not read.
+// Every batched expansion goes through it, so list and single expansion filter
+// identically. The result is always non-nil, so an empty relation serializes as
+// [] rather than null.
+func (s *Server) coerceExpandedList(ctx context.Context, collection string, recs []store.Record) []store.Record {
+	out := make([]store.Record, 0, len(recs))
+	for _, r := range recs {
+		if s.coerceExpanded(ctx, collection, r) {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 // redactSecrets strips fields that must never reach a client from a serialized
@@ -150,11 +188,16 @@ func (s *Server) writeMedia(w http.ResponseWriter, r *http.Request, status int, 
 }
 
 func (s *Server) handleMediaList(w http.ResponseWriter, r *http.Request) {
+	ownerFilters, ok := s.listReadFilters(w, r, schema.MediaCollection)
+	if !ok {
+		return
+	}
 	q, err := s.parseListQuery(r.URL.Query(), schema.MediaCollection)
 	if err != nil {
 		writeStoreError(w, s.logger, r, err)
 		return
 	}
+	q.Filters = append(q.Filters, ownerFilters...)
 	page, err := s.db.Find(r.Context(), q)
 	if err != nil {
 		writeStoreError(w, s.logger, r, err)
@@ -173,12 +216,19 @@ func (s *Server) handleMediaGet(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, s.logger, r, err)
 		return
 	}
+	if !s.recordReadable(r.Context(), schema.MediaCollection, rec) {
+		s.mediaNotFound(w)
+		return
+	}
 	s.writeMedia(w, r, http.StatusOK, rec)
 }
 
 func (s *Server) handleMediaUpload(w http.ResponseWriter, r *http.Request) {
 	if !s.mediaEnabled() {
 		s.mediaUnavailable(w)
+		return
+	}
+	if !s.authorizeCreate(w, r, schema.MediaCollection) {
 		return
 	}
 	if rec, ok := s.storeUpload(w, r, ""); ok {
@@ -194,6 +244,9 @@ func (s *Server) handleMediaReplace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := chi.URLParam(r, "id")
+	if !s.authorizeRecordWrite(w, r, schema.MediaCollection, id, schema.ActionUpdate) {
+		return
+	}
 	if _, err := s.db.FindOne(r.Context(), schema.MediaCollection, id); err != nil {
 		writeStoreError(w, s.logger, r, err)
 		return
@@ -207,6 +260,9 @@ func (s *Server) handleMediaReplace(w http.ResponseWriter, r *http.Request) {
 // bytes are replaced via handleMediaReplace, not here.
 func (s *Server) handleMediaPatch(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
+	if !s.authorizeRecordWrite(w, r, schema.MediaCollection, id, schema.ActionUpdate) {
+		return
+	}
 	data, err := decodeBody(r)
 	if err != nil {
 		writeDecodeError(w, err)
@@ -228,6 +284,9 @@ func (s *Server) handleMediaPatch(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleMediaDelete(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
+	if !s.authorizeRecordWrite(w, r, schema.MediaCollection, id, schema.ActionDelete) {
+		return
+	}
 	rec, err := s.db.FindOne(r.Context(), schema.MediaCollection, id)
 	if err != nil {
 		writeStoreError(w, s.logger, r, err)
@@ -264,6 +323,12 @@ func (s *Server) handleMediaRaw(w http.ResponseWriter, r *http.Request) {
 	rec, err := s.db.FindOne(r.Context(), schema.MediaCollection, chi.URLParam(r, "id"))
 	if err != nil {
 		writeStoreError(w, s.logger, r, err)
+		return
+	}
+	// The bytes are gated by the same rule as the metadata — otherwise /raw would
+	// be a way around a media record the caller may not read.
+	if !s.recordReadable(r.Context(), schema.MediaCollection, rec) {
+		s.mediaNotFound(w)
 		return
 	}
 	key, _ := rec[schema.MediaStorageKey].(string)

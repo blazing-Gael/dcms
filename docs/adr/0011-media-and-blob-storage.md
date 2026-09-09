@@ -88,8 +88,16 @@ for video/large files, or 302 to the object URL for S3), `PATCH /__media/{id}`
   **not** in the first cut (phase M3). A media-library grid and responsive
   delivery will want them; the fork (pre-generate fixed sizes vs on-demand
   cached transforms) is deferred to that phase.
-- Private/access-controlled files (signed URLs, auth on `/raw`) wait on auth
-  (M4); the `storage_key`/serving split is designed to allow it without rework.
+- ~~Private/access-controlled files (signed URLs, auth on `/raw`) wait on auth
+  (M4); the `storage_key`/serving split is designed to allow it without rework.~~
+  **Resolved.** The `/__media` endpoints now run the `access:` rules of `_media`
+  like any other collection (ADR-0016), covering the bytes on `/raw` as well as
+  the metadata. The engine default is public read + authenticated write, so
+  serving an image is unchanged while upload/replace/edit/delete need a
+  principal; a schema makes the library private by naming `_media` with an
+  `access:` block. Signed URLs for a direct-serving backend (S3/R2, where
+  `Blob.URL` bypasses the gateway entirely) are still open — a private library on
+  such a backend must not hand out a public object URL.
 - Orphaned-blob GC, folders/tags, bulk ops, and content-hash dedup are later
   polish.
 - `_media` needs light special-casing (custom write path, excluded from public

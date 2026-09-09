@@ -149,17 +149,32 @@ func (s *Server) recordReadable(ctx context.Context, collection string, rec stor
 	}
 }
 
-// authorizeCollectionRead reports whether the principal may read the collection
-// at all. It is used by auxiliary read endpoints (e.g. revision history) where
-// record-level owner scoping isn't applied — `owner` counts as permitted here,
-// and the caller turns a false into a 404 so nothing leaks.
-func (s *Server) authorizeCollectionRead(r *http.Request, collection string) bool {
+// authorizeRecordRead reports whether the principal may read a specific record,
+// identified by id. It is the read counterpart of authorizeRecordWrite, for
+// auxiliary read endpoints (e.g. revision history) that serve a record's derived
+// data without having loaded the record itself. A collection-scope rule
+// (public/authenticated/roles) decides outright; an `owner` rule loads the record
+// to compare the owner column, so history is never a way around the boundary the
+// record read enforces. The caller turns a false into a 404 — never a 403 — so
+// neither the record's existence nor the owner boundary leaks.
+func (s *Server) authorizeRecordRead(ctx context.Context, collection, id string) bool {
 	if !s.authEnabled() {
 		return true
 	}
-	p := principalFromContext(r.Context())
-	d, _ := evalRule(s.collections[collection].AccessRule(schema.ActionRead), p)
-	return d != deny
+	p := principalFromContext(ctx)
+	switch d, field := evalRule(s.collections[collection].AccessRule(schema.ActionRead), p); d {
+	case allow:
+		return true
+	case ownerScope:
+		rec, err := s.db.FindOne(ctx, collection, id)
+		if err != nil {
+			return false
+		}
+		owner, _ := rec[field].(string)
+		return owner != "" && owner == p.ID
+	default:
+		return false
+	}
 }
 
 // authorizeRecordWrite authorizes an update/delete (and lifecycle transitions).

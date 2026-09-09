@@ -77,15 +77,49 @@ collections:
 }
 
 func TestMedia_ReservedAndImplicitTarget(t *testing.T) {
-	// Users may not declare _media.
+	// _media is engine-managed: users may not add fields to it.
 	if _, err := Parse([]byte(`
 version: "1"
 collections:
   _media:
     fields:
       name: { type: string }
-`)); err == nil || !strings.Contains(err.Error(), "reserved") {
-		t.Fatalf("declaring _media should be reserved-name error, got %v", err)
+`)); err == nil || !strings.Contains(err.Error(), "engine-managed") {
+		t.Fatalf("declaring _media fields should error, got %v", err)
+	}
+
+	// But naming it to attach an `access:` block is allowed — the only way to
+	// make the media library anything but the default public-read (ADR-0011).
+	def, err := Parse([]byte(`
+version: "1"
+auth:
+  roles:
+    admin: { label: Administrator }
+collections:
+  _media:
+    access:
+      read: [admin]
+`))
+	if err != nil {
+		t.Fatalf("declaring _media access should be allowed, got %v", err)
+	}
+	var media []CollectionDef
+	for _, c := range def.Collections {
+		if c.Name == MediaCollection {
+			media = append(media, c)
+		}
+	}
+	if len(media) != 1 {
+		t.Fatalf("expected exactly one _media collection, got %d", len(media))
+	}
+	// The declared policy is carried onto the engine's definition, and the
+	// engine's own fields survive rather than being replaced by the placeholder.
+	rule := media[0].AccessRule(ActionRead)
+	if rule.Kind != RuleRoles || len(rule.Roles) != 1 || rule.Roles[0] != "admin" {
+		t.Fatalf("declared _media read rule not applied: %#v", rule)
+	}
+	if _, ok := media[0].field(MediaStorageKey); !ok {
+		t.Fatalf("engine-managed _media fields were lost")
 	}
 
 	// A file field must not set an explicit target.
