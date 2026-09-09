@@ -88,7 +88,9 @@ func (s *Server) loadVisibleByIDs(ctx context.Context, collection string, idset 
 			return nil, err
 		}
 		for _, r := range page.Data {
-			s.coerceExpanded(ctx, collection, r)
+			if !s.coerceExpanded(ctx, collection, r) {
+				continue // not readable: omit from the manifest, leaving the AST id-only
+			}
 			if id, ok := r["id"].(string); ok {
 				out[id] = r
 			}

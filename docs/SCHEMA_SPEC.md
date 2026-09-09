@@ -192,6 +192,25 @@ through the `/__media` endpoints — you reference them by id — and the media
 library is browsable, replaceable, and answers "where is this used?" via reverse
 expansion. Do not set `target` on a file field; it is always `_media`.
 
+**Media access.** The `/__media` endpoints run the same `access:` rules as any
+other collection, evaluated against `_media`. The engine default applies when you
+say nothing: **public read, authenticated write** — serving an image needs no
+credential, but uploading, replacing, editing, or deleting one does. To change
+the read side, name `_media` in `collections:` and give it an `access:` block. It
+is the one reserved collection a schema may name, and only for this: it takes no
+fields, indexes, or other directives, because its shape stays the engine's.
+
+```yaml
+collections:
+  _media:
+    access:
+      read: [admin]        # a private media library: /__media and /raw both gated
+```
+
+The rule covers the bytes as well as the metadata, so `/__media/{id}/raw` is never
+a way around it, and a `file` relation pointing at an asset the caller may not
+read stays an unexpanded id.
+
 #### Rich content — `richtext` (ADR-0014)
 
 Formatted body content: headings, bold/italic/links, lists, and inline embeds

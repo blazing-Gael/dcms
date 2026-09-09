@@ -203,13 +203,7 @@ func (s *Server) findRelatedM2M(ctx context.Context, inv schema.M2MInverse, targ
 	if err != nil {
 		return nil, err
 	}
-	for _, r := range page.Data {
-		s.coerceExpanded(ctx, inv.Source, r)
-	}
-	if page.Data == nil {
-		return []store.Record{}, nil
-	}
-	return page.Data, nil
+	return s.coerceExpandedList(ctx, inv.Source, page.Data), nil
 }
 
 // expandBelongsTo fetches the single target of a belongs-to field and inlines it.
@@ -230,7 +224,9 @@ func (s *Server) expandBelongsTo(ctx context.Context, target string, rec store.R
 	if !s.recordVisible(target, related, visibilityFromContext(ctx)) {
 		return nil // hidden target: keep the id, don't inline
 	}
-	s.coerceExpanded(ctx, target, related)
+	if !s.coerceExpanded(ctx, target, related) {
+		return nil // target not readable by this caller: keep the id, don't inline
+	}
 	rec[field] = related
 	return nil
 }
@@ -246,13 +242,7 @@ func (s *Server) findRelated(ctx context.Context, inv schema.Inverse, parentID s
 	if err != nil {
 		return nil, err
 	}
-	for _, r := range page.Data {
-		s.coerceExpanded(ctx, inv.Source, r)
-	}
-	if page.Data == nil {
-		return []store.Record{}, nil
-	}
-	return page.Data, nil
+	return s.coerceExpandedList(ctx, inv.Source, page.Data), nil
 }
 
 // expandListRecords expands a page of records. Only belongs-to tokens are
@@ -315,7 +305,9 @@ func (s *Server) expandBelongsToBatch(ctx context.Context, target string, recs [
 	}
 	byID := make(map[string]store.Record, len(page.Data))
 	for _, tr := range page.Data {
-		s.coerceExpanded(ctx, target, tr)
+		if !s.coerceExpanded(ctx, target, tr) {
+			continue // not readable: leave the referencing records' ids as-is
+		}
 		if idv, ok := tr["id"].(string); ok {
 			byID[idv] = tr
 		}

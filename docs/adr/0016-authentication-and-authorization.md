@@ -118,6 +118,28 @@ lifecycle filtering:
 Authz runs *before* `store.WithActor` is trusted for the write and before any
 lifecycle/reference work, so a forbidden request never reaches the store.
 
+**A read rule binds every path that returns the record, not just `GET
+/{collection}/{id}`.** A rule that only guards the direct route is not a rule —
+it is a speed bump, because the same row is reachable indirectly:
+
+- **Relation expansion** is a read of the *target* collection, so it resolves
+  that collection's rule. This is enforced at `coerceExpanded`, the one choke
+  point every expansion passes through (belongs-to single and batched,
+  many-to-many, inverse edges, and the richtext reference manifest). A denial is
+  never a 403: a belongs-to keeps its bare id and an unreadable row drops out of
+  an expanded list, so `?expand=` cannot be used to probe for records — the same
+  reason a hidden lifecycle target stays an id (ADR-0012).
+- **Revision history** (ADR-0013) resolves the record-level rule, `owner`
+  included, and 404s on denial. A snapshot is a whole record, so it also passes
+  the field-level read mask — otherwise history would expose a field the live
+  read hides.
+- **The media byte path** runs the `_media` rules, covering `/__media/{id}/raw`
+  as well as the metadata (ADR-0011).
+
+The general principle: a new endpoint that returns records owes them the same
+rule the direct read applies, and the cheapest way to honour it is to route
+through an existing choke point rather than add a parallel check.
+
 ### 4. Default policy when `access:` is omitted
 
 To keep the zero-config path safe-by-default without being unusable:

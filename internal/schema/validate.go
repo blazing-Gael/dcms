@@ -95,6 +95,16 @@ func (s *SchemaDefinition) Validate() error {
 		cpath := "collections." + col.Name
 
 		switch {
+		case col.Name == MediaCollection:
+			// _media is engine-managed, but a schema may name it to attach an
+			// `access:` block — the only way to make the media library anything
+			// other than the default public-read (ADR-0011/0016). Its shape and
+			// behaviour stay the engine's, so every other directive is refused
+			// rather than silently dropped (ADR-0001).
+			if len(col.Fields) > 0 || len(col.Indexes) > 0 || col.Timestamps ||
+				col.Publishing || col.SoftDelete || col.Revisions || col.Events {
+				add("%s: the media library is engine-managed — it accepts an `access:` block only", cpath)
+			}
 		case reservedCollections[col.Name]:
 			add("%s: %q is a reserved collection name", cpath, col.Name)
 		case !nameRe.MatchString(col.Name):

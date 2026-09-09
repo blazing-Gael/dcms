@@ -8,7 +8,40 @@ While on **0.x**, minor versions may include breaking changes.
 
 ## [Unreleased]
 
+### Security
+- **A collection's read rule now holds on every path that returns its records.**
+  Four routes returned records without consulting `access:`, so a rule enforced
+  on `GET /{collection}/{id}` could be walked around. All four are closed, and
+  each is covered by a regression test:
+  - **Relation expansion.** `?expand=` checked lifecycle visibility but not the
+    target collection's read rule, so an anonymous caller reading a public record
+    could inline a related record from a role-gated collection, and an inverse
+    (has-many) expand could return another user's `owner`-scoped rows. Expansion
+    is now a read of the target collection: an unreadable belongs-to stays a bare
+    id and unreadable rows drop out of an expanded list, so expansion can never
+    be used to probe for records. This covers all of belongs-to (single and
+    batched), many-to-many, inverse edges, and the richtext reference manifest.
+  - **Revision history.** `GET /{collection}/{id}/revisions[/{version}]` used a
+    collection-scope check that treated `owner` as satisfied without comparing
+    the record's owner, so any authenticated user could read another user's
+    snapshots in full. History now resolves the same record-level rule as a
+    direct read, and a denial is a 404.
+  - **Revision snapshots** were returned raw, bypassing field-level read masking:
+    a field hidden on a live read was visible in that record's history. Snapshots
+    now pass the same mask.
+  - **The media byte path had no authorization at all.** Every `/__media` route
+    skipped `access:` entirely, so with auth enabled an anonymous caller could
+    upload, list, download bytes, and delete. Media now runs the same rules as
+    any collection, against `_media`.
+
 ### Added
+- **Configurable media access.** A schema may name `_media` in `collections:`
+  solely to give it an `access:` block — the way to make the media library
+  private. Its shape stays engine-managed, so fields, indexes and other
+  directives on it are refused rather than silently dropped. With nothing
+  declared the engine default applies: **public read, authenticated write**, so
+  serving an image still needs no credential. The read rule covers
+  `/__media/{id}/raw`, not just the metadata. See `docs/SCHEMA_SPEC.md`.
 - **Ownership by relation — `owner_field` access rule (issue #7).** An `access:`
   rule can now scope to a named relation instead of `created_by`, so a row that
   **belongs to** a user who did not create it is still reachable:
