@@ -7,6 +7,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/blazing-Gael/dcms/internal/blob"
@@ -376,6 +377,10 @@ func TestMedia_WritesRequireAuthentication(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("anonymous raw read: got %d, want 200", resp.StatusCode)
 	}
+	// A world-readable library keeps public caching, so a CDN can serve the bytes.
+	if cc := resp.Header.Get("Cache-Control"); !strings.Contains(cc, "public") {
+		t.Errorf("public media raw should be publicly cacheable, Cache-Control = %q", cc)
+	}
 }
 
 const privateMediaSchema = `
@@ -430,8 +435,10 @@ func TestMedia_ReadRuleIsConfigurable(t *testing.T) {
 		}
 	}
 
-	// The admin still gets the bytes.
-	st, body = func() (int, []byte) {
+	// The admin still gets the bytes — but a gated library's bytes must never be
+	// stored by a shared cache, or a later unauthorized caller could be served a
+	// cache hit past the read rule.
+	st, body, cache := func() (int, []byte, string) {
 		req, _ := http.NewRequest(http.MethodGet, srv.URL+"/__media/"+id+"/raw", nil)
 		req.Header.Set("Authorization", "Bearer "+boss)
 		resp, err := http.DefaultClient.Do(req)
@@ -440,9 +447,124 @@ func TestMedia_ReadRuleIsConfigurable(t *testing.T) {
 		}
 		defer resp.Body.Close()
 		b, _ := io.ReadAll(resp.Body)
-		return resp.StatusCode, b
+		return resp.StatusCode, b, resp.Header.Get("Cache-Control")
 	}()
 	if st != http.StatusOK || string(body) != "CONFIDENTIAL" {
 		t.Fatalf("admin raw read: got %d %q", st, body)
+	}
+	if !strings.Contains(cache, "no-store") {
+		t.Errorf("gated media raw must not be shared-cacheable, Cache-Control = %q", cache)
+	}
+}
+
+const richtextAuthzSchema = `
+version: "1"
+auth:
+  roles:
+    admin: { label: Administrator }
+  session:
+    ttl: 1h
+collections:
+  people:
+    fields:
+      name: { type: string, required: true }
+    access:
+      read:   [admin]
+      create: [admin]
+  articles:
+    fields:
+      title: { type: string, required: true }
+      body:  { type: richtext, blocks: [reference], marks: [reference] }
+    access:
+      read:   public
+      create: [admin]
+`
+
+// The richtext reference manifest is the fourth record-returning path. A
+// reference into a role-gated collection must not resolve into `included` for a
+// caller who may not read that collection — otherwise ?expand=body leaks a
+// record the direct read withholds. The AST stays id-only either way.
+func TestExpand_RichTextManifestRespectsTargetReadRule(t *testing.T) {
+	srv, db := newServerWith(t, richtextAuthzSchema)
+	seedUser(t, db, "boss@x.com", "pw-boss-1234", "admin")
+	boss := login(t, srv.URL, "boss@x.com", "pw-boss-1234")
+	base := srv.URL + "/api/v1"
+
+	st, body := doAs(t, http.MethodPost, base+"/people", boss, `{"name":"Deep Throat"}`)
+	if st != http.StatusCreated {
+		t.Fatalf("create person: %d %v", st, body)
+	}
+	personID := dataObj(t, body)["id"].(string)
+
+	art := jsonBody(t, map[string]any{"title": "Leak", "body": []any{refBlock("people", personID)}})
+	st, body = doAs(t, http.MethodPost, base+"/articles", boss, art)
+	if st != http.StatusCreated {
+		t.Fatalf("create article: %d %v", st, body)
+	}
+	articleID := dataObj(t, body)["id"].(string)
+
+	// Anonymous: the article is public, but the referenced person is admin-only, so
+	// the manifest must not carry it — and the AST node stays a bare reference.
+	_, anon := do(t, http.MethodGet, base+"/articles/"+articleID+"?expand=body", "")
+	if inc := included(anon); inc["people:"+personID] != nil {
+		t.Fatalf("anonymous caller got an admin-only record through the richtext manifest: %v", inc)
+	}
+	bodyIsPure(t, dataObj(t, anon))
+
+	// The admin still resolves the reference into the manifest.
+	_, adminResp := doAs(t, http.MethodGet, base+"/articles/"+articleID+"?expand=body", boss, "")
+	entity, ok := included(adminResp)["people:"+personID].(map[string]any)
+	if !ok || entity["name"] != "Deep Throat" {
+		t.Fatalf("admin should resolve the reference, got %v", included(adminResp))
+	}
+}
+
+const userRelationSchema = `
+version: "1"
+auth:
+  roles:
+    admin: { label: Administrator }
+  session:
+    ttl: 1h
+collections:
+  posts:
+    fields:
+      title:  { type: string, required: true }
+      author: { type: relation, target: _users }
+    access:
+      read:   public
+      create: [admin]
+`
+
+// A relation to the built-in _users table (owner_field, a byline — issue #7) may
+// be expanded, but the user's login email and password hash must never fall out
+// of ?expand=. Ownership is matched by id, so the id is what an expanded user
+// carries; email is served only through the self endpoints (/auth/me, login).
+func TestExpand_UsersRelationRedactsEmailAndHash(t *testing.T) {
+	srv, db := newServerWith(t, userRelationSchema)
+	authorID := seedUserID(t, db, "boss@x.com", "pw-boss-1234", "admin")
+	boss := login(t, srv.URL, "boss@x.com", "pw-boss-1234")
+	base := srv.URL + "/api/v1"
+
+	st, body := doAs(t, http.MethodPost, base+"/posts", boss, `{"title":"Hi","author":"`+authorID+`"}`)
+	if st != http.StatusCreated {
+		t.Fatalf("create post: %d %v", st, body)
+	}
+	postID := dataObj(t, body)["id"].(string)
+
+	// Even an admin expanding the author gets id but neither email nor hash.
+	_, resp := doAs(t, http.MethodGet, base+"/posts/"+postID+"?expand=author", boss, "")
+	author, ok := dataObj(t, resp)["author"].(map[string]any)
+	if !ok {
+		t.Fatalf("author should expand to an object, got %#v", dataObj(t, resp)["author"])
+	}
+	if author["id"] != authorID {
+		t.Errorf("expanded author should carry its id, got %#v", author["id"])
+	}
+	if _, leaked := author["email"]; leaked {
+		t.Errorf("expanded _users relation leaked the login email: %#v", author)
+	}
+	if _, leaked := author["password_hash"]; leaked {
+		t.Errorf("expanded _users relation leaked the password hash: %#v", author)
 	}
 }

@@ -32,7 +32,15 @@ While on **0.x**, minor versions may include breaking changes.
   - **The media byte path had no authorization at all.** Every `/__media` route
     skipped `access:` entirely, so with auth enabled an anonymous caller could
     upload, list, download bytes, and delete. Media now runs the same rules as
-    any collection, against `_media`.
+    any collection, against `_media`. A **gated** library's `/__media/{id}/raw`
+    is also served `Cache-Control: private, no-store` and proxied through the
+    gateway rather than 302-redirected to a backend's public object URL, so its
+    bytes cannot leak via a shared cache or a shared link.
+  - **A relation to `_users` no longer leaks the login email on expansion.** The
+    `owner_field`/byline relation to the built-in users table (issue #7) is
+    matched by id; expanding or referencing it now redacts the email as well as
+    the password hash at the serialization choke point. Self-service email
+    (`/auth/me`, login) is unaffected — it does not go through that path.
 
 ### Added
 - **Configurable media access.** A schema may name `_media` in `collections:`

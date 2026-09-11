@@ -40,6 +40,20 @@ func (s *Server) mediaNotFound(w http.ResponseWriter) {
 	writeError(w, http.StatusNotFound, apiError{Code: "NOT_FOUND", Message: "record not found"})
 }
 
+// mediaReadGated reports whether the media read rule withholds bytes from an
+// anonymous caller — i.e. the library is not world-readable. When it is gated,
+// the raw byte path must not be publicly cacheable (a shared cache/CDN could
+// re-serve the bytes to an unauthorized caller) and must not 302 to a public
+// object URL that bypasses the gateway entirely. It reflects the rule, not the
+// current caller: the question is whether these bytes may sit in a shared cache.
+func (s *Server) mediaReadGated() bool {
+	if !s.authEnabled() {
+		return false
+	}
+	d, _ := evalRule(s.collections[schema.MediaCollection].AccessRule(schema.ActionRead), principal{})
+	return d != allow
+}
+
 func (s *Server) mediaUnavailable(w http.ResponseWriter) {
 	writeError(w, http.StatusServiceUnavailable, apiError{
 		Code: "UNAVAILABLE", Message: "media storage is not configured",
@@ -161,12 +175,20 @@ func (s *Server) coerceExpandedList(ctx context.Context, collection string, recs
 }
 
 // redactSecrets strips fields that must never reach a client from a serialized
-// record. Today that is _users.password_hash — the same defense-in-depth pattern
-// as media's storage_key (ADR-0016): applied at every serialization choke point,
-// so no expansion, manifest, or list path can leak it.
+// record — the same defense-in-depth pattern as media's storage_key (ADR-0016):
+// applied at every serialization choke point, so no expansion, manifest, or list
+// path can leak them.
+//
+// For _users this is the password hash and the login email. A _users record is
+// never a routable resource; it reaches a client only when a relation to _users
+// (owner_field, an author byline — issue #7) is expanded or referenced. Ownership
+// there is matched by id, so the id is all a caller needs — the email is a login
+// identifier and PII that must not fall out of an ?expand=. Self-service email
+// (/auth/me, login) goes through publicUser, not this path, so it is unaffected.
 func redactSecrets(collection string, rec store.Record) {
 	if collection == schema.UsersCollection {
 		delete(rec, schema.UserPasswordHash)
+		delete(rec, schema.UserEmail)
 	}
 }
 
@@ -336,9 +358,15 @@ func (s *Server) handleMediaRaw(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, apiError{Code: "NOT_FOUND", Message: "no file for this media record"})
 		return
 	}
-	if u := s.opts.Blob.URL(key); u != "" {
-		http.Redirect(w, r, u, http.StatusFound)
-		return
+	// A gated library must serve its own bytes: redirecting to a backend's public
+	// object URL would hand an authorized caller a link anyone can follow, past the
+	// read rule. Only a world-readable library takes the direct-URL fast path.
+	gated := s.mediaReadGated()
+	if !gated {
+		if u := s.opts.Blob.URL(key); u != "" {
+			http.Redirect(w, r, u, http.StatusFound)
+			return
+		}
 	}
 	body, err := s.opts.Blob.Get(r.Context(), key)
 	if errors.Is(err, blob.ErrNotFound) {
@@ -360,9 +388,14 @@ func (s *Server) handleMediaRaw(w http.ResponseWriter, r *http.Request) {
 	if ck, _ := rec[schema.MediaChecksum].(string); ck != "" {
 		w.Header().Set("ETag", `"`+ck+`"`)
 	}
-	if r.URL.Query().Get("v") != "" {
+	switch {
+	case gated:
+		// Authorized-only bytes: never store them in a shared cache, or the next
+		// unauthorized caller could be served a cache hit past the read rule.
+		w.Header().Set("Cache-Control", "private, no-store")
+	case r.URL.Query().Get("v") != "":
 		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
-	} else {
+	default:
 		w.Header().Set("Cache-Control", "public, max-age=300")
 	}
 	filename, _ := rec[schema.MediaFilename].(string)
