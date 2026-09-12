@@ -153,10 +153,14 @@ auth:
   # the reset link to the console — handy for local testing. SMTP credentials are
   # SECRETS and env-only: DCMS_SMTP_USERNAME / DCMS_SMTP_PASSWORD (host/from may
   # also come from DCMS_SMTP_HOST / DCMS_SMTP_FROM). STARTTLS (port 587).
+  # `from` may carry a display name — "Brand <no-reply@…>" — which the reader
+  # sees; the bare address is used for the SMTP envelope. On startup DCMS runs a
+  # connection pre-flight and logs a warning if the mail path is unreachable or
+  # the credentials are wrong, so a broken config is visible immediately.
   # smtp:
   #   host: smtp.example.com
   #   port: 587
-  #   from: "no-reply@blog.example"
+  #   from: "Blog <no-reply@blog.example>"
 
 events:
   # Change events (ADR-0021, M-B). A collection opts in with `events: true` in the

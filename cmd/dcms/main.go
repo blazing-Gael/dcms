@@ -241,6 +241,20 @@ func newDevCmd() *cobra.Command {
 			if cfg.Auth.SMTP.Host != "" {
 				notifier = gateway.NewSMTPNotifier(cfg.Auth.SMTP.Host, cfg.Auth.SMTP.Port,
 					cfg.Auth.SMTP.From, cfg.Auth.SMTP.Username, cfg.Auth.SMTP.Password)
+				// Pre-flight the mail path so a broken SMTP config (unreachable host,
+				// wrong port, bad credentials, TLS) surfaces at startup rather than only
+				// when a user's reset email silently fails to arrive. Non-fatal: a mail
+				// server briefly unreachable at boot must not stop the whole backend.
+				if v, ok := notifier.(gateway.ConnectionVerifier); ok {
+					vctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+					if err := v.VerifyConnection(vctx); err != nil {
+						logger.Warn("SMTP pre-flight failed — password-reset emails will not send until this is resolved",
+							"host", cfg.Auth.SMTP.Host, "port", cfg.Auth.SMTP.Port, "err", err)
+					} else {
+						logger.Info("SMTP connection verified", "host", cfg.Auth.SMTP.Host)
+					}
+					cancel()
+				}
 			}
 
 			// Webhook delivery (ADR-0021 phase 2). Each endpoint needs a resolved

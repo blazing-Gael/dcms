@@ -100,11 +100,20 @@ func (s *Server) attemptNotification(ctx context.Context, n store.Record) {
 		schema.NotificationAttempts:  attempts,
 		schema.NotificationLastError: reason,
 	}
+	kind := stringOf(n[schema.NotificationKind])
 	if attempts >= notificationMaxAttempts {
 		data[schema.NotificationStatus] = schema.NotificationDead
+		// A dead-lettered notification is a real operational problem: mail has been
+		// failing long enough to exhaust every retry. Log at Error so a broken mail
+		// path is visible without reading the _notifications table. The recipient
+		// address and the (secret) link are deliberately omitted.
+		s.logger.Error("account notification dead-lettered — delivery is failing",
+			"id", id, "kind", kind, "attempts", attempts, "err", reason)
 	} else {
 		data[schema.NotificationStatus] = schema.NotificationFailed
 		data[schema.NotificationNextAt] = nowUTC().Add(deliveryBackoff(attempts)).Format(time.RFC3339)
+		s.logger.Warn("account notification delivery failed; will retry",
+			"id", id, "kind", kind, "attempts", attempts, "err", reason)
 	}
 	if _, uerr := s.db.Update(ctx, store.WriteInput{Collection: schema.NotificationsCollection, Data: data}); uerr != nil {
 		s.logger.Warn("notification update failed", "id", id, "err", uerr)

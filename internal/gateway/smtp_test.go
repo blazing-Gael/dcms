@@ -121,9 +121,10 @@ func TestSMTPNotifier_SendsWellFormedMessage(t *testing.T) {
 		if len(m.to) != 1 || m.to[0] != "user@example.com" {
 			t.Errorf("envelope rcpt = %v, want [user@example.com]", m.to)
 		}
-		// Headers and the reset link must be present in the DATA blob.
+		// Headers and the reset link must be present in the DATA blob. A bare
+		// address is serialized as <addr> in the From header.
 		for _, want := range []string{
-			"From: noreply@dcms.test",
+			"From: <noreply@dcms.test>",
 			"To: user@example.com",
 			"Subject: Reset your password",
 			"Content-Type: text/plain; charset=UTF-8",
@@ -135,6 +136,70 @@ func TestSMTPNotifier_SendsWellFormedMessage(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("timed out waiting for the SMTP server to receive the message")
+	}
+}
+
+// TestSMTPNotifier_DisplayNameFrom pins the brand-name fix: a configured
+// "Name <addr>" shows the display name in the From: header the reader sees, while
+// the SMTP envelope (MAIL FROM) carries only the bare addr-spec, as the protocol
+// requires.
+func TestSMTPNotifier_DisplayNameFrom(t *testing.T) {
+	addr, got := fakeSMTP(t)
+	host, port := splitHostPort(t, addr)
+
+	const configured = "Agrojatra <noreply@notifications.agrojatra.site>"
+	n := NewSMTPNotifier(host, port, configured, "", "")
+	if err := n.Notify(context.Background(), Notification{To: "u@example.com", Kind: "password_reset", Link: "https://x/reset?token=t"}); err != nil {
+		t.Fatalf("Notify: %v", err)
+	}
+
+	select {
+	case m := <-got:
+		// Envelope: bare address, no display name (a display name here is a protocol
+		// error some servers reject).
+		if m.from != "noreply@notifications.agrojatra.site" {
+			t.Errorf("envelope from = %q, want the bare addr-spec", m.from)
+		}
+		// Header: the reader sees the brand name.
+		if !strings.Contains(m.data, "From: \"Agrojatra\" <noreply@notifications.agrojatra.site>") {
+			t.Errorf("From header missing the display name:\n%s", m.data)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for the message")
+	}
+}
+
+func TestSplitFromAddress(t *testing.T) {
+	cases := []struct{ in, wantEnv, wantHdr string }{
+		{"Agrojatra <noreply@notifications.agrojatra.site>", "noreply@notifications.agrojatra.site", `"Agrojatra" <noreply@notifications.agrojatra.site>`},
+		{"noreply@example.com", "noreply@example.com", "<noreply@example.com>"},
+		{"not a valid address", "not a valid address", "not a valid address"}, // unparseable → verbatim
+	}
+	for _, c := range cases {
+		env, hdr := splitFromAddress(c.in)
+		if env != c.wantEnv || hdr != c.wantHdr {
+			t.Errorf("splitFromAddress(%q) = (%q, %q), want (%q, %q)", c.in, env, hdr, c.wantEnv, c.wantHdr)
+		}
+	}
+}
+
+// TestSMTPNotifier_VerifyConnection covers the startup pre-flight: it succeeds
+// against a live server and reports an error against a dead address, so a broken
+// mail path is caught at boot instead of only when a reset silently fails.
+func TestSMTPNotifier_VerifyConnection(t *testing.T) {
+	addr, _ := fakeSMTP(t)
+	host, port := splitHostPort(t, addr)
+
+	if err := NewSMTPNotifier(host, port, "noreply@x.test", "", "").(ConnectionVerifier).VerifyConnection(context.Background()); err != nil {
+		t.Fatalf("verify against a live server should succeed, got %v", err)
+	}
+
+	// A port nothing is listening on must surface as an error, not a false OK.
+	dead := NewSMTPNotifier("127.0.0.1", 1, "noreply@x.test", "", "").(ConnectionVerifier)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := dead.VerifyConnection(ctx); err == nil {
+		t.Fatal("verify against an unreachable server should fail")
 	}
 }
 

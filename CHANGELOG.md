@@ -56,6 +56,19 @@ While on **0.x**, minor versions may include breaking changes.
   collection (a collection that doesn't declare `events:` writes no rows and costs
   nothing). Signed webhooks on top of this log are the next phase.
 
+### Fixed
+- **Account emails can now show a sender name.** `auth.smtp.from` accepts a full
+  `Brand <no-reply@domain>` value: the display name is carried in the message's
+  `From:` header (what the reader sees), while the bare address is used for the
+  SMTP envelope as the protocol requires. A bare address keeps working unchanged.
+- **A broken mail path is no longer silent.** DCMS runs an SMTP connection
+  pre-flight at startup (dial + EHLO + STARTTLS + AUTH, no message sent) and logs
+  a warning when the mailer is unreachable or the credentials are wrong, and the
+  delivery worker now logs each failed attempt (and an error when a notification
+  is dead-lettered). `POST /auth/forgot` still returns 200 regardless, so it
+  reveals nothing about whether an address exists — but a mailer that has been
+  failing is now visible in the logs instead of only in the `_notifications` table.
+
 ## [0.1.0-beta.2] - 2026-09-04
 
 Install-channel fixes for the beta. The binaries and Docker image from beta.1 were
