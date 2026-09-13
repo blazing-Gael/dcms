@@ -18,6 +18,8 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -28,6 +30,7 @@ import (
 	"github.com/blazing-Gael/dcms/internal/config"
 	"github.com/blazing-Gael/dcms/internal/engine"
 	"github.com/blazing-Gael/dcms/internal/gateway"
+	"github.com/blazing-Gael/dcms/internal/store"
 )
 
 // version is overridden at build time via -ldflags "-X main.version=...".
@@ -57,6 +60,7 @@ func newRootCmd() *cobra.Command {
 		newCodegenCmd(),
 		newMigrateCmd(),
 		newAdminCmd(),
+		newTokenCmd(),
 		newVersionCmd(),
 	)
 	return root
@@ -577,6 +581,163 @@ func newAdminCreateCmd() *cobra.Command {
 	cmd.Flags().String("schema", "./dcms.schema.yaml", "path to the schema file")
 	cmd.Flags().String("db", "./dcms.db", "path to the SQLite database file")
 	return cmd
+}
+
+// newTokenCmd groups the long-lived machine-token commands (issue #8): mint,
+// list, and revoke API tokens for non-human callers (SSG builds, CI, webhook
+// receivers). Tokens authenticate as first-class principals with their own roles,
+// so every access: rule applies unchanged.
+func newTokenCmd() *cobra.Command {
+	tok := &cobra.Command{
+		Use:   "token",
+		Short: "Manage long-lived API tokens for machine callers",
+	}
+	tok.AddCommand(newTokenCreateCmd(), newTokenListCmd(), newTokenRevokeCmd())
+	return tok
+}
+
+// withStore opens the store for a token subcommand, ensuring the engine tables
+// exist (Apply) before use — the token collection is engine-managed.
+func withStore(cmd *cobra.Command, fn func(ctx context.Context, db store.Adapter) error) error {
+	cfg, err := resolveConfig(cmd)
+	if err != nil {
+		return err
+	}
+	if err := requireSQLite(cfg); err != nil {
+		return err
+	}
+	def, err := engine.LoadSchema(cfg.Schema)
+	if err != nil {
+		return err
+	}
+	db, err := engine.OpenStore(cfg.Database.Path)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	ctx := context.Background()
+	if err := engine.Apply(ctx, db, def); err != nil {
+		return err
+	}
+	return fn(ctx, db)
+}
+
+func newTokenCreateCmd() *cobra.Command {
+	var name, expires string
+	var roles []string
+	cmd := &cobra.Command{
+		Use:   "create",
+		Short: "Mint a token (the raw value is shown once); e.g. --name ci --role reader --expires 90d",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if name == "" {
+				return fmt.Errorf("--name is required")
+			}
+			d, err := parseExpiry(expires)
+			if err != nil {
+				return err
+			}
+			return withStore(cmd, func(ctx context.Context, db store.Adapter) error {
+				var expiresAt time.Time
+				if d > 0 {
+					expiresAt = time.Now().Add(d)
+				}
+				raw, rec, err := gateway.CreateAPIToken(ctx, db, name, roles, expiresAt)
+				if err != nil {
+					return err
+				}
+				fmt.Printf("created token %q (id %v)\n", name, rec["id"])
+				if d > 0 {
+					fmt.Printf("expires in %s\n", d)
+				}
+				fmt.Println("\nsave this now — it is not shown again:")
+				fmt.Println(raw)
+				return nil
+			})
+		},
+	}
+	cmd.Flags().StringVar(&name, "name", "", "human label for the token (e.g. ci, ssg-build)")
+	cmd.Flags().StringSliceVar(&roles, "role", nil, "role to grant the token (repeatable)")
+	cmd.Flags().StringVar(&expires, "expires", "", "lifetime, e.g. 90d or 720h; empty = never")
+	cmd.Flags().String("schema", "./dcms.schema.yaml", "path to the schema file")
+	cmd.Flags().String("db", "./dcms.db", "path to the SQLite database file")
+	return cmd
+}
+
+func newTokenListCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "list",
+		Short: "List API tokens (metadata only; raw values are unrecoverable)",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return withStore(cmd, func(ctx context.Context, db store.Adapter) error {
+				toks, err := gateway.ListAPITokens(ctx, db)
+				if err != nil {
+					return err
+				}
+				if len(toks) == 0 {
+					fmt.Println("no API tokens")
+					return nil
+				}
+				for _, tk := range toks {
+					fmt.Printf("%v\t%v\troles=%v\texpires=%v\tlast_used=%v\n",
+						tk["id"], tk["name"], tk["roles"], orDash(tk["expires_at"]), orDash(tk["last_used_at"]))
+				}
+				return nil
+			})
+		},
+	}
+	cmd.Flags().String("schema", "./dcms.schema.yaml", "path to the schema file")
+	cmd.Flags().String("db", "./dcms.db", "path to the SQLite database file")
+	return cmd
+}
+
+func newTokenRevokeCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "revoke <id>",
+		Short: "Revoke a token by id (from `token list`); it stops working immediately",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return withStore(cmd, func(ctx context.Context, db store.Adapter) error {
+				if err := gateway.RevokeAPIToken(ctx, db, args[0]); err != nil {
+					return err
+				}
+				fmt.Printf("revoked token %s\n", args[0])
+				return nil
+			})
+		},
+	}
+	cmd.Flags().String("schema", "./dcms.schema.yaml", "path to the schema file")
+	cmd.Flags().String("db", "./dcms.db", "path to the SQLite database file")
+	return cmd
+}
+
+// parseExpiry accepts an empty string (never expires), a "<n>d" day count, or any
+// Go duration (e.g. 720h, 30m).
+func parseExpiry(s string) (time.Duration, error) {
+	if s == "" {
+		return 0, nil
+	}
+	if days, ok := strings.CutSuffix(s, "d"); ok {
+		n, err := strconv.Atoi(days)
+		if err != nil || n < 0 {
+			return 0, fmt.Errorf("invalid --expires %q (want e.g. 90d or 720h)", s)
+		}
+		return time.Duration(n) * 24 * time.Hour, nil
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil || d < 0 {
+		return 0, fmt.Errorf("invalid --expires %q (want e.g. 90d or 720h)", s)
+	}
+	return d, nil
+}
+
+func orDash(v any) any {
+	if s, ok := v.(string); ok && s != "" {
+		return s
+	}
+	if v == nil {
+		return "-"
+	}
+	return v
 }
 
 func newVersionCmd() *cobra.Command {
