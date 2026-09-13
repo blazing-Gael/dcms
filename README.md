@@ -122,6 +122,16 @@ your model.
 dcms codegen --lang ts --out ./types
 ```
 
+**In production, use `dcms serve`, not `dcms dev`.** `dev` migrates on start and
+turns on the strict response-validation guardrail (great while iterating, a cost
+on the hot path). `serve` does neither: run migrations as their own deploy step,
+then serve. It refuses to start if the database has pending migrations.
+
+```bash
+dcms migrate              # apply schema changes (a deliberate, orderable step)
+dcms serve                # run the server; guardrails off, no auto-migrate
+```
+
 ---
 
 ## Configuration

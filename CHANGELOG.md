@@ -43,6 +43,13 @@ While on **0.x**, minor versions may include breaking changes.
     (`/auth/me`, login) is unaffected — it does not go through that path.
 
 ### Added
+- **`dcms serve` — a production run command (issue #12).** `dcms dev` migrates on
+  start and turns the strict response-validation guardrail on; a deployment that
+  runs `dev` inherited both silently. `serve` is the production entry point: it
+  does **not** auto-migrate (run `dcms migrate` as its own deploy step) and leaves
+  response validation off unless the config enables it. It refuses to start if the
+  database has pending migrations, so a stale schema is caught at boot rather than
+  at query time. `dcms dev` is unchanged.
 - **Configurable media access.** A schema may name `_media` in `collections:`
   solely to give it an `access:` block — the way to make the media library
   private. Its shape stays engine-managed, so fields, indexes and other

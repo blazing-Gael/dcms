@@ -52,6 +52,7 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(
 		newInitCmd(),
 		newDevCmd(),
+		newServeCmd(),
 		newValidateCmd(),
 		newCodegenCmd(),
 		newMigrateCmd(),
@@ -114,208 +115,255 @@ func requireSQLite(cfg config.Config) error {
 	return nil
 }
 
+// serverMode captures the two ways the HTTP server is started. `dcms dev` and
+// `dcms serve` share one code path (runServer) and differ only in these defaults:
+// dev migrates on start and turns the response-validation guardrail on; serve
+// assumes an already-migrated database (migrate is a separate deploy step) and
+// leaves the guardrail off, so a deployment does not silently pay dev defaults.
+type serverMode struct {
+	name            string // banner label ("dev" / "serve")
+	migrate         bool   // run pending migrations on start
+	validateDefault bool   // ValidateResponses when the config leaves it unset
+}
+
 func newDevCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "dev",
-		Short: "Parse the schema, run migrations, and start the dev HTTP server",
+		Short: "Migrate, then start the HTTP server with dev guardrails on",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, err := resolveConfig(cmd)
-			if err != nil {
-				return err
-			}
-			if err := requireSQLite(cfg); err != nil {
-				return err
-			}
-			if _, statErr := os.Stat(cfg.Schema); os.IsNotExist(statErr) {
-				return fmt.Errorf("no schema at %s — run `dcms init` here to scaffold a project first", cfg.Schema)
-			}
-			def, err := engine.LoadSchema(cfg.Schema)
-			if err != nil {
-				return err
-			}
-			db, err := engine.OpenStore(cfg.Database.Path)
-			if err != nil {
-				return err
-			}
-			defer db.Close()
-
-			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-			defer stop()
-
-			if err := engine.Apply(ctx, db, def); err != nil {
-				return err
-			}
-
-			// Seed the first admin from env when the user table is empty (ADR-0016),
-			// so a fresh backend is reachable without a chicken-and-egg lockout.
-			logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
-			if err := gateway.EnsureSeedAdmin(ctx, db, cfg.Auth.AdminEmail, cfg.Auth.AdminPassword, logger); err != nil {
-				return err
-			}
-
-			// Strict response validation defaults ON for `dev` (the guardrail is
-			// most useful while iterating) unless the config sets it explicitly.
-			validateResponses := true
-			if cfg.Server.ValidateResponses != nil {
-				validateResponses = *cfg.Server.ValidateResponses
-			}
-
-			bs, err := blob.New(blob.Config{
-				Driver:         cfg.Media.Driver,
-				Dir:            cfg.Media.Dir,
-				Endpoint:       cfg.Media.Endpoint,
-				Region:         cfg.Media.Region,
-				Bucket:         cfg.Media.Bucket,
-				AccessKey:      cfg.Media.AccessKey,
-				SecretKey:      cfg.Media.SecretKey,
-				UseSSL:         cfg.Media.UseSSL,
-				ForcePathStyle: cfg.Media.ForcePathStyle,
-				PublicBaseURL:  cfg.Media.PublicBaseURL,
-			})
-			if err != nil {
-				return err
-			}
-
-			// Rate limiting defaults ON (a production-hardening default); an
-			// explicit `enabled: false` (or DCMS_RATE_LIMIT_ENABLED=false) turns it
-			// off by leaving the option nil. Zero per-tier values take engine
-			// defaults inside the gateway.
-			var rateLimit *gateway.RateLimitOptions
-			rlEnabled := cfg.Server.RateLimit.Enabled == nil || *cfg.Server.RateLimit.Enabled
-			if rlEnabled {
-				rateLimit = &gateway.RateLimitOptions{
-					APIPerMinute:  cfg.Server.RateLimit.APIPerMinute,
-					APIBurst:      cfg.Server.RateLimit.APIBurst,
-					AuthPerMinute: cfg.Server.RateLimit.AuthPerMinute,
-					AuthBurst:     cfg.Server.RateLimit.AuthBurst,
-				}
-			}
-
-			// CORS is off unless origins are configured (same-origin only).
-			var cors *gateway.CORSOptions
-			if len(cfg.Server.CORS.AllowedOrigins) > 0 {
-				cors = &gateway.CORSOptions{
-					AllowedOrigins:   cfg.Server.CORS.AllowedOrigins,
-					AllowedMethods:   cfg.Server.CORS.AllowedMethods,
-					AllowedHeaders:   cfg.Server.CORS.AllowedHeaders,
-					ExposedHeaders:   cfg.Server.CORS.ExposedHeaders,
-					AllowCredentials: cfg.Server.CORS.AllowCredentials,
-					MaxAgeSeconds:    cfg.Server.CORS.MaxAgeSeconds,
-				}
-			}
-
-			// Idempotency defaults ON (inert until a client sends the header); an
-			// explicit `enabled: false` leaves the option nil to disable it.
-			var idempotency *gateway.IdempotencyOptions
-			if cfg.Server.Idempotency.Enabled == nil || *cfg.Server.Idempotency.Enabled {
-				idempotency = &gateway.IdempotencyOptions{
-					TTL: time.Duration(cfg.Server.Idempotency.TTLHours) * time.Hour,
-				}
-			}
-
-			// Self-registration (ADR-0019): off unless enabled. Default roles must
-			// be declared and must not be admin roles — a self-registrant can never
-			// self-grant administration.
-			adminRoles := cfg.Auth.AdminRoles
-			if len(adminRoles) == 0 {
-				adminRoles = []string{"admin"}
-			}
-			var registration *gateway.RegistrationOptions
-			if cfg.Auth.Registration.Enabled {
-				for _, role := range cfg.Auth.Registration.DefaultRoles {
-					if !def.HasRole(role) {
-						return fmt.Errorf("registration default_role %q is not a declared role", role)
-					}
-					for _, ar := range adminRoles {
-						if role == ar {
-							return fmt.Errorf("registration default_role %q may not be an admin role", role)
-						}
-					}
-				}
-				registration = &gateway.RegistrationOptions{DefaultRoles: cfg.Auth.Registration.DefaultRoles}
-			}
-
-			// Mailer for account emails (ADR-0019). SMTP host set ⇒ send via SMTP;
-			// otherwise the gateway falls back to a dev-log notifier.
-			var notifier gateway.Notifier
-			if cfg.Auth.SMTP.Host != "" {
-				notifier = gateway.NewSMTPNotifier(cfg.Auth.SMTP.Host, cfg.Auth.SMTP.Port,
-					cfg.Auth.SMTP.From, cfg.Auth.SMTP.Username, cfg.Auth.SMTP.Password)
-				// Pre-flight the mail path so a broken SMTP config (unreachable host,
-				// wrong port, bad credentials, TLS) surfaces at startup rather than only
-				// when a user's reset email silently fails to arrive. Non-fatal: a mail
-				// server briefly unreachable at boot must not stop the whole backend.
-				if v, ok := notifier.(gateway.ConnectionVerifier); ok {
-					vctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-					if err := v.VerifyConnection(vctx); err != nil {
-						logger.Warn("SMTP pre-flight failed — password-reset emails will not send until this is resolved",
-							"host", cfg.Auth.SMTP.Host, "port", cfg.Auth.SMTP.Port, "err", err)
-					} else {
-						logger.Info("SMTP connection verified", "host", cfg.Auth.SMTP.Host)
-					}
-					cancel()
-				}
-			}
-
-			// Webhook delivery (ADR-0021 phase 2). Each endpoint needs a resolved
-			// HMAC secret; a configured endpoint without one is a startup error so a
-			// misconfigured secret_env fails loudly rather than shipping unsigned.
-			var webhooks *gateway.WebhookOptions
-			if len(cfg.Events.Webhooks) > 0 {
-				eps := make([]gateway.WebhookEndpoint, 0, len(cfg.Events.Webhooks))
-				for _, wh := range cfg.Events.Webhooks {
-					if wh.Name == "" || wh.URL == "" {
-						return fmt.Errorf("webhook: name and url are required")
-					}
-					if wh.Secret == "" {
-						return fmt.Errorf("webhook %q: secret is empty (set secret_env to an environment variable holding the HMAC secret)", wh.Name)
-					}
-					eps = append(eps, gateway.WebhookEndpoint{
-						Name: wh.Name, URL: wh.URL, Secret: wh.Secret,
-						Events: wh.Events, Collections: wh.Collections, MaxAttempts: wh.MaxAttempts,
-					})
-				}
-				webhooks = &gateway.WebhookOptions{
-					Endpoints:    eps,
-					PollInterval: time.Duration(cfg.Events.WebhookPollSeconds) * time.Second,
-				}
-			}
-
-			tlsCfg := engine.TLSConfig{CertFile: cfg.Server.TLS.CertFile, KeyFile: cfg.Server.TLS.KeyFile}
-			scheme := "http"
-			if tlsCfg.CertFile != "" && tlsCfg.KeyFile != "" {
-				scheme = "https"
-			}
-
-			fmt.Printf("dcms dev — %d collection(s) from %s\n", len(def.Collections), cfg.Schema)
-			fmt.Printf("listening on %s://localhost:%d  (Ctrl+C to stop)\n", scheme, cfg.Server.Port)
-			return engine.Serve(ctx, def, db, fmt.Sprintf(":%d", cfg.Server.Port), logger, gateway.Options{
-				ValidateResponses:   validateResponses,
-				Blob:                bs,
-				MaxUploadBytes:      cfg.Media.MaxUploadBytes,
-				AllowedContentTypes: cfg.Media.AllowedContentTypes,
-				PreviewToken:        cfg.Content.PreviewToken,
-				Authenticator:       gateway.NewSessionAuthenticator(db),
-				MaxBodyBytes:        cfg.Server.MaxBodyBytes,
-				RequestTimeout:      time.Duration(cfg.Server.RequestTimeoutSeconds) * time.Second,
-				RateLimit:           rateLimit,
-				Idempotency:         idempotency,
-				TrustProxy:          cfg.Server.TrustProxy,
-				CORS:                cors,
-				AdminRoles:          adminRoles,
-				Registration:        registration,
-				PasswordMinLength:   cfg.Auth.Password.MinLength,
-				Notifier:            notifier,
-				ResetLinkBase:       cfg.Auth.Reset.LinkBase,
-				ResetTokenTTL:       time.Duration(cfg.Auth.Reset.TTLMinutes) * time.Minute,
-				Webhooks:            webhooks,
-			}, tlsCfg)
+			return runServer(cmd, serverMode{name: "dev", migrate: true, validateDefault: true})
 		},
 	}
 	cmd.Flags().String("schema", "./dcms.schema.yaml", "path to the schema file")
 	cmd.Flags().Int("port", 3000, "HTTP port to listen on")
 	cmd.Flags().String("db", "./dcms.db", "path to the SQLite database file")
 	return cmd
+}
+
+func newServeCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "serve",
+		Short: "Run the HTTP server for production (no auto-migrate; guardrails off)",
+		Long: "Run the HTTP server for a deployment. Unlike `dcms dev`, it does not run\n" +
+			"migrations (run `dcms migrate` as a separate deploy step) and leaves strict\n" +
+			"response validation off unless the config enables it. Refuses to start if the\n" +
+			"database has pending migrations.",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runServer(cmd, serverMode{name: "serve", migrate: false, validateDefault: false})
+		},
+	}
+	cmd.Flags().String("schema", "./dcms.schema.yaml", "path to the schema file")
+	cmd.Flags().Int("port", 8080, "HTTP port to listen on")
+	cmd.Flags().String("db", "./dcms.db", "path to the SQLite database file")
+	return cmd
+}
+
+// runServer is the shared body of `dev` and `serve`; serverMode supplies the two
+// differing defaults.
+func runServer(cmd *cobra.Command, mode serverMode) error {
+	cfg, err := resolveConfig(cmd)
+	if err != nil {
+		return err
+	}
+	if err := requireSQLite(cfg); err != nil {
+		return err
+	}
+	if _, statErr := os.Stat(cfg.Schema); os.IsNotExist(statErr) {
+		return fmt.Errorf("no schema at %s — run `dcms init` here to scaffold a project first", cfg.Schema)
+	}
+	def, err := engine.LoadSchema(cfg.Schema)
+	if err != nil {
+		return err
+	}
+	db, err := engine.OpenStore(cfg.Database.Path)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	if mode.migrate {
+		if err := engine.Apply(ctx, db, def); err != nil {
+			return err
+		}
+	} else {
+		// serve treats migration as a separate deploy step. Refuse to start on
+		// drift rather than fail later at query time against a stale schema.
+		pending, err := engine.Plan(ctx, db, def)
+		if err != nil {
+			return err
+		}
+		if len(pending) > 0 {
+			return fmt.Errorf("database has %d pending migration(s); run `dcms migrate` before `dcms serve`", len(pending))
+		}
+	}
+
+	// Seed the first admin from env when the user table is empty (ADR-0016),
+	// so a fresh backend is reachable without a chicken-and-egg lockout.
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	if err := gateway.EnsureSeedAdmin(ctx, db, cfg.Auth.AdminEmail, cfg.Auth.AdminPassword, logger); err != nil {
+		return err
+	}
+
+	// Strict response validation follows the mode default (on for dev, off for
+	// serve) unless the config sets it explicitly.
+	validateResponses := mode.validateDefault
+	if cfg.Server.ValidateResponses != nil {
+		validateResponses = *cfg.Server.ValidateResponses
+	}
+
+	bs, err := blob.New(blob.Config{
+		Driver:         cfg.Media.Driver,
+		Dir:            cfg.Media.Dir,
+		Endpoint:       cfg.Media.Endpoint,
+		Region:         cfg.Media.Region,
+		Bucket:         cfg.Media.Bucket,
+		AccessKey:      cfg.Media.AccessKey,
+		SecretKey:      cfg.Media.SecretKey,
+		UseSSL:         cfg.Media.UseSSL,
+		ForcePathStyle: cfg.Media.ForcePathStyle,
+		PublicBaseURL:  cfg.Media.PublicBaseURL,
+	})
+	if err != nil {
+		return err
+	}
+
+	// Rate limiting defaults ON (a production-hardening default); an
+	// explicit `enabled: false` (or DCMS_RATE_LIMIT_ENABLED=false) turns it
+	// off by leaving the option nil. Zero per-tier values take engine
+	// defaults inside the gateway.
+	var rateLimit *gateway.RateLimitOptions
+	rlEnabled := cfg.Server.RateLimit.Enabled == nil || *cfg.Server.RateLimit.Enabled
+	if rlEnabled {
+		rateLimit = &gateway.RateLimitOptions{
+			APIPerMinute:  cfg.Server.RateLimit.APIPerMinute,
+			APIBurst:      cfg.Server.RateLimit.APIBurst,
+			AuthPerMinute: cfg.Server.RateLimit.AuthPerMinute,
+			AuthBurst:     cfg.Server.RateLimit.AuthBurst,
+		}
+	}
+
+	// CORS is off unless origins are configured (same-origin only).
+	var cors *gateway.CORSOptions
+	if len(cfg.Server.CORS.AllowedOrigins) > 0 {
+		cors = &gateway.CORSOptions{
+			AllowedOrigins:   cfg.Server.CORS.AllowedOrigins,
+			AllowedMethods:   cfg.Server.CORS.AllowedMethods,
+			AllowedHeaders:   cfg.Server.CORS.AllowedHeaders,
+			ExposedHeaders:   cfg.Server.CORS.ExposedHeaders,
+			AllowCredentials: cfg.Server.CORS.AllowCredentials,
+			MaxAgeSeconds:    cfg.Server.CORS.MaxAgeSeconds,
+		}
+	}
+
+	// Idempotency defaults ON (inert until a client sends the header); an
+	// explicit `enabled: false` leaves the option nil to disable it.
+	var idempotency *gateway.IdempotencyOptions
+	if cfg.Server.Idempotency.Enabled == nil || *cfg.Server.Idempotency.Enabled {
+		idempotency = &gateway.IdempotencyOptions{
+			TTL: time.Duration(cfg.Server.Idempotency.TTLHours) * time.Hour,
+		}
+	}
+
+	// Self-registration (ADR-0019): off unless enabled. Default roles must
+	// be declared and must not be admin roles — a self-registrant can never
+	// self-grant administration.
+	adminRoles := cfg.Auth.AdminRoles
+	if len(adminRoles) == 0 {
+		adminRoles = []string{"admin"}
+	}
+	var registration *gateway.RegistrationOptions
+	if cfg.Auth.Registration.Enabled {
+		for _, role := range cfg.Auth.Registration.DefaultRoles {
+			if !def.HasRole(role) {
+				return fmt.Errorf("registration default_role %q is not a declared role", role)
+			}
+			for _, ar := range adminRoles {
+				if role == ar {
+					return fmt.Errorf("registration default_role %q may not be an admin role", role)
+				}
+			}
+		}
+		registration = &gateway.RegistrationOptions{DefaultRoles: cfg.Auth.Registration.DefaultRoles}
+	}
+
+	// Mailer for account emails (ADR-0019). SMTP host set ⇒ send via SMTP;
+	// otherwise the gateway falls back to a dev-log notifier.
+	var notifier gateway.Notifier
+	if cfg.Auth.SMTP.Host != "" {
+		notifier = gateway.NewSMTPNotifier(cfg.Auth.SMTP.Host, cfg.Auth.SMTP.Port,
+			cfg.Auth.SMTP.From, cfg.Auth.SMTP.Username, cfg.Auth.SMTP.Password)
+		// Pre-flight the mail path so a broken SMTP config (unreachable host,
+		// wrong port, bad credentials, TLS) surfaces at startup rather than only
+		// when a user's reset email silently fails to arrive. Non-fatal: a mail
+		// server briefly unreachable at boot must not stop the whole backend.
+		if v, ok := notifier.(gateway.ConnectionVerifier); ok {
+			vctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+			if err := v.VerifyConnection(vctx); err != nil {
+				logger.Warn("SMTP pre-flight failed — password-reset emails will not send until this is resolved",
+					"host", cfg.Auth.SMTP.Host, "port", cfg.Auth.SMTP.Port, "err", err)
+			} else {
+				logger.Info("SMTP connection verified", "host", cfg.Auth.SMTP.Host)
+			}
+			cancel()
+		}
+	}
+
+	// Webhook delivery (ADR-0021 phase 2). Each endpoint needs a resolved
+	// HMAC secret; a configured endpoint without one is a startup error so a
+	// misconfigured secret_env fails loudly rather than shipping unsigned.
+	var webhooks *gateway.WebhookOptions
+	if len(cfg.Events.Webhooks) > 0 {
+		eps := make([]gateway.WebhookEndpoint, 0, len(cfg.Events.Webhooks))
+		for _, wh := range cfg.Events.Webhooks {
+			if wh.Name == "" || wh.URL == "" {
+				return fmt.Errorf("webhook: name and url are required")
+			}
+			if wh.Secret == "" {
+				return fmt.Errorf("webhook %q: secret is empty (set secret_env to an environment variable holding the HMAC secret)", wh.Name)
+			}
+			eps = append(eps, gateway.WebhookEndpoint{
+				Name: wh.Name, URL: wh.URL, Secret: wh.Secret,
+				Events: wh.Events, Collections: wh.Collections, MaxAttempts: wh.MaxAttempts,
+			})
+		}
+		webhooks = &gateway.WebhookOptions{
+			Endpoints:    eps,
+			PollInterval: time.Duration(cfg.Events.WebhookPollSeconds) * time.Second,
+		}
+	}
+
+	tlsCfg := engine.TLSConfig{CertFile: cfg.Server.TLS.CertFile, KeyFile: cfg.Server.TLS.KeyFile}
+	scheme := "http"
+	if tlsCfg.CertFile != "" && tlsCfg.KeyFile != "" {
+		scheme = "https"
+	}
+
+	fmt.Printf("dcms %s — %d collection(s) from %s\n", mode.name, len(def.Collections), cfg.Schema)
+	fmt.Printf("listening on %s://localhost:%d  (Ctrl+C to stop)\n", scheme, cfg.Server.Port)
+	return engine.Serve(ctx, def, db, fmt.Sprintf(":%d", cfg.Server.Port), logger, gateway.Options{
+		ValidateResponses:   validateResponses,
+		Blob:                bs,
+		MaxUploadBytes:      cfg.Media.MaxUploadBytes,
+		AllowedContentTypes: cfg.Media.AllowedContentTypes,
+		PreviewToken:        cfg.Content.PreviewToken,
+		Authenticator:       gateway.NewSessionAuthenticator(db),
+		MaxBodyBytes:        cfg.Server.MaxBodyBytes,
+		RequestTimeout:      time.Duration(cfg.Server.RequestTimeoutSeconds) * time.Second,
+		RateLimit:           rateLimit,
+		Idempotency:         idempotency,
+		TrustProxy:          cfg.Server.TrustProxy,
+		CORS:                cors,
+		AdminRoles:          adminRoles,
+		Registration:        registration,
+		PasswordMinLength:   cfg.Auth.Password.MinLength,
+		Notifier:            notifier,
+		ResetLinkBase:       cfg.Auth.Reset.LinkBase,
+		ResetTokenTTL:       time.Duration(cfg.Auth.Reset.TTLMinutes) * time.Minute,
+		Webhooks:            webhooks,
+	}, tlsCfg)
 }
 
 func newValidateCmd() *cobra.Command {
