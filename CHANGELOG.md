@@ -43,6 +43,17 @@ While on **0.x**, minor versions may include breaking changes.
     (`/auth/me`, login) is unaffected — it does not go through that path.
 
 ### Added
+- **Bring-your-own auth via `proxy_header` (issue #9).** `auth.provider` selects
+  the request authenticator without forking: `session` (default) is the built-in
+  opaque-session login; `proxy_header` trusts a verified-identity header set by a
+  front proxy (oauth2-proxy, Cloudflare Access, a JWT-validating gateway), so any
+  external identity source works with no Go — the `pkg/auth.Authenticator` seam
+  (ADR-0020) finally has a config-driven socket. Configure `auth.proxy_header`
+  (`user_header`, optional `roles_header`/`roles_separator`) or the matching
+  `DCMS_AUTH_*` env vars. **Safe only behind a proxy you control that strips those
+  headers from inbound client requests** (same trust model as `server.trust_proxy`);
+  DCMS logs a warning at startup when it is enabled. This is the prerequisite for
+  a generic OIDC verifier (ADR-0022).
 - **`dcms serve` — a production run command (issue #12).** `dcms dev` migrates on
   start and turns the strict response-validation guardrail on; a deployment that
   runs `dev` inherited both silently. `serve` is the production entry point: it

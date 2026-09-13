@@ -125,6 +125,20 @@ auth:
   # The bootstrap admin credentials are SECRETS and env-only (never in this file):
   #   DCMS_ADMIN_EMAIL, DCMS_ADMIN_PASSWORD  (seed the first admin on first run)
   #
+  # Authenticator (issue #9). "session" (default) uses the built-in opaque-session
+  # login. "proxy_header" trusts an identity a front proxy (oauth2-proxy,
+  # Cloudflare Access, a JWT-validating gateway) has already verified and passes
+  # as headers — no login flow, no Go. Env: DCMS_AUTH_PROVIDER,
+  # DCMS_AUTH_PROXY_USER_HEADER, DCMS_AUTH_PROXY_ROLES_HEADER.
+  # SECURITY: only safe behind a proxy you control that STRIPS these headers from
+  # inbound client requests and re-sets them itself — otherwise anyone can set
+  # user_header and impersonate anyone (same trust model as server.trust_proxy).
+  # provider: proxy_header
+  # proxy_header:
+  #   user_header: X-Auth-User        # → Principal.ID (required)
+  #   roles_header: X-Auth-Roles      # comma-separated roles (optional)
+  #   roles_separator: ","            # optional; defaults to ","
+  #
   # Roles allowed to use the /admin/users API. Default ["admin"].
   # Env override: DCMS_ADMIN_ROLES (comma-separated).
   # admin_roles: [admin]
