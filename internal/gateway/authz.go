@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"errors"
 	"net/http"
 
 	"github.com/blazing-Gael/dcms/internal/schema"
@@ -168,6 +169,14 @@ func (s *Server) authorizeRecordRead(ctx context.Context, collection, id string)
 	case ownerScope:
 		rec, err := s.db.FindOne(ctx, collection, id)
 		if err != nil {
+			// A genuinely missing record is a clean deny (the caller 404s). Any
+			// other error is an outage, not an authorization outcome: still fail
+			// closed, but log it so a broken store isn't misreported as "not found"
+			// with no trace.
+			if !errors.Is(err, store.ErrNotFound) {
+				s.logger.Warn("record-read authorization could not load the record",
+					"collection", collection, "err", err)
+			}
 			return false
 		}
 		owner, _ := rec[field].(string)

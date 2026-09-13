@@ -54,6 +54,14 @@ func (s *SchemaDefinition) OpenAPI() obj {
 		paths[p] = op
 	}
 
+	// Change feed + webhook delivery admin ops (ADR-0021), only when some
+	// collection emits events — otherwise these routes report an empty feed.
+	if s.AnyEvents() {
+		for p, op := range eventPaths(base) {
+			paths[p] = op
+		}
+	}
+
 	title := s.Meta.Name
 	if title == "" {
 		title = "DCMS API"
@@ -356,6 +364,53 @@ func transitionOp(collection, name, summary string) obj {
 
 // mediaPaths documents the media library's byte-path endpoints (ADR-0011). They
 // live outside the collection API because their write path is multipart bytes.
+// eventPaths documents the admin-only change-feed and webhook-delivery endpoints
+// (ADR-0021). base is the API base (e.g. /api/v1). All are admin-gated, so each
+// carries a session security requirement and an x-access note.
+func eventPaths(base string) obj {
+	admin := []obj{{"sessionToken": []string{}}, {"sessionCookie": []string{}}}
+	// These rows aren't a declared record type, so describe the page inline with
+	// generic-object items rather than a $ref to a schema that doesn't exist.
+	genericList := obj{"type": "object", "properties": obj{
+		"data": obj{"type": "array", "items": obj{"type": "object"}},
+		"meta": obj{"type": "object", "properties": obj{"next_cursor": obj{"type": "string"}}},
+	}}
+	eventList := jsonResponse("a page of change events", genericList)
+	deliveryList := jsonResponse("a page of webhook deliveries", genericList)
+	sinceParam := obj{"name": "since", "in": "query", "required": false, "schema": obj{"type": "string"}, "description": "opaque cursor from a previous response's meta.next_cursor"}
+	limitParam := obj{"name": "limit", "in": "query", "required": false, "schema": obj{"type": "integer"}}
+	return obj{
+		base + "/_changes": obj{"get": obj{
+			"summary":    "Change feed: id-keyset stream of state changes (admin)",
+			"x-access":   "admin",
+			"security":   admin,
+			"parameters": []any{sinceParam, limitParam},
+			"responses":  obj{"200": eventList},
+		}},
+		base + "/_events/deliveries": obj{"get": obj{
+			"summary":  "Webhook delivery ledger, e.g. ?status=dead for the dead-letter set (admin)",
+			"x-access": "admin",
+			"security": admin,
+			"parameters": []any{
+				obj{"name": "status", "in": "query", "required": false, "schema": obj{"type": "string", "enum": []any{"pending", "delivered", "failed", "dead"}}},
+				obj{"name": "endpoint", "in": "query", "required": false, "schema": obj{"type": "string"}},
+				sinceParam, limitParam,
+			},
+			"responses": obj{"200": deliveryList},
+		}},
+		base + "/_events/deliveries/{id}/retry": obj{"post": obj{
+			"summary":    "Re-arm a failed or dead delivery for another attempt (admin)",
+			"x-access":   "admin",
+			"security":   admin,
+			"parameters": []any{idParam()},
+			"responses": obj{
+				"200": jsonResponse("re-armed", obj{"type": "object"}),
+				"409": jsonResponse("delivery already succeeded", errorEnvelope()),
+			},
+		}},
+	}
+}
+
 func mediaPaths() obj {
 	m := mediaData()
 	notFound := jsonResponse("not found", errorEnvelope())
