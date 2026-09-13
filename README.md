@@ -211,6 +211,18 @@ curl https://mystore.com/api/v1/search?q=honey&collection=products
 curl https://mystore.com/__openapi   # full OpenAPI 3.1 spec
 ```
 
+For a non-human caller (an SSG build, CI, a webhook receiver reading back the
+changed record), mint a long-lived, revocable token instead of using a password:
+
+```bash
+dcms token create --name ssg-build --role reader --expires 90d
+# → dcms_pat_…  (shown once)
+curl -H "Authorization: Bearer dcms_pat_…" https://mystore.com/api/v1/products
+```
+
+It authenticates as its own principal with the roles you grant, so your `access:`
+rules apply unchanged; `dcms token revoke <id>` kills it.
+
 ---
 
 ## Plugin system

@@ -273,9 +273,10 @@ func TestProbesAndSchema(t *testing.T) {
 		t.Fatalf("schema version: %#v", body["version"])
 	}
 	// The user's collection plus the engine-injected collections: _media (ADR-0011),
-	// _users/_sessions (ADR-0016), _auth_tokens (ADR-0019), and _idempotency (ADR-0018).
+	// _users/_sessions (ADR-0016), _auth_tokens (ADR-0019), _api_tokens (issue #8),
+	// _idempotency (ADR-0018), and _notifications (ADR-0021).
 	cols, ok := body["collections"].([]any)
-	if !ok || len(cols) != 7 {
+	if !ok || len(cols) != 8 {
 		t.Fatalf("schema collections: %#v", body["collections"])
 	}
 }
