@@ -75,6 +75,11 @@ func (a *sessionAuthenticator) Authenticate(r *http.Request) (principal, error) 
 	if tok == "" {
 		return principal{}, nil
 	}
+	// A long-lived machine token (issue #8) arrives on the same bearer header; its
+	// prefix routes it to the _api_tokens lookup instead of the session one.
+	if strings.HasPrefix(tok, apiTokenPrefix) {
+		return a.resolveAPIToken(r.Context(), tok)
+	}
 	sess, err := a.findSession(r.Context(), hashToken(tok))
 	if err != nil {
 		return principal{}, err
@@ -128,7 +133,13 @@ func (a *sessionAuthenticator) expired(sess store.Record) bool {
 // rolesOf decodes a _users record's roles field (a JSON list, which the adapter
 // may surface as []any, a JSON string, or []byte) into role-name strings.
 func rolesOf(user store.Record) []string {
-	switch v := user[schema.UserRoles].(type) {
+	return rolesFromValue(user[schema.UserRoles])
+}
+
+// rolesFromValue decodes a JSON role list however the adapter surfaced it. Shared
+// by _users and _api_tokens, which both store roles the same way.
+func rolesFromValue(v any) []string {
+	switch v := v.(type) {
 	case []any:
 		return stringsOf(v)
 	case []string:
