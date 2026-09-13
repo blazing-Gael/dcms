@@ -102,10 +102,12 @@ func (s *SchemaDefinition) Validate() error {
 			// behaviour stay the engine's, so every other directive is refused
 			// rather than silently dropped (ADR-0001).
 			//
-			// This lists every directive on CollectionDef except Name and Access.
-			// When a new directive is added to CollectionDef (the phase-2/3 TODOs:
-			// I18n, Vectorize, Hooks, Schedule), add it here too — TestMedia_Reserved*
-			// guards the currently-known set.
+			// This lists every directive on CollectionDef except Name and Access. A
+			// new directive added to CollectionDef must be added here too — and
+			// TestMedia_RejectsEveryNonAccessDirective reflects over the struct to
+			// fail the build if one isn't. (A directive explicitly set to its zero
+			// value — `timestamps: false`, `fields: {}` — is indistinguishable from
+			// absent after decode and is a harmless no-op, so it passes.)
 			if len(col.Fields) > 0 || len(col.Indexes) > 0 || col.Timestamps ||
 				col.Publishing || col.SoftDelete || col.Revisions || col.Events {
 				add("%s: the media library is engine-managed — it accepts an `access:` block only", cpath)
