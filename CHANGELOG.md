@@ -109,6 +109,13 @@ While on **0.x**, minor versions may include breaking changes.
   is dead-lettered). `POST /auth/forgot` still returns 200 regardless, so it
   reveals nothing about whether an address exists — but a mailer that has been
   failing is now visible in the logs instead of only in the `_notifications` table.
+- **The change feed and webhook-delivery admin endpoints are now in the OpenAPI
+  spec** (`/_changes`, `/_events/deliveries`, `/_events/deliveries/{id}/retry`),
+  documented as admin-only, so generated clients and docs see them.
+- **Record-read authorization logs a store outage instead of silently 404ing it.**
+  An owner-scoped read that can't load the record still fails closed, but a real
+  store error (not a plain not-found) is now logged rather than reported as a bare
+  "not found" with no trace.
 
 ## [0.1.0-beta.2] - 2026-09-04
 

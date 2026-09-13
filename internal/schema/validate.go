@@ -101,6 +101,11 @@ func (s *SchemaDefinition) Validate() error {
 			// other than the default public-read (ADR-0011/0016). Its shape and
 			// behaviour stay the engine's, so every other directive is refused
 			// rather than silently dropped (ADR-0001).
+			//
+			// This lists every directive on CollectionDef except Name and Access.
+			// When a new directive is added to CollectionDef (the phase-2/3 TODOs:
+			// I18n, Vectorize, Hooks, Schedule), add it here too — TestMedia_Reserved*
+			// guards the currently-known set.
 			if len(col.Fields) > 0 || len(col.Indexes) > 0 || col.Timestamps ||
 				col.Publishing || col.SoftDelete || col.Revisions || col.Events {
 				add("%s: the media library is engine-managed — it accepts an `access:` block only", cpath)

@@ -122,6 +122,23 @@ collections:
 		t.Fatalf("engine-managed _media fields were lost")
 	}
 
+	// Every non-access directive on _media is refused, not silently dropped — the
+	// shape stays the engine's. One case per directive the guard lists, so a new
+	// CollectionDef directive that isn't added to the guard is caught here.
+	for name, directive := range map[string]string{
+		"indexes":     "indexes: [status]",
+		"timestamps":  "timestamps: true",
+		"publishing":  "publishing: true",
+		"soft_delete": "soft_delete: true",
+		"revisions":   "revisions: true",
+		"events":      "events: true",
+	} {
+		src := "version: \"1\"\ncollections:\n  _media:\n    " + directive + "\n"
+		if _, err := Parse([]byte(src)); err == nil || !strings.Contains(err.Error(), "engine-managed") {
+			t.Errorf("_media with %s should be refused, got %v", name, err)
+		}
+	}
+
 	// A file field must not set an explicit target.
 	if _, err := Parse([]byte(`
 version: "1"
