@@ -348,6 +348,25 @@ func runServer(cmd *cobra.Command, mode serverMode) error {
 		}
 	}
 
+	// Authenticator selection (ADR-0020, issue #9). Default is the built-in
+	// opaque-session source; proxy_header trusts a verified-identity header set by
+	// a front proxy — a config choice, not a code change.
+	var authenticator gateway.Authenticator
+	switch cfg.Auth.Provider {
+	case "", "session":
+		authenticator = gateway.NewSessionAuthenticator(db)
+	case "proxy_header":
+		if cfg.Auth.ProxyHeader.UserHeader == "" {
+			return fmt.Errorf("auth.provider proxy_header requires auth.proxy_header.user_header")
+		}
+		authenticator = gateway.NewProxyHeaderAuthenticator(
+			cfg.Auth.ProxyHeader.UserHeader, cfg.Auth.ProxyHeader.RolesHeader, cfg.Auth.ProxyHeader.RolesSeparator)
+		logger.Warn("auth provider is proxy_header — DCMS trusts the identity header verbatim; your proxy MUST strip it from inbound client requests",
+			"user_header", cfg.Auth.ProxyHeader.UserHeader)
+	default:
+		return fmt.Errorf("auth.provider %q is not supported (want session or proxy_header)", cfg.Auth.Provider)
+	}
+
 	tlsCfg := engine.TLSConfig{CertFile: cfg.Server.TLS.CertFile, KeyFile: cfg.Server.TLS.KeyFile}
 	scheme := "http"
 	if tlsCfg.CertFile != "" && tlsCfg.KeyFile != "" {
@@ -362,7 +381,7 @@ func runServer(cmd *cobra.Command, mode serverMode) error {
 		MaxUploadBytes:      cfg.Media.MaxUploadBytes,
 		AllowedContentTypes: cfg.Media.AllowedContentTypes,
 		PreviewToken:        cfg.Content.PreviewToken,
-		Authenticator:       gateway.NewSessionAuthenticator(db),
+		Authenticator:       authenticator,
 		MaxBodyBytes:        cfg.Server.MaxBodyBytes,
 		RequestTimeout:      time.Duration(cfg.Server.RequestTimeoutSeconds) * time.Second,
 		RateLimit:           rateLimit,
