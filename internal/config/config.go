@@ -68,6 +68,12 @@ type Webhook struct {
 type Auth struct {
 	AdminEmail    string `yaml:"-"`
 	AdminPassword string `yaml:"-"`
+	// Provider selects which Authenticator resolves the request principal
+	// (ADR-0020, issue #9). "" / "session" ⇒ the built-in opaque-session source;
+	// "proxy_header" ⇒ trust a verified-identity header set by a front proxy.
+	Provider string `yaml:"provider"`
+	// ProxyHeader configures the proxy_header provider.
+	ProxyHeader ProxyHeader `yaml:"proxy_header"`
 	// AdminRoles are the roles permitted to use the /admin/users API (ADR-0019).
 	// Empty defaults to ["admin"].
 	AdminRoles []string `yaml:"admin_roles"`
@@ -80,6 +86,23 @@ type Auth struct {
 	// SMTP configures the mailer for account emails. Host empty ⇒ a dev-log
 	// mailer that prints reset links to the console.
 	SMTP SMTP `yaml:"smtp"`
+}
+
+// ProxyHeader configures the proxy_header authenticator (issue #9): DCMS trusts
+// an identity a front proxy (oauth2-proxy, Cloudflare Access, a JWT-validating
+// gateway) has already verified and passes as request headers.
+//
+// SECURITY: only safe behind a proxy you control that STRIPS these headers from
+// inbound client requests and re-sets them itself — otherwise any caller can set
+// UserHeader and impersonate anyone. Same trust model as `server.trust_proxy`.
+type ProxyHeader struct {
+	// UserHeader carries the caller's stable id (becomes Principal.ID). Required
+	// when the provider is proxy_header.
+	UserHeader string `yaml:"user_header"`
+	// RolesHeader carries the caller's roles, separated by RolesSeparator. Optional.
+	RolesHeader string `yaml:"roles_header"`
+	// RolesSeparator splits RolesHeader; empty defaults to ",".
+	RolesSeparator string `yaml:"roles_separator"`
 }
 
 // AuthReset configures password reset (ADR-0019).
@@ -386,6 +409,17 @@ func (c *Config) ApplyEnv() error {
 	}
 	if v, ok := os.LookupEnv("DCMS_ADMIN_ROLES"); ok {
 		c.Auth.AdminRoles = splitList(v)
+	}
+	// Authenticator selection (issue #9) — non-secret, but env-overridable for
+	// 12-factor deployments behind a proxy.
+	if v, ok := os.LookupEnv("DCMS_AUTH_PROVIDER"); ok {
+		c.Auth.Provider = v
+	}
+	if v, ok := os.LookupEnv("DCMS_AUTH_PROXY_USER_HEADER"); ok {
+		c.Auth.ProxyHeader.UserHeader = v
+	}
+	if v, ok := os.LookupEnv("DCMS_AUTH_PROXY_ROLES_HEADER"); ok {
+		c.Auth.ProxyHeader.RolesHeader = v
 	}
 	if v, ok := os.LookupEnv("DCMS_REGISTRATION_ENABLED"); ok {
 		b, err := strconv.ParseBool(v)
