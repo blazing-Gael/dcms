@@ -153,9 +153,21 @@ func newServeCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().String("schema", "./dcms.schema.yaml", "path to the schema file")
-	cmd.Flags().Int("port", 8080, "HTTP port to listen on")
+	// Same default as dev: the effective port comes from config (server.port,
+	// which `dcms init` scaffolds to 8080) unless --port is passed explicitly, so
+	// advertising a different flag default here would be misleading.
+	cmd.Flags().Int("port", 3000, "HTTP port to listen on (config server.port takes precedence)")
 	cmd.Flags().String("db", "./dcms.db", "path to the SQLite database file")
 	return cmd
+}
+
+// resolveValidateResponses decides whether strict response validation is on: the
+// config's explicit setting wins, else the mode default (on for dev, off for serve).
+func resolveValidateResponses(mode serverMode, cfg config.Config) bool {
+	if cfg.Server.ValidateResponses != nil {
+		return *cfg.Server.ValidateResponses
+	}
+	return mode.validateDefault
 }
 
 // runServer is the shared body of `dev` and `serve`; serverMode supplies the two
@@ -189,8 +201,12 @@ func runServer(cmd *cobra.Command, mode serverMode) error {
 			return err
 		}
 	} else {
-		// serve treats migration as a separate deploy step. Refuse to start on
-		// drift rather than fail later at query time against a stale schema.
+		// serve treats migration as a separate deploy step and refuses to start
+		// with additive migrations pending (a new table/column), so a forgotten
+		// `dcms migrate` fails loudly at boot instead of at query time. Note the
+		// SQLite adapter's Diff is additive-only: an in-place change to an existing
+		// column's type/nullability/default is not reported here, so serve cannot
+		// catch that class of drift (neither can `dcms migrate` apply it today).
 		pending, err := engine.Plan(ctx, db, def)
 		if err != nil {
 			return err
@@ -209,10 +225,7 @@ func runServer(cmd *cobra.Command, mode serverMode) error {
 
 	// Strict response validation follows the mode default (on for dev, off for
 	// serve) unless the config sets it explicitly.
-	validateResponses := mode.validateDefault
-	if cfg.Server.ValidateResponses != nil {
-		validateResponses = *cfg.Server.ValidateResponses
-	}
+	validateResponses := resolveValidateResponses(mode, cfg)
 
 	bs, err := blob.New(blob.Config{
 		Driver:         cfg.Media.Driver,
