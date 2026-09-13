@@ -88,10 +88,20 @@ func TestApplyEnv_OverridesAndValidates(t *testing.T) {
 	t.Setenv("DCMS_TLS_KEY_FILE", "/etc/tls/key.pem")
 	t.Setenv("DCMS_ADMIN_ROLES", "admin, staff")
 	t.Setenv("DCMS_REGISTRATION_ENABLED", "true")
+	t.Setenv("DCMS_AUTH_PROVIDER", "proxy_header")
+	t.Setenv("DCMS_AUTH_PROXY_USER_HEADER", "X-Auth-User")
+	t.Setenv("DCMS_AUTH_PROXY_ROLES_HEADER", "X-Auth-Roles")
+	t.Setenv("DCMS_AUTH_PROXY_ROLES_SEPARATOR", "|")
 
 	cfg := Default()
 	if err := cfg.ApplyEnv(); err != nil {
 		t.Fatalf("ApplyEnv: %v", err)
+	}
+	if cfg.Auth.Provider != "proxy_header" ||
+		cfg.Auth.ProxyHeader.UserHeader != "X-Auth-User" ||
+		cfg.Auth.ProxyHeader.RolesHeader != "X-Auth-Roles" ||
+		cfg.Auth.ProxyHeader.RolesSeparator != "|" {
+		t.Errorf("proxy_header env not fully applied: %+v", cfg.Auth.ProxyHeader)
 	}
 	if cfg.Schema != "/etc/dcms/schema.yaml" {
 		t.Errorf("schema = %q", cfg.Schema)

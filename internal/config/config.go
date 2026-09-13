@@ -421,6 +421,9 @@ func (c *Config) ApplyEnv() error {
 	if v, ok := os.LookupEnv("DCMS_AUTH_PROXY_ROLES_HEADER"); ok {
 		c.Auth.ProxyHeader.RolesHeader = v
 	}
+	if v, ok := os.LookupEnv("DCMS_AUTH_PROXY_ROLES_SEPARATOR"); ok {
+		c.Auth.ProxyHeader.RolesSeparator = v
+	}
 	if v, ok := os.LookupEnv("DCMS_REGISTRATION_ENABLED"); ok {
 		b, err := strconv.ParseBool(v)
 		if err != nil {

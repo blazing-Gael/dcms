@@ -129,10 +129,13 @@ auth:
   # login. "proxy_header" trusts an identity a front proxy (oauth2-proxy,
   # Cloudflare Access, a JWT-validating gateway) has already verified and passes
   # as headers — no login flow, no Go. Env: DCMS_AUTH_PROVIDER,
-  # DCMS_AUTH_PROXY_USER_HEADER, DCMS_AUTH_PROXY_ROLES_HEADER.
+  # DCMS_AUTH_PROXY_USER_HEADER, DCMS_AUTH_PROXY_ROLES_HEADER,
+  # DCMS_AUTH_PROXY_ROLES_SEPARATOR.
   # SECURITY: only safe behind a proxy you control that STRIPS these headers from
   # inbound client requests and re-sets them itself — otherwise anyone can set
   # user_header and impersonate anyone (same trust model as server.trust_proxy).
+  # NOTE: under proxy_header the proxy is the identity authority — the local
+  # /auth/login flow is inert (a session cookie it sets is ignored).
   # provider: proxy_header
   # proxy_header:
   #   user_header: X-Auth-User        # → Principal.ID (required)
