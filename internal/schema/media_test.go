@@ -1,9 +1,53 @@
 package schema
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 )
+
+// TestMedia_RejectsEveryNonAccessDirective is a guard-completeness check: setting
+// ANY CollectionDef field other than Name/Access on _media must make Validate
+// reject it. It reflects over the struct, so a directive added to CollectionDef
+// later without also being added to the _media guard in Validate fails here rather
+// than silently being dropped (the gap Copilot flagged on the hand-written table).
+func TestMedia_RejectsEveryNonAccessDirective(t *testing.T) {
+	typ := reflect.TypeOf(CollectionDef{})
+	for i := 0; i < typ.NumField(); i++ {
+		f := typ.Field(i)
+		if !f.IsExported() || f.Name == "Name" || f.Name == "Access" {
+			continue
+		}
+		col := CollectionDef{Name: MediaCollection}
+		setNonZero(t, reflect.ValueOf(&col).Elem().Field(i), f.Name)
+		def := &SchemaDefinition{Version: "1", Collections: []CollectionDef{col}}
+		err := def.Validate()
+		if err == nil || !strings.Contains(err.Error(), "engine-managed") {
+			t.Errorf("_media with directive %q set should be rejected as engine-managed, got %v", f.Name, err)
+		}
+	}
+}
+
+// setNonZero writes a representative non-zero value into v so the directive reads
+// as "present". Unknown kinds fail loudly, so a future directive of a new type is
+// noticed here rather than silently skipped.
+func setNonZero(t *testing.T, v reflect.Value, name string) {
+	t.Helper()
+	switch v.Kind() {
+	case reflect.Bool:
+		v.SetBool(true)
+	case reflect.String:
+		v.SetString("x")
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		v.SetInt(1)
+	case reflect.Slice:
+		v.Set(reflect.MakeSlice(v.Type(), 1, 1)) // one zero element ⇒ non-empty
+	case reflect.Pointer:
+		v.Set(reflect.New(v.Type().Elem()))
+	default:
+		t.Fatalf("setNonZero: unhandled kind %s for CollectionDef.%s — extend this helper", v.Kind(), name)
+	}
+}
 
 func TestMedia_FileFieldBecomesRelationToMedia(t *testing.T) {
 	def, err := Parse([]byte(`

@@ -54,12 +54,12 @@ func (s *SchemaDefinition) OpenAPI() obj {
 		paths[p] = op
 	}
 
-	// Change feed + webhook delivery admin ops (ADR-0021), only when some
-	// collection emits events — otherwise these routes report an empty feed.
-	if s.AnyEvents() {
-		for p, op := range eventPaths(base) {
-			paths[p] = op
-		}
+	// Change feed + webhook delivery admin ops (ADR-0021). The gateway registers
+	// these routes unconditionally (they report an empty feed when no collection
+	// emits events), so the spec documents them unconditionally too — otherwise a
+	// no-events schema's served API and its /__openapi would drift.
+	for p, op := range eventPaths(base) {
+		paths[p] = op
 	}
 
 	title := s.Meta.Name
