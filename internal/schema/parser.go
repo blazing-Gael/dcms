@@ -141,6 +141,14 @@ func toCollection(name string, node *yaml.Node) (CollectionDef, error) {
 		return col, err
 	}
 	for _, e := range entries {
+		// _media is engine-managed: it accepts only an `access:` block. Reject any
+		// other key by PRESENCE, here at parse time, so `timestamps: false` or
+		// `fields: {}` — a present key with a zero value the decoded struct can't
+		// distinguish from absent — is refused, not silently dropped. (The Validate
+		// guard still covers a directly-constructed CollectionDef.)
+		if name == MediaCollection && e.Key != "access" {
+			return col, fmt.Errorf("the media library is engine-managed — it accepts an `access:` block only, not %q", e.Key)
+		}
 		switch e.Key {
 		case "fields":
 			col.Fields, err = toFields(e.Val)
