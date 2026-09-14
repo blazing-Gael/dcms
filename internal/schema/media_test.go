@@ -28,6 +28,23 @@ func TestMedia_RejectsEveryNonAccessDirective(t *testing.T) {
 	}
 }
 
+// A present directive key on a YAML _media is rejected by PRESENCE, even when its
+// value is the zero value — `timestamps: false`, `fields: {}`, `indexes: []` are
+// indistinguishable from absent after decode, so the parser catches them before
+// decoding rather than silently dropping them.
+func TestMedia_RejectsPresentZeroValueDirective(t *testing.T) {
+	for _, src := range []string{
+		"version: \"1\"\ncollections:\n  _media:\n    timestamps: false\n",
+		"version: \"1\"\ncollections:\n  _media:\n    fields: {}\n",
+		"version: \"1\"\ncollections:\n  _media:\n    indexes: []\n",
+		"version: \"1\"\ncollections:\n  _media:\n    events: false\n",
+	} {
+		if _, err := Parse([]byte(src)); err == nil || !strings.Contains(err.Error(), "engine-managed") {
+			t.Errorf("present zero-value directive should be refused, got %v for:\n%s", err, src)
+		}
+	}
+}
+
 // setNonZero writes a representative non-zero value into v so the directive reads
 // as "present". Unknown kinds fail loudly, so a future directive of a new type is
 // noticed here rather than silently skipped.
