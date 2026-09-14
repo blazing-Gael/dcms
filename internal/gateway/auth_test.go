@@ -66,8 +66,10 @@ func newAuthServer(t *testing.T) (*httptest.Server, store.Adapter) {
 		}
 	}
 
+	// Mirror main.go: layer machine-token resolution over the session source so
+	// both session and API-token auth work in tests (issue #8 composition).
 	srv := httptest.NewServer(gateway.New(def, db, nil, gateway.Options{
-		Authenticator: gateway.NewSessionAuthenticator(db),
+		Authenticator: gateway.WithAPITokens(db, gateway.NewSessionAuthenticator(db)),
 	}).Handler())
 	t.Cleanup(srv.Close)
 	return srv, db

@@ -370,6 +370,9 @@ func runServer(cmd *cobra.Command, mode serverMode) error {
 	default:
 		return fmt.Errorf("auth.provider %q is not supported (want session or proxy_header)", cfg.Auth.Provider)
 	}
+	// Long-lived machine tokens (issue #8) work under ANY provider: layer their
+	// resolution over the selected interactive authenticator.
+	authenticator = gateway.WithAPITokens(db, authenticator)
 
 	tlsCfg := engine.TLSConfig{CertFile: cfg.Server.TLS.CertFile, KeyFile: cfg.Server.TLS.KeyFile}
 	scheme := "http"
@@ -711,21 +714,29 @@ func newTokenRevokeCmd() *cobra.Command {
 }
 
 // parseExpiry accepts an empty string (never expires), a "<n>d" day count, or any
-// Go duration (e.g. 720h, 30m).
+// Go duration (e.g. 720h, 30m). A non-empty zero (`0d`, `0s`) is rejected — only
+// the empty string means "never", so a zero lifetime is a mistake, not an
+// accidental non-expiring token.
 func parseExpiry(s string) (time.Duration, error) {
 	if s == "" {
 		return 0, nil
 	}
+	var d time.Duration
 	if days, ok := strings.CutSuffix(s, "d"); ok {
 		n, err := strconv.Atoi(days)
 		if err != nil || n < 0 {
 			return 0, fmt.Errorf("invalid --expires %q (want e.g. 90d or 720h)", s)
 		}
-		return time.Duration(n) * 24 * time.Hour, nil
+		d = time.Duration(n) * 24 * time.Hour
+	} else {
+		parsed, err := time.ParseDuration(s)
+		if err != nil || parsed < 0 {
+			return 0, fmt.Errorf("invalid --expires %q (want e.g. 90d or 720h)", s)
+		}
+		d = parsed
 	}
-	d, err := time.ParseDuration(s)
-	if err != nil || d < 0 {
-		return 0, fmt.Errorf("invalid --expires %q (want e.g. 90d or 720h)", s)
+	if d == 0 {
+		return 0, fmt.Errorf("invalid --expires %q: a zero lifetime is not allowed (omit --expires for a token that never expires)", s)
 	}
 	return d, nil
 }

@@ -75,11 +75,8 @@ func (a *sessionAuthenticator) Authenticate(r *http.Request) (principal, error) 
 	if tok == "" {
 		return principal{}, nil
 	}
-	// A long-lived machine token (issue #8) arrives on the same bearer header; its
-	// prefix routes it to the _api_tokens lookup instead of the session one.
-	if strings.HasPrefix(tok, apiTokenPrefix) {
-		return a.resolveAPIToken(r.Context(), tok)
-	}
+	// Machine tokens (issue #8) are resolved by the WithAPITokens layer that wraps
+	// this authenticator, so a dcms_pat_ bearer never reaches here.
 	sess, err := a.findSession(r.Context(), hashToken(tok))
 	if err != nil {
 		return principal{}, err
