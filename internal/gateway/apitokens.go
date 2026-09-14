@@ -6,6 +6,8 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"strings"
 	"time"
 
 	"github.com/blazing-Gael/dcms/internal/schema"
@@ -66,16 +68,29 @@ func CreateAPIToken(ctx context.Context, db store.Adapter, name string, roles []
 }
 
 // ListAPITokens returns the stored tokens (metadata only — the hash is never
-// useful to a caller and the raw token is unrecoverable).
+// useful to a caller and the raw token is unrecoverable). It pages to the end so
+// the listing is complete even past the store's per-query limit.
 func ListAPITokens(ctx context.Context, db store.Adapter) ([]store.Record, error) {
-	page, err := db.Find(ctx, store.Query{Collection: schema.APITokensCollection, Limit: 500, SkipCount: true})
-	if err != nil {
-		return nil, err
+	var out []store.Record
+	cursor := ""
+	for {
+		page, err := db.Find(ctx, store.Query{
+			Collection: schema.APITokensCollection,
+			SkipCount:  true,
+			Cursor:     cursor,
+		})
+		if err != nil {
+			return nil, err
+		}
+		for _, r := range page.Data {
+			delete(r, schema.APITokenHash)
+			out = append(out, r)
+		}
+		if page.NextCursor == "" {
+			return out, nil
+		}
+		cursor = page.NextCursor
 	}
-	for _, r := range page.Data {
-		delete(r, schema.APITokenHash)
-	}
-	return page.Data, nil
 }
 
 // RevokeAPIToken deletes a token by id, making it stop working immediately.
@@ -83,11 +98,36 @@ func RevokeAPIToken(ctx context.Context, db store.Adapter, id string) error {
 	return db.Delete(ctx, schema.APITokensCollection, id)
 }
 
-// resolveAPIToken maps a raw machine token to a principal: look up its hash,
-// reject an expired one, and (throttled) record last_used_at so an unused token
-// is visible. The principal's id is the token's own row id — so its writes stamp
-// the token as actor, distinguishing machine writes from a human's.
-func (a *sessionAuthenticator) resolveAPIToken(ctx context.Context, raw string) (principal, error) {
+// apiTokenAuthenticator resolves a machine token (issue #8) and otherwise delegates
+// to the wrapped human/interactive authenticator. Making it a wrapper — rather than
+// baking it into the session source — is what lets API tokens work under ANY
+// provider (session or proxy_header): the token layer is universal, the wrapped
+// provider handles interactive identity.
+type apiTokenAuthenticator struct {
+	db   store.Adapter
+	now  func() time.Time
+	next Authenticator
+}
+
+// WithAPITokens layers machine-token resolution over any authenticator. A bearer
+// token with the dcms_pat_ prefix is resolved against _api_tokens; everything
+// else falls through to next.
+func WithAPITokens(db store.Adapter, next Authenticator) Authenticator {
+	return &apiTokenAuthenticator{db: db, now: func() time.Time { return time.Now().UTC() }, next: next}
+}
+
+func (a *apiTokenAuthenticator) Authenticate(r *http.Request) (principal, error) {
+	if tok := sessionTokenFromRequest(r); strings.HasPrefix(tok, apiTokenPrefix) {
+		return a.resolve(r.Context(), tok)
+	}
+	return a.next.Authenticate(r)
+}
+
+// resolve maps a raw machine token to a principal: look up its hash, reject an
+// expired one, and (throttled) record last_used_at so an unused token is visible.
+// The principal's id is the token's own row id — so its writes stamp the token as
+// actor, distinguishing machine writes from a human's.
+func (a *apiTokenAuthenticator) resolve(ctx context.Context, raw string) (principal, error) {
 	page, err := a.db.Find(ctx, store.Query{
 		Collection: schema.APITokensCollection,
 		Filters:    []store.Filter{{Field: schema.APITokenHash, Operator: store.Eq, Value: hashToken(raw)}},
@@ -101,23 +141,23 @@ func (a *sessionAuthenticator) resolveAPIToken(ctx context.Context, raw string) 
 		return principal{}, nil // unknown token → anonymous, not an error
 	}
 	tok := page.Data[0]
-	if exp, _ := tok[schema.APITokenExpiresAt].(string); exp != "" && pastRFC3339(exp) {
+	if exp := datetimeString(tok[schema.APITokenExpiresAt]); exp != "" && pastRFC3339(exp) {
 		return principal{}, nil // expired → anonymous
 	}
 	id, _ := tok["id"].(string)
-	a.touchAPIToken(ctx, tok)
+	a.touch(ctx, tok)
 	return principal{ID: id, Roles: rolesFromValue(tok[schema.APITokenRoles]), Authenticated: true}, nil
 }
 
-// touchAPIToken advances last_used_at, at most once per throttle window, so an
-// unused token is visible without adding a write to every request.
-func (a *sessionAuthenticator) touchAPIToken(ctx context.Context, tok store.Record) {
+// touch advances last_used_at, at most once per throttle window, so an unused
+// token is visible without adding a write to every request.
+func (a *apiTokenAuthenticator) touch(ctx context.Context, tok store.Record) {
 	id, _ := tok["id"].(string)
 	if id == "" {
 		return
 	}
 	now := a.now()
-	if last, _ := tok[schema.APITokenLastUsedAt].(string); last != "" {
+	if last := datetimeString(tok[schema.APITokenLastUsedAt]); last != "" {
 		if t, err := time.Parse(time.RFC3339, last); err == nil && now.Sub(t) < apiTokenLastUsedThrottle {
 			return
 		}
@@ -126,4 +166,19 @@ func (a *sessionAuthenticator) touchAPIToken(ctx context.Context, tok store.Reco
 		"id":                      id,
 		schema.APITokenLastUsedAt: now.UTC().Format(time.RFC3339),
 	}})
+}
+
+// datetimeString reads a stored datetime as RFC3339 text whether the adapter
+// surfaced it as a string (SQLite) or a time.Time (allowed by the store contract,
+// e.g. Postgres). Without this, a time.Time value would read as "" and skip the
+// expiry check and the last_used_at throttle.
+func datetimeString(v any) string {
+	switch t := v.(type) {
+	case string:
+		return t
+	case time.Time:
+		return t.UTC().Format(time.RFC3339)
+	default:
+		return ""
+	}
 }

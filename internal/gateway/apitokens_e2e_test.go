@@ -3,10 +3,13 @@ package gateway_test
 import (
 	"context"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
 	"github.com/blazing-Gael/dcms/internal/gateway"
+	"github.com/blazing-Gael/dcms/internal/schema"
+	"github.com/blazing-Gael/dcms/internal/store/sqlite"
 )
 
 // A long-lived API token (issue #8) authenticates a machine caller as a
@@ -53,6 +56,59 @@ func TestAPIToken_DrivesAuthorization(t *testing.T) {
 	}
 	if st := post(raw); st != http.StatusUnauthorized {
 		t.Fatalf("create with revoked token: got %d, want 401", st)
+	}
+}
+
+// API tokens resolve under ANY provider — here proxy_header, whose own
+// authenticator reads a header and knows nothing about tokens. This is the point
+// of layering WithAPITokens over the selected provider (issue #8 composition).
+func TestAPIToken_WorksUnderProxyHeaderProvider(t *testing.T) {
+	def, err := schema.Parse([]byte(authSchema))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	db, err := sqlite.New(sqlite.Config{Path: ":memory:"})
+	if err != nil {
+		t.Fatalf("sqlite.New: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	ctx := context.Background()
+	for _, meta := range def.CollectionMetas() {
+		plan, err := db.Diff(ctx, meta)
+		if err != nil {
+			t.Fatalf("Diff: %v", err)
+		}
+		if err := db.Migrate(ctx, plan); err != nil {
+			t.Fatalf("Migrate: %v", err)
+		}
+	}
+	// proxy_header provider wrapped with the API-token layer, exactly as main.go builds it.
+	base := gateway.NewProxyHeaderAuthenticator("X-Auth-User", "X-Auth-Roles", "")
+	srv := httptest.NewServer(gateway.New(def, db, nil, gateway.Options{
+		Authenticator: gateway.WithAPITokens(db, base),
+	}).Handler())
+	t.Cleanup(srv.Close)
+
+	raw, _, err := gateway.CreateAPIToken(ctx, db, "ci", []string{"author"}, time.Time{})
+	if err != nil {
+		t.Fatalf("CreateAPIToken: %v", err)
+	}
+
+	// A bearer API token authenticates even though the provider is proxy_header.
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/api/v1/articles", newReader(`{"title":"via-token"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+raw)
+	if st, body := doReq(t, req); st != http.StatusCreated {
+		t.Fatalf("token create under proxy_header: got %d, want 201 (%v)", st, body)
+	}
+
+	// The proxy header path still works for interactive identity on the same server.
+	req, _ = http.NewRequest(http.MethodPost, srv.URL+"/api/v1/articles", newReader(`{"title":"via-proxy"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Auth-User", "person-1")
+	req.Header.Set("X-Auth-Roles", "author")
+	if st, _ := doReq(t, req); st != http.StatusCreated {
+		t.Fatalf("proxy-header create: got %d, want 201", st)
 	}
 }
 
