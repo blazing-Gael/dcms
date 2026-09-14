@@ -8,6 +8,13 @@ While on **0.x**, minor versions may include breaking changes.
 
 ## [Unreleased]
 
+## [0.1.0-beta.3] - 2026-09-14
+
+Auth, operations, and hardening. Bring-your-own auth via `proxy_header`, long-lived
+revocable API tokens for machine callers, a production `dcms serve` command, real
+SMTP send (display-name From + startup pre-flight), and a batch of read-authz
+security fixes.
+
 ### Security
 - **A collection's read rule now holds on every path that returns its records.**
   Four routes returned records without consulting `access:`, so a rule enforced
