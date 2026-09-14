@@ -50,9 +50,11 @@ While on **0.x**, minor versions may include breaking changes.
   (shown once) stored only as a hash in an engine-managed `_api_tokens`
   collection; present it as `Authorization: Bearer dcms_pat_…` and it resolves to
   a **first-class principal with its own roles**, so every `access:` rule applies
-  unchanged and its writes are attributed to the token (not a human). `dcms token
-  list` shows usage; `dcms token revoke <id>` kills it immediately. Tokens never
-  set a cookie and can carry an optional expiry.
+  unchanged and its writes are attributed to the token (not a human). Token
+  resolution is layered over whichever auth provider is configured, so tokens work
+  under `session` and `proxy_header` alike. `dcms token list` shows usage; `dcms
+  token revoke <id>` kills it immediately. Tokens never set a cookie and can carry
+  an optional expiry.
 - **Bring-your-own auth via `proxy_header` (issue #9).** `auth.provider` selects
   the request authenticator without forking: `session` (default) is the built-in
   opaque-session login; `proxy_header` trusts a verified-identity header set by a

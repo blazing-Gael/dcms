@@ -23,6 +23,8 @@ func TestParseExpiry(t *testing.T) {
 		{"30m", 30 * time.Minute, false},
 		{"banana", 0, true},
 		{"-5d", 0, true},
+		{"0d", 0, true}, // a non-empty zero lifetime is a mistake, not "never"
+		{"0s", 0, true},
 	}
 	for _, c := range cases {
 		got, err := parseExpiry(c.in)
