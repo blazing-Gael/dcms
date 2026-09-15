@@ -457,6 +457,40 @@ Enforcement (ADR-0016) is at the gateway, above the store:
 - Roles named in a rule must be declared under `auth.roles` (a typo is a
   schema-compile error). There is no role hierarchy — list every role that passes.
 
+**Preview — who may see hidden lifecycle states (ADR-0023).** A fifth rule,
+`preview`, decides who may see and act on a collection's *hidden* states — drafts,
+scheduled, archived, and trashed rows — by identity, evaluated per record like any
+other rule (so `owner`/`owner_field` work):
+
+```yaml
+stories:
+  publishing: true
+  soft_delete: true
+  access:
+    read:    public
+    create:  authenticated
+    update:  { any: [admin, owner] }
+    preview: { any: [admin, editor, owner] }   # who sees hidden states
+```
+
+- **Unset ⇒ hidden states are visible only with the shared preview token** (the
+  pre-existing behaviour). Existing schemas are unchanged.
+- **Set ⇒ it is the single source of truth for hidden-state visibility on both
+  read and write.** A `GET`/`list` of a hidden record obeys it (404 when not
+  eligible); `?status=` / `?include_deleted` are honoured only for eligible
+  callers, with `owner` narrowing to the caller's own rows. And update/delete/
+  transitions (including `restore`) 404 on a record the caller may not preview, so
+  write agrees with read — this is what lets an owner restore their own trash while
+  it stays hidden from others.
+- The default list stays **published-only** for everyone; a caller opts into hidden
+  states with `?status=draft|scheduled|archived|any` or `?include_deleted`, *and*
+  the preview rule.
+- **`public` is not allowed** in a `preview` rule (it would show every draft to
+  everyone), and `preview` requires `publishing` or `soft_delete` — both are
+  schema-compile errors. Consequence: once `preview` is set, a caller who holds
+  `update` but is not in `preview` can no longer edit a *draft* (published records,
+  being public, are unaffected), so name everyone who manages hidden states.
+
 Field-level access (LIVE — ADR-0016):
 
 ```yaml

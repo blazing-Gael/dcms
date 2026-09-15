@@ -1,6 +1,9 @@
 # ADR-0012 — Record lifecycle: publishing states + soft-delete
 
-**Status**: Accepted
+**Status**: Accepted (visibility superseded in part by ADR-0023)
+
+> ADR-0023 adds a per-collection `preview` access rule: hidden-state visibility is
+> no longer token-only when a collection opts into it. Everything else here stands.
 
 ## Context
 

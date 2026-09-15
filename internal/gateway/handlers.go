@@ -28,6 +28,27 @@ func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
+// introspectionGate enforces Options.Introspection on the /__schema, /__openapi,
+// and /__docs routes and marks them noindex. "public" (default) exposes them;
+// "admin" requires an admin principal; "off" returns 404 so the routes are not
+// even addressable. The noindex header is always sent, so a search engine never
+// indexes the data model even when it is publicly readable.
+func (s *Server) introspectionGate(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Robots-Tag", "noindex, nofollow")
+		switch s.opts.Introspection {
+		case "off":
+			s.handleNotFound(w, r)
+			return
+		case "admin":
+			if _, ok := s.requireAdmin(w, r); !ok {
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 func (s *Server) handleSchema(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("ETag", `"`+s.schema.ContractHash()+`"`)
 	writeJSON(w, http.StatusOK, s.schema)
@@ -40,6 +61,12 @@ func (s *Server) handleOpenAPI(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleNotFound(w http.ResponseWriter, r *http.Request) {
 	writeError(w, http.StatusNotFound, apiError{Code: "NOT_FOUND", Message: "route not found"})
+}
+
+// recordNotFound is the 404 for a specific record — used where a record is absent
+// or hidden from the caller (never 403, so nothing about it leaks).
+func (s *Server) recordNotFound(w http.ResponseWriter) {
+	writeError(w, http.StatusNotFound, apiError{Code: "NOT_FOUND", Message: "record not found"})
 }
 
 func (s *Server) handleMethodNotAllowed(w http.ResponseWriter, r *http.Request) {
@@ -68,8 +95,9 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q.Filters = append(q.Filters, ownerFilters...)
-	// Hide non-live / trashed records unless the request's view widens (ADR-0012).
-	q.Filters = append(q.Filters, s.lifecycleFilters(collection, visibilityFromContext(r.Context()))...)
+	// Hide non-live / trashed records unless the caller is preview-eligible for the
+	// requested view (ADR-0012/0023) — includes any preview owner-scoping filter.
+	q.Filters = append(q.Filters, s.lifecycleFiltersFor(r.Context(), collection)...)
 
 	page, err := s.db.Find(r.Context(), q)
 	if err != nil {
@@ -157,10 +185,10 @@ func (s *Server) handleGetOne(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, s.logger, r, err)
 		return
 	}
-	// A record hidden by the request's lifecycle view (ADR-0012) or not readable
-	// under the access rule (ADR-0016) is 404 — never 403, so neither its existence
-	// nor an owner boundary leaks.
-	if !s.recordVisible(collection, rec, visibilityFromContext(r.Context())) ||
+	// A record hidden by the caller's lifecycle+preview view (ADR-0012/0023) or not
+	// readable under the access rule (ADR-0016) is 404 — never 403, so neither its
+	// existence nor an owner boundary leaks.
+	if !s.recordPreviewVisible(r.Context(), collection, rec) ||
 		!s.recordReadable(r.Context(), collection, rec) {
 		writeError(w, http.StatusNotFound, apiError{Code: "NOT_FOUND", Message: "record not found"})
 		return
@@ -172,6 +200,12 @@ func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
 	collection := chi.URLParam(r, "collection")
 	if !s.routableCollection(collection) {
 		s.handleNotFound(w, r)
+		return
+	}
+	// A record the caller may not preview does not exist for them (ADR-0023) — 404
+	// before the write authz's 403, so write agrees with get-one.
+	if s.writeHidden(r.Context(), collection, chi.URLParam(r, "id")) {
+		s.recordNotFound(w)
 		return
 	}
 	if !s.authorizeRecordWrite(w, r, collection, chi.URLParam(r, "id"), schema.ActionUpdate) {
@@ -239,6 +273,10 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := chi.URLParam(r, "id")
+	if s.writeHidden(r.Context(), collection, id) {
+		s.recordNotFound(w)
+		return
+	}
 	if !s.authorizeRecordWrite(w, r, collection, id, schema.ActionDelete) {
 		return
 	}

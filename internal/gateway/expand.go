@@ -194,7 +194,7 @@ func (s *Server) findRelatedM2M(ctx context.Context, inv schema.M2MInverse, targ
 		return []store.Record{}, nil
 	}
 	filters := []store.Filter{{Field: "id", Operator: store.In, Value: ids}}
-	filters = append(filters, s.lifecycleFilters(inv.Source, visibilityFromContext(ctx))...)
+	filters = append(filters, s.lifecycleFiltersFor(ctx, inv.Source)...)
 	page, err := s.db.Find(ctx, store.Query{
 		Collection: inv.Source,
 		Filters:    filters,
@@ -221,8 +221,8 @@ func (s *Server) expandBelongsTo(ctx context.Context, target string, rec store.R
 	if err != nil {
 		return err
 	}
-	if !s.recordVisible(target, related, visibilityFromContext(ctx)) {
-		return nil // hidden target: keep the id, don't inline
+	if !s.recordPreviewVisible(ctx, target, related) {
+		return nil // hidden target the caller may not preview: keep the id, don't inline
 	}
 	if !s.coerceExpanded(ctx, target, related) {
 		return nil // target not readable by this caller: keep the id, don't inline
@@ -234,7 +234,7 @@ func (s *Server) expandBelongsTo(ctx context.Context, target string, rec store.R
 // findRelated fetches the has-many children of parentID via an inverse edge.
 func (s *Server) findRelated(ctx context.Context, inv schema.Inverse, parentID string) ([]store.Record, error) {
 	filters := []store.Filter{{Field: inv.Field, Operator: store.Eq, Value: parentID}}
-	filters = append(filters, s.lifecycleFilters(inv.Source, visibilityFromContext(ctx))...)
+	filters = append(filters, s.lifecycleFiltersFor(ctx, inv.Source)...)
 	page, err := s.db.Find(ctx, store.Query{
 		Collection: inv.Source,
 		Filters:    filters,
@@ -294,7 +294,7 @@ func (s *Server) expandBelongsToBatch(ctx context.Context, target string, recs [
 		return nil
 	}
 	filters := []store.Filter{{Field: "id", Operator: store.In, Value: ids}}
-	filters = append(filters, s.lifecycleFilters(target, visibilityFromContext(ctx))...)
+	filters = append(filters, s.lifecycleFiltersFor(ctx, target)...)
 	page, err := s.db.Find(ctx, store.Query{
 		Collection: target,
 		Filters:    filters,

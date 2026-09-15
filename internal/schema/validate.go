@@ -278,6 +278,7 @@ func (s *SchemaDefinition) Validate() error {
 			for action, rule := range map[AccessAction]*Rule{
 				ActionRead: col.Access.Read, ActionCreate: col.Access.Create,
 				ActionUpdate: col.Access.Update, ActionDelete: col.Access.Delete,
+				ActionPreview: col.Access.Preview,
 			} {
 				if rule == nil {
 					continue
@@ -289,6 +290,17 @@ func (s *SchemaDefinition) Validate() error {
 				}
 				for _, msg := range validateOwnerFields(*rule, col) {
 					add("%s.access.%s: %s", cpath, action, msg)
+				}
+			}
+			// preview (ADR-0023) gates hidden lifecycle states, so it needs hidden
+			// states to gate, and a `public` preview would show every draft to
+			// everyone — defeating the read-vs-preview split.
+			if p := col.Access.Preview; p != nil {
+				if !col.Publishing && !col.SoftDelete {
+					add("%s.access.preview: only valid on a collection with publishing or soft_delete (no hidden states to gate otherwise)", cpath)
+				}
+				if p.mentionsPublic() {
+					add("%s.access.preview: `public` is not allowed — a public preview would expose every hidden record to everyone", cpath)
 				}
 			}
 		}

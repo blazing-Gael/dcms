@@ -202,6 +202,10 @@ type Server struct {
 	// the session cookie's Secure flag when TLS is terminated at the proxy. Enable
 	// ONLY behind a proxy you control — otherwise a client can spoof these.
 	TrustProxy bool `yaml:"trust_proxy"`
+	// Introspection gates the schema/docs routes (/__schema, /__openapi, /__docs):
+	// "public" (default) exposes them, "admin" requires an admin principal, "off"
+	// returns 404. Those routes are always marked noindex. Env: DCMS_INTROSPECTION.
+	Introspection string `yaml:"introspection"`
 	// CORS configures cross-origin access. Empty allowed_origins ⇒ CORS off
 	// (same-origin only), the safe default.
 	CORS CORS `yaml:"cors"`
@@ -398,6 +402,14 @@ func (c *Config) ApplyEnv() error {
 	}
 	if v, ok := os.LookupEnv("DCMS_PREVIEW_TOKEN"); ok {
 		c.Content.PreviewToken = v
+	}
+	if v, ok := os.LookupEnv("DCMS_INTROSPECTION"); ok {
+		c.Server.Introspection = v
+	}
+	switch c.Server.Introspection {
+	case "", "public", "admin", "off":
+	default:
+		return fmt.Errorf("server.introspection %q is not one of public, admin, off", c.Server.Introspection)
 	}
 	// Bootstrap admin credentials are env-only (secrets rule); they seed the first
 	// admin when the user table is empty (ADR-0016).

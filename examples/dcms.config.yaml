@@ -54,6 +54,13 @@ server:
   # Secure flag when the proxy terminates TLS. Enable ONLY behind a proxy you
   # control — otherwise a client can spoof these. Env: DCMS_TRUST_PROXY.
   # trust_proxy: false
+  # Schema/docs introspection routes (/__schema, /__openapi, /__docs). "public"
+  # (default) exposes them; "admin" requires an admin principal; "off" returns 404.
+  # These routes are always sent X-Robots-Tag: noindex so crawlers skip them even
+  # when public. /__health and /__ready are never gated. Env: DCMS_INTROSPECTION.
+  # A public deployment that doesn't want its data model exposed sets this to
+  # `admin` or `off`.
+  # introspection: public
   # Cross-origin access (CORS). OFF by default (allowed_origins empty ⇒ same-origin
   # only). List the exact browser origins your frontend is served from. Over-limit
   # is not involved; disallowed origins simply get no CORS headers. Env override
