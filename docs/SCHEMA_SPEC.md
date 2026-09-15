@@ -19,6 +19,7 @@ meta:                 # optional project metadata
   name: string
   description: string
   base_url: string    # default: /api/v1
+  site_url: string    # optional — front-end origin, prepended to a collection `route`
 
 brand:                # optional brand identity block (served in agent/MCP responses)
   ...
@@ -51,6 +52,7 @@ collections:
     soft_delete: false          # optional — DELETE trashes (reversible) instead of removing
     publishing: false           # optional — enable draft / published / scheduled / archived
     revisions: false            # optional — keep full-snapshot version history per record
+    route: /p/{slug}            # optional — where a record lives on the front end (metadata)
     i18n: []                    # optional — list of supported locale codes e.g. [en, ar, bn]
     access:                     # optional — RBAC rules (Phase 2+)
       ...
@@ -341,6 +343,40 @@ publishing: true
 # Admin/preview (see the preview token below) may widen the view with
 #   ?status=draft | published | scheduled | archived | any
 ```
+
+---
+
+## Route — where records live on the front end (issue #10)
+
+```yaml
+meta:
+  site_url: https://golpo.example   # front-end origin (for absolute URLs)
+collections:
+  stories:
+    route: /golpo/{slug}            # {field} interpolated from the record
+    fields:
+      slug: { type: string, unique: true }
+```
+
+`route` is **metadata, not routing** — DCMS serves no HTML. It's a declaration a
+consumer reads from `GET /__schema` to turn a record into a page URL, which makes
+three things generic instead of per-project:
+
+- **Preview links** — an admin panel can render a "View / Preview draft" link for
+  any record with no per-collection config (pairs with the `preview` access rule).
+- **Generic static generation** — an SSG enumerates *what pages exist* from
+  `/__schema` (`route` + `meta.site_url`) and *what changed* from `/api/v1/_changes`,
+  with no site-specific glue.
+- **Sitemaps / canonical URLs** become derivable.
+
+Rules:
+
+- `{field}` placeholders are interpolated from the record; every one must name a
+  real column (a field, or `id`/`created_at`/… ) — a compile-time error otherwise.
+- The route must start with `/`.
+- Optional per collection — a collection with no `route` is not a page (e.g. `tags`).
+- Date/format placeholders (`/{published_at:2006}/{slug}`) are a deliberate later
+  addition; only plain `{field}` is supported today.
 
 ---
 

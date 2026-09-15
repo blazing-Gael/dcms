@@ -182,6 +182,10 @@ func toCollection(name string, node *yaml.Node) (CollectionDef, error) {
 			if err := e.Val.Decode(&col.Events); err != nil {
 				return col, fmt.Errorf("events: %w", err)
 			}
+		case "route":
+			if err := e.Val.Decode(&col.Route); err != nil {
+				return col, fmt.Errorf("route: %w", err)
+			}
 		case "access":
 			col.Access, err = parseAccess(e.Val)
 			if err != nil {

@@ -74,6 +74,13 @@ type CollectionDef struct {
 	Indexes    []Index    `json:"indexes,omitempty"`
 	Timestamps bool       `json:"timestamps,omitempty"`
 
+	// Route is where a record of this collection lives on the front end, e.g.
+	// "/golpo/{slug}" — {field} placeholders are interpolated from the record by a
+	// consumer (the admin panel's preview link, an SSG enumerating pages from
+	// /__schema). Metadata only; DCMS serves no HTML. Empty ⇒ not a page (issue
+	// #10). Every {field} must name a column of the collection (validated).
+	Route string `json:"route,omitempty"`
+
 	// Publishing opts the collection into draft/published/scheduled/archived
 	// states (ADR-0012): adds _status + _published_at, hides non-live records
 	// from public reads, and exposes publish/unpublish/archive actions.
@@ -104,6 +111,10 @@ type Meta struct {
 	Name        string `yaml:"name" json:"name,omitempty"`
 	Description string `yaml:"description" json:"description,omitempty"`
 	BaseURL     string `yaml:"base_url" json:"base_url,omitempty"` // default: /api/v1
+	// SiteURL is the front-end origin a consumer prepends to a collection `route`
+	// to build an absolute page URL (sitemaps, canonical links, OG tags). Metadata
+	// only — DCMS serves no HTML (issue #10).
+	SiteURL string `yaml:"site_url" json:"site_url,omitempty"`
 }
 
 // SchemaDefinition is the fully parsed schema file.
