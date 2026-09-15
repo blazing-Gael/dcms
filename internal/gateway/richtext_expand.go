@@ -78,7 +78,7 @@ func (s *Server) loadVisibleByIDs(ctx context.Context, collection string, idset 
 		end := min(start+refCheckBatch, len(all))
 		chunk := all[start:end]
 		filters := []store.Filter{{Field: "id", Operator: store.In, Value: chunk}}
-		filters = append(filters, s.lifecycleFilters(collection, visibilityFromContext(ctx))...)
+		filters = append(filters, s.lifecycleFiltersFor(ctx, collection)...)
 		page, err := s.db.Find(ctx, store.Query{
 			Collection: collection,
 			Filters:    filters,

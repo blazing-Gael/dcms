@@ -388,6 +388,7 @@ func runServer(cmd *cobra.Command, mode serverMode) error {
 		MaxUploadBytes:      cfg.Media.MaxUploadBytes,
 		AllowedContentTypes: cfg.Media.AllowedContentTypes,
 		PreviewToken:        cfg.Content.PreviewToken,
+		Introspection:       cfg.Server.Introspection,
 		Authenticator:       authenticator,
 		MaxBodyBytes:        cfg.Server.MaxBodyBytes,
 		RequestTimeout:      time.Duration(cfg.Server.RequestTimeoutSeconds) * time.Second,

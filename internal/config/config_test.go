@@ -88,6 +88,7 @@ func TestApplyEnv_OverridesAndValidates(t *testing.T) {
 	t.Setenv("DCMS_TLS_KEY_FILE", "/etc/tls/key.pem")
 	t.Setenv("DCMS_ADMIN_ROLES", "admin, staff")
 	t.Setenv("DCMS_REGISTRATION_ENABLED", "true")
+	t.Setenv("DCMS_INTROSPECTION", "admin")
 	t.Setenv("DCMS_AUTH_PROVIDER", "proxy_header")
 	t.Setenv("DCMS_AUTH_PROXY_USER_HEADER", "X-Auth-User")
 	t.Setenv("DCMS_AUTH_PROXY_ROLES_HEADER", "X-Auth-Roles")
@@ -141,6 +142,17 @@ func TestApplyEnv_OverridesAndValidates(t *testing.T) {
 	}
 	if !cfg.Auth.Registration.Enabled {
 		t.Errorf("registration.enabled = %v, want true", cfg.Auth.Registration.Enabled)
+	}
+	if cfg.Server.Introspection != "admin" {
+		t.Errorf("introspection = %q, want admin", cfg.Server.Introspection)
+	}
+}
+
+func TestApplyEnv_BadIntrospectionIsAnError(t *testing.T) {
+	t.Setenv("DCMS_INTROSPECTION", "sometimes")
+	cfg := Default()
+	if err := cfg.ApplyEnv(); err == nil {
+		t.Fatal("expected an error for an invalid introspection mode")
 	}
 }
 

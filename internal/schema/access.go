@@ -16,6 +16,9 @@ const (
 	ActionCreate AccessAction = "create"
 	ActionUpdate AccessAction = "update"
 	ActionDelete AccessAction = "delete"
+	// ActionPreview gates visibility of hidden lifecycle states (ADR-0023). It is
+	// not a CRUD operation and has no default rule; see CollectionDef.PreviewRule.
+	ActionPreview AccessAction = "preview"
 )
 
 // RuleKind is the parsed shape of a single access rule value (ADR-0016).
@@ -140,11 +143,17 @@ func (c CollectionDef) field(name string) (FieldDef, bool) {
 // AccessRules is a collection's per-operation authorization policy. A nil field
 // means the action was not declared and the gateway's default policy applies
 // (reads → public, writes → authenticated; see ADR-0016 §4).
+//
+// Preview (ADR-0023) is different: it has no default. Unset means hidden lifecycle
+// states (draft/scheduled/archived/trashed) are visible only via the shared
+// preview token, exactly as before. Set, it names who may see and act on those
+// states by identity, evaluated per record like any other rule.
 type AccessRules struct {
-	Read   *Rule `json:"read,omitempty"`
-	Create *Rule `json:"create,omitempty"`
-	Update *Rule `json:"update,omitempty"`
-	Delete *Rule `json:"delete,omitempty"`
+	Read    *Rule `json:"read,omitempty"`
+	Create  *Rule `json:"create,omitempty"`
+	Update  *Rule `json:"update,omitempty"`
+	Delete  *Rule `json:"delete,omitempty"`
+	Preview *Rule `json:"preview,omitempty"`
 }
 
 // defaultRule is the effective policy for an action with no explicit rule.
@@ -176,6 +185,32 @@ func (c CollectionDef) AccessRule(action AccessAction) Rule {
 		}
 	}
 	return defaultRule(action)
+}
+
+// PreviewRule returns the collection's `preview` rule and whether one is declared
+// (ADR-0023). Unlike the CRUD actions there is no default: an absent preview rule
+// means hidden lifecycle states are token-only, so the caller distinguishes
+// "declared" from "absent" rather than falling back to a default policy.
+func (c CollectionDef) PreviewRule() (Rule, bool) {
+	if c.Access != nil && c.Access.Preview != nil {
+		return *c.Access.Preview, true
+	}
+	return Rule{}, false
+}
+
+// mentionsPublic reports whether the rule tree contains a `public` gate anywhere.
+// A `public` preview would show every hidden record to everyone, defeating the
+// read-vs-preview split, so validation rejects it (ADR-0023).
+func (r Rule) mentionsPublic() bool {
+	if r.Kind == RulePublic {
+		return true
+	}
+	for _, sub := range r.Any {
+		if sub.mentionsPublic() {
+			return true
+		}
+	}
+	return false
 }
 
 // FieldAccess is a field's per-direction policy (ADR-0016 milestone 2). A nil
@@ -302,8 +337,10 @@ func parseAccess(node *yaml.Node) (*AccessRules, error) {
 			ar.Update = rule
 		case ActionDelete:
 			ar.Delete = rule
+		case ActionPreview:
+			ar.Preview = rule
 		default:
-			return nil, fmt.Errorf("unknown access action %q (want read, create, update, or delete)", e.Key)
+			return nil, fmt.Errorf("unknown access action %q (want read, create, update, delete, or preview)", e.Key)
 		}
 	}
 	return ar, nil

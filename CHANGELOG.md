@@ -16,6 +16,24 @@ SMTP send (display-name From + startup pre-flight), and a batch of read-authz
 security fixes.
 
 ### Security
+- **Identity-based preview — hidden lifecycle states without a shared secret
+  (issue #20, ADR-0023).** Who may see a draft/scheduled/archived/trashed record
+  was decided only by the shared preview token, so an authoring UI had to ship
+  `DCMS_PREVIEW_TOKEN` to the browser — one secret exposing every user's drafts. A
+  new per-collection `preview` access rule decides it by identity, evaluated per
+  record like any other rule (so `owner`/`owner_field` work): a writer sees and
+  edits their own drafts, an editor gets a review queue via `?status=draft`, and
+  an owner can restore their own trash — no shared secret in the client. Opt-in and
+  fully backward compatible (unset ⇒ today's behaviour); when set it is the single
+  source of truth for hidden-state visibility on both read and write, so
+  update/delete/transitions agree with get-one (404, not a silent write to an
+  invisible record). `public` in a `preview` rule is a schema error.
+- **Gate the schema/docs routes (`server.introspection`).** `/__schema`,
+  `/__openapi`, and `/__docs` published the entire data model to anyone. They can
+  now be set `public` (default), `admin` (require an admin principal), or `off`
+  (404), via `server.introspection` / `DCMS_INTROSPECTION`, and always carry
+  `X-Robots-Tag: noindex, nofollow` so crawlers skip them even when public.
+  `/__health` and `/__ready` stay ungated for probes.
 - **A collection's read rule now holds on every path that returns its records.**
   Four routes returned records without consulting `access:`, so a rule enforced
   on `GET /{collection}/{id}` could be walked around. All four are closed, and

@@ -11,12 +11,17 @@ import (
 	"github.com/blazing-Gael/dcms/internal/store"
 )
 
-// visibility captures how the current request may see lifecycle-managed records
-// (ADR-0012). The zero value is the public view: only live, non-trashed content.
-// status/includeDeleted are honored only when preview is true (a valid preview
-// token was presented), so unauthenticated callers can never widen their view.
+// visibility captures how the current request WANTS to see lifecycle-managed
+// records (ADR-0012). The zero value is the public view: only live, non-trashed
+// content. status/includeDeleted are always parsed from the query, but whether
+// they are HONORED is decided per collection/record by preview eligibility
+// (tokenPreview, or the `preview` access rule — ADR-0023), never by these fields
+// alone. The effectiveListVisibility / recordPreviewVisible helpers are the only
+// safe consumers; a raw visibility must not be handed to lifecycleFilters for a
+// caller whose preview eligibility hasn't been checked, or ?status=draft would
+// leak drafts.
 type visibility struct {
-	preview        bool
+	tokenPreview   bool   // a valid shared preview token was presented (full admin view)
 	status         string // "", draft, published, archived, scheduled, any
 	includeDeleted string // "", true, only
 }
@@ -40,35 +45,143 @@ func visibilityFromContext(ctx context.Context) visibility {
 	return v
 }
 
-// visibilityFor computes the request's visibility. The preview bypass requires a
-// configured token, matched constant-time against the X-DCMS-Preview header (or
-// a preview_token query param). Only then are the status / include_deleted params
-// read; otherwise they are ignored.
+// visibilityFor computes the request's desired visibility. The status /
+// include_deleted params are ALWAYS parsed (an identity-based previewer may
+// request a hidden state — ADR-0023); whether they are honored is decided later
+// per collection. A valid shared preview token, matched constant-time against the
+// X-DCMS-Preview header (or a preview_token query param), sets tokenPreview and
+// defaults status to the admin "any" view, preserving the token's behaviour.
 func (s *Server) visibilityFor(r *http.Request) visibility {
-	tok := s.opts.PreviewToken
-	if tok == "" {
-		return visibility{}
-	}
-	got := r.Header.Get("X-DCMS-Preview")
-	if got == "" {
-		got = r.URL.Query().Get("preview_token")
-	}
-	if subtle.ConstantTimeCompare([]byte(got), []byte(tok)) != 1 {
-		return visibility{}
-	}
 	q := r.URL.Query()
 	v := visibility{
-		preview:        true,
 		status:         strings.ToLower(strings.TrimSpace(q.Get("status"))),
 		includeDeleted: strings.ToLower(strings.TrimSpace(q.Get("include_deleted"))),
 	}
-	// A valid preview token defaults to showing every publishing state (the admin
-	// view); trashed records still require an explicit include_deleted. An explicit
-	// ?status narrows it.
+	if tok := s.opts.PreviewToken; tok != "" {
+		got := r.Header.Get("X-DCMS-Preview")
+		if got == "" {
+			got = q.Get("preview_token")
+		}
+		if subtle.ConstantTimeCompare([]byte(got), []byte(tok)) == 1 {
+			v.tokenPreview = true
+			if v.status == "" {
+				v.status = "any" // token defaults to the full admin view
+			}
+		}
+	}
+	return v
+}
+
+// requestsHidden reports whether the requested view asks for any non-public state
+// — a hidden publishing state or trashed rows. Only such a request needs preview
+// eligibility; the default (published-only, active) is open to everyone and never
+// narrows the read view.
+func requestsHidden(v visibility) bool {
+	switch v.status {
+	case schema.StatusDraft, schema.StatusArchived, "scheduled", "any":
+		return true
+	}
+	switch v.includeDeleted {
+	case "true", "all", "only":
+		return true
+	}
+	return false
+}
+
+// previewDecision resolves the identity `preview` rule (ADR-0023) for a collection
+// against the request's principal, mirroring evalRule's allow/ownerScope/deny plus
+// the owner column for ownerScope. A collection with no preview rule is deny (only
+// the shared token, handled separately, can widen the view). The token is NOT
+// folded in here; callers check tokenPreview first.
+func (s *Server) previewDecision(ctx context.Context, collection string) (decision, string) {
+	rule, ok := s.collections[collection].PreviewRule()
+	if !ok {
+		return deny, ""
+	}
+	return evalRule(rule, principalFromContext(ctx))
+}
+
+// effectiveListVisibility returns the visibility to apply to a list/expansion
+// query and any owner-scoping filters the `preview` rule adds. It is the safe way
+// to consume a request's visibility: it downgrades to the public view unless the
+// caller is preview-eligible for the requested hidden states. The token honours
+// the request as-is (no owner narrowing); the identity path honours hidden states
+// only when the preview rule allows, narrowing to owned rows on ownerScope.
+func (s *Server) effectiveListVisibility(ctx context.Context, collection string) (visibility, []store.Filter) {
+	v := visibilityFromContext(ctx)
+	if v.tokenPreview {
+		return v, nil
+	}
+	if !requestsHidden(v) {
+		return visibility{}, nil // default public view — preview irrelevant
+	}
+	// The caller reached here only by opting into hidden rows (requestsHidden). If
+	// they set include_deleted but no status, that means "any status" (e.g. show my
+	// trash whatever its publish state) — otherwise the published-only default would
+	// hide a trashed draft.
 	if v.status == "" {
 		v.status = "any"
 	}
-	return v
+	switch d, field := s.previewDecision(ctx, collection); d {
+	case allow:
+		return v, nil
+	case ownerScope:
+		p := principalFromContext(ctx)
+		return v, []store.Filter{{Field: field, Operator: store.Eq, Value: p.ID}}
+	default:
+		return visibility{}, nil // not eligible → ignore the hidden request
+	}
+}
+
+// lifecycleFiltersFor is the store-filter form of effectiveListVisibility: the
+// lifecycle filters for the effective view plus any preview owner filter. Every
+// list and list-expansion path uses it so ?status is honoured only for eligible
+// callers.
+func (s *Server) lifecycleFiltersFor(ctx context.Context, collection string) []store.Filter {
+	ev, previewFilters := s.effectiveListVisibility(ctx, collection)
+	return append(s.lifecycleFilters(collection, ev), previewFilters...)
+}
+
+// writeHidden reports whether a write (update/delete/transition) must be refused
+// as not-found because its target is hidden from the caller under the `preview`
+// rule (ADR-0023) — so write agrees with get-one. Only collections that declare a
+// preview rule gate writes this way; without one, writes behave as before
+// (visibility ignored), keeping existing schemas unchanged. A missing record
+// returns false so the write path surfaces the not-found itself.
+func (s *Server) writeHidden(ctx context.Context, collection, id string) bool {
+	if _, ok := s.collections[collection].PreviewRule(); !ok {
+		return false
+	}
+	rec, err := s.db.FindOne(ctx, collection, id)
+	if err != nil {
+		return false
+	}
+	return !s.recordPreviewVisible(ctx, collection, rec)
+}
+
+// recordPreviewVisible reports whether a fetched record may be shown to the
+// caller, combining lifecycle visibility with preview eligibility (ADR-0023). A
+// publicly-visible record (published, live, not trashed) is always visible; a
+// hidden one requires the shared token (honouring its requested view) or the
+// identity preview rule (allow, or ownerScope with the record's owner matching).
+func (s *Server) recordPreviewVisible(ctx context.Context, collection string, rec store.Record) bool {
+	v := visibilityFromContext(ctx)
+	if v.tokenPreview {
+		return s.recordVisible(collection, rec, v) // token: honour its requested view
+	}
+	if s.recordVisible(collection, rec, visibility{}) {
+		return true // publicly visible regardless of identity
+	}
+	// Hidden record: eligible only via the identity preview rule.
+	switch d, field := s.previewDecision(ctx, collection); d {
+	case allow:
+		return true
+	case ownerScope:
+		owner, _ := rec[field].(string)
+		return owner != "" && owner == principalFromContext(ctx).ID
+	default:
+		return false
+	}
 }
 
 // nowUTC is the wall clock used for publish scheduling and the published_at<=now

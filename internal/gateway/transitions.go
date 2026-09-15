@@ -96,6 +96,13 @@ func (s *Server) handleRestore(w http.ResponseWriter, r *http.Request) {
 func (s *Server) applyTransition(w http.ResponseWriter, r *http.Request, collection, operation string, data store.Record) {
 	// A transition is a managed write; authorize it like an update (ADR-0016).
 	id, _ := data["id"].(string)
+	// A record the caller may not preview does not exist for them (ADR-0023) — this
+	// is what lets an owner restore their own trashed record while it stays hidden
+	// from others.
+	if s.writeHidden(r.Context(), collection, id) {
+		s.recordNotFound(w)
+		return
+	}
 	if !s.authorizeRecordWrite(w, r, collection, id, schema.ActionUpdate) {
 		return
 	}

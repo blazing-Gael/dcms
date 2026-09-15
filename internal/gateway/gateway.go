@@ -77,6 +77,12 @@ type Options struct {
 	// Empty disables the bypass — public reads only. Supplied via env only.
 	PreviewToken string
 
+	// Introspection gates the schema/docs routes (/__schema, /__openapi, /__docs):
+	// "public" (default/"") exposes them as today; "admin" requires an admin
+	// principal; "off" returns 404. Those three routes always carry an
+	// X-Robots-Tag: noindex header. /__health and /__ready are never gated.
+	Introspection string
+
 	// Authenticator resolves a request's principal (ADR-0016). When set,
 	// authorization (the `access:` rules) is enforced; when nil, auth is not
 	// configured and enforcement is bypassed (pre-auth behavior). Production wires
@@ -208,12 +214,19 @@ func (s *Server) Handler() http.Handler {
 	r.NotFound(s.handleNotFound)
 	r.MethodNotAllowed(s.handleMethodNotAllowed)
 
-	// Introspection / probes.
+	// Probes — never gated (load balancers / k8s need them, and they reveal
+	// nothing about the data model).
 	r.Get("/__health", s.handleHealth)
 	r.Get("/__ready", s.handleReady)
-	r.Get("/__schema", s.handleSchema)
-	r.Get("/__openapi", s.handleOpenAPI)
-	r.Get("/__docs", s.handleDocs)
+
+	// Schema/docs introspection — gated by Options.Introspection and always marked
+	// noindex, so the data model can be hidden from the public and from crawlers.
+	r.Group(func(r chi.Router) {
+		r.Use(s.introspectionGate)
+		r.Get("/__schema", s.handleSchema)
+		r.Get("/__openapi", s.handleOpenAPI)
+		r.Get("/__docs", s.handleDocs)
+	})
 
 	// Local authentication (ADR-0016) — outside the collection API. JSON bodies,
 	// so it gets the same body cap and request timeout as the collection API.

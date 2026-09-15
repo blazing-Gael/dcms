@@ -117,7 +117,7 @@ func (s *Server) updateAndRevise(ctx context.Context, collection string, data st
 // token configured, history is open — consistent with the pre-auth posture of the
 // rest of the API (auth will gate this by role later).
 func (s *Server) previewDenied(r *http.Request) bool {
-	return s.opts.PreviewToken != "" && !visibilityFromContext(r.Context()).preview
+	return s.opts.PreviewToken != "" && !visibilityFromContext(r.Context()).tokenPreview
 }
 
 // handleRevisionList returns a record's version history, newest first, without the
