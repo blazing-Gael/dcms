@@ -8,13 +8,6 @@ While on **0.x**, minor versions may include breaking changes.
 
 ## [Unreleased]
 
-## [0.1.0-beta.3] - 2026-09-14
-
-Auth, operations, and hardening. Bring-your-own auth via `proxy_header`, long-lived
-revocable API tokens for machine callers, a production `dcms serve` command, real
-SMTP send (display-name From + startup pre-flight), and a batch of read-authz
-security fixes.
-
 ### Security
 - **Identity-based preview — hidden lifecycle states without a shared secret
   (issue #20, ADR-0023).** Who may see a draft/scheduled/archived/trashed record
@@ -34,6 +27,25 @@ security fixes.
   (404), via `server.introspection` / `DCMS_INTROSPECTION`, and always carry
   `X-Robots-Tag: noindex, nofollow` so crawlers skip them even when public.
   `/__health` and `/__ready` stay ungated for probes.
+
+### Added
+- **`route` — where a collection's records live on the front end (issue #10).** A
+  collection can declare `route: /golpo/{slug}` (with `{field}` placeholders) plus
+  a `meta.site_url`; both are served on `/__schema`. It is metadata, not routing —
+  DCMS serves no HTML — but it makes preview links and static generation generic:
+  an admin panel builds a "View / Preview draft" link for any record with no
+  per-collection config, and an SSG enumerates *what pages exist* from `/__schema`
+  and *what changed* from `/_changes` with no site-specific glue. Every `{field}`
+  must name a real column (compile-time checked); optional per collection.
+
+## [0.1.0-beta.3] - 2026-09-14
+
+Auth, operations, and hardening. Bring-your-own auth via `proxy_header`, long-lived
+revocable API tokens for machine callers, a production `dcms serve` command, real
+SMTP send (display-name From + startup pre-flight), and a batch of read-authz
+security fixes.
+
+### Security
 - **A collection's read rule now holds on every path that returns its records.**
   Four routes returned records without consulting `access:`, so a rule enforced
   on `GET /{collection}/{id}` could be walked around. All four are closed, and

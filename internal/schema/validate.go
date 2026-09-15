@@ -3,12 +3,28 @@ package schema
 import (
 	"fmt"
 	"regexp"
+	"strings"
 )
 
 // nameRe is the allowed shape for collection and field names: lowercase
 // snake_case, starting with a letter. It matches the storage layer's identifier
 // allowlist, so anything that validates here is safe to splice into SQL.
 var nameRe = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
+
+// routePlaceholderRe matches a {field} placeholder in a collection route (#10).
+var routePlaceholderRe = regexp.MustCompile(`\{([^}]*)\}`)
+
+// RoutePlaceholders returns the field names referenced by a route's {field}
+// placeholders, in order. Exported so consumers (an admin panel, an SSG) can
+// interpolate a route from a record without re-parsing it.
+func RoutePlaceholders(route string) []string {
+	m := routePlaceholderRe.FindAllStringSubmatch(route, -1)
+	out := make([]string, 0, len(m))
+	for _, g := range m {
+		out = append(out, g[1])
+	}
+	return out
+}
 
 // reservedCollections are names DCMS uses for internal endpoints/tables.
 var reservedCollections = map[string]bool{
@@ -110,7 +126,7 @@ func (s *SchemaDefinition) Validate() error {
 			// CollectionDef must be added here too — TestMedia_RejectsEveryNonAccessDirective
 			// reflects over the struct to fail the build if one isn't.
 			if len(col.Fields) > 0 || len(col.Indexes) > 0 || col.Timestamps ||
-				col.Publishing || col.SoftDelete || col.Revisions || col.Events {
+				col.Publishing || col.SoftDelete || col.Revisions || col.Events || col.Route != "" {
 				add("%s: the media library is engine-managed — it accepts an `access:` block only", cpath)
 			}
 		case reservedCollections[col.Name]:
@@ -314,6 +330,25 @@ func (s *SchemaDefinition) Validate() error {
 			for _, c := range idx.Columns {
 				if !known[c] {
 					add("%s.indexes[%d]: column %q is not a field of this collection", cpath, i, c)
+				}
+			}
+		}
+
+		// route (#10): a path template whose {field} placeholders must name real
+		// columns, so a consumer can always interpolate it from a record. Date /
+		// format placeholders (`{published_at:2006}`) are a deliberate later add.
+		if col.Route != "" {
+			if !strings.HasPrefix(col.Route, "/") {
+				add("%s.route: must start with '/'", cpath)
+			}
+			for _, ph := range RoutePlaceholders(col.Route) {
+				switch {
+				case strings.ContainsRune(ph, ':'):
+					add("%s.route: date/format placeholders (`{%s}`) are not supported yet", cpath, ph)
+				case ph == "":
+					add("%s.route: empty `{}` placeholder", cpath)
+				case !known[ph]:
+					add("%s.route: `{%s}` is not a field of this collection", cpath, ph)
 				}
 			}
 		}
