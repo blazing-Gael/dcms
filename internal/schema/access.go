@@ -318,6 +318,12 @@ type RoleDef struct {
 // schema-compile time, so a bad value is a config error, not a schema error.
 type SessionConfig struct {
 	TTL string `json:"ttl,omitempty"`
+	// Roles overrides the session lifetime per role (issue #33): a role named here
+	// caps a session held by a user with that role to its (shorter) duration, so an
+	// admin's browser session need not live as long as a reader's. The shortest
+	// matching role wins, and a role TTL only ever shortens the base TTL, never
+	// lengthens it. Keys must be declared roles (checked at schema-compile).
+	Roles map[string]string `json:"roles,omitempty"`
 }
 
 // HasRole reports whether name is a declared role.

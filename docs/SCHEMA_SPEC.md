@@ -682,6 +682,11 @@ auth:
   provider: local                   # local | oidc | both (default local)
   session:                          # local provider: opaque DB-backed sessions
     ttl: 168h                       # Go duration; default 7 days
+    roles:                          # optional per-role TTL override (issue #33)
+      admin: 12h                    # a role listed here caps a session for a user
+      editor: 72h                   # holding it — SHORTEST matching role wins, and
+                                    # a role TTL only shortens, never lengthens, the
+                                    # base ttl. Keys must be declared roles.
   roles:                            # role definitions (referenced by access rules)
     admin:
       label: "Administrator"

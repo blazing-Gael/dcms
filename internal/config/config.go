@@ -257,6 +257,11 @@ type RateLimit struct {
 	APIBurst      int   `yaml:"api_burst"`
 	AuthPerMinute int   `yaml:"auth_per_minute"`
 	AuthBurst     int   `yaml:"auth_burst"`
+	// AnonWrite* meter unauthenticated collection writes (a public signup form)
+	// in their own tight per-IP tier, so tightening them doesn't throttle
+	// authenticated callers (issue #34). Zero ⇒ engine defaults.
+	AnonWritePerMinute int `yaml:"anon_write_per_minute"`
+	AnonWriteBurst     int `yaml:"anon_write_burst"`
 }
 
 // splitList parses a comma-separated env value into trimmed, non-empty entries.
