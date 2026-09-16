@@ -181,7 +181,7 @@ func (s *Server) handleChanges(w http.ResponseWriter, r *http.Request) {
 	for _, rec := range page.Data {
 		projectEvent(rec)
 	}
-	writeListWith(w, r, page, effectiveLimit(q.Limit), nil)
+	writeListWith(w, r, page, effectiveLimit(q.Limit), nil, nil)
 }
 
 // handleDeliveries lists webhook delivery rows (ADR-0021 phase 2), for
@@ -220,7 +220,7 @@ func (s *Server) handleDeliveries(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, s.logger, r, err)
 		return
 	}
-	writeListWith(w, r, page, effectiveLimit(limit), nil)
+	writeListWith(w, r, page, effectiveLimit(limit), nil, nil)
 }
 
 // handleRetryDelivery re-arms a failed or dead delivery (ADR-0021 phase 2): its

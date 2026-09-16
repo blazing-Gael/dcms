@@ -141,3 +141,122 @@ func (s *Server) expandM2M(ctx context.Context, collection, target string, rec s
 // that keeps a pathological record from fetching unboundedly; real pagination of
 // relations is a later refinement.
 const maxM2MExpand = 1000
+
+// maxM2MListExpand caps how many related rows are inlined PER RECORD when a
+// many-to-many is expanded on a list (issue #29). It is tighter than the
+// single-record maxM2MExpand because a list multiplies the cost by the page size;
+// a record with more links than this has its relation truncated, reported via
+// meta.expand_truncated so a consumer can fetch that record's relation directly.
+const maxM2MListExpand = 100
+
+// findAllUpTo pages through a query until it is exhausted or `ceiling` rows have
+// been collected, returning the rows and whether the ceiling cut it short. The
+// store caps a single Find at 100 rows (a locked invariant), so a batched
+// expansion that may match more than that must paginate rather than silently see
+// only the first page.
+func (s *Server) findAllUpTo(ctx context.Context, q store.Query, ceiling int) ([]store.Record, bool, error) {
+	q.SkipCount = true // internal fetch; no COUNT needed
+	var out []store.Record
+	for {
+		page, err := s.db.Find(ctx, q)
+		if err != nil {
+			return nil, false, err
+		}
+		out = append(out, page.Data...)
+		if len(out) >= ceiling {
+			more := len(out) > ceiling || page.NextCursor != ""
+			return out[:ceiling], more, nil
+		}
+		if page.NextCursor == "" {
+			return out, false, nil
+		}
+		q.Cursor = page.NextCursor
+	}
+}
+
+// expandM2MBatch expands a forward many-to-many field across a whole page (issue
+// #29): it pages the join table for every source id on the page, then fetches the
+// distinct targets filtered by the request's lifecycle view. It mirrors
+// expandBelongsToBatch, so a static build fetches a page's relations in
+// O(links/100) queries instead of one request per record. Targets are filtered
+// through coerceExpandedList (the target's read rule + field masks), so expansion
+// never exposes a row a direct read would withhold. Returns whether any record's
+// relation was truncated (capped at maxM2MListExpand, or the page's total links
+// exceeded what could be displayed).
+func (s *Server) expandM2MBatch(ctx context.Context, collection, target string, recs []store.Record, field string) (bool, error) {
+	table := schema.JoinTableName(collection, field)
+
+	seen := map[string]bool{}
+	var sourceIDs []any
+	for _, r := range recs {
+		if id, ok := r["id"].(string); ok && id != "" && !seen[id] {
+			seen[id] = true
+			sourceIDs = append(sourceIDs, id)
+		}
+	}
+	if len(sourceIDs) == 0 {
+		return false, nil
+	}
+
+	// Gather the page's links, bounded to what every record could display at most,
+	// so a pathological page can't scan unboundedly; hitting the bound is truncation.
+	linkCeiling := len(sourceIDs) * maxM2MListExpand
+	links, truncated, err := s.findAllUpTo(ctx, store.Query{
+		Collection: table,
+		Filters:    []store.Filter{{Field: "source_id", Operator: store.In, Value: sourceIDs}},
+	}, linkCeiling)
+	if err != nil {
+		return false, err
+	}
+
+	// Group target ids per source in link order, capping each source at the
+	// per-record limit; collect the distinct target ids to fetch once.
+	linksBySource := make(map[string][]string, len(sourceIDs))
+	targetSeen := map[string]bool{}
+	var targetIDs []any
+	for _, l := range links {
+		sid, _ := l["source_id"].(string)
+		tid, _ := l["target_id"].(string)
+		if sid == "" || tid == "" {
+			continue
+		}
+		if len(linksBySource[sid]) >= maxM2MListExpand {
+			truncated = true
+			continue
+		}
+		linksBySource[sid] = append(linksBySource[sid], tid)
+		if !targetSeen[tid] {
+			targetSeen[tid] = true
+			targetIDs = append(targetIDs, tid)
+		}
+	}
+
+	byID := make(map[string]store.Record, len(targetIDs))
+	if len(targetIDs) > 0 {
+		filters := []store.Filter{{Field: "id", Operator: store.In, Value: targetIDs}}
+		filters = append(filters, s.lifecycleFiltersFor(ctx, target)...)
+		rows, _, err := s.findAllUpTo(ctx, store.Query{Collection: target, Filters: filters}, len(targetIDs))
+		if err != nil {
+			return truncated, err
+		}
+		for _, tr := range s.coerceExpandedList(ctx, target, rows) {
+			if id, ok := tr["id"].(string); ok {
+				byID[id] = tr
+			}
+		}
+	}
+
+	// Attach per record, preserving link order and dropping hidden/unreadable
+	// targets. Always a non-nil slice, so an empty relation serializes as [].
+	for _, r := range recs {
+		id, _ := r["id"].(string)
+		list := make([]store.Record, 0, len(linksBySource[id]))
+		for _, tid := range linksBySource[id] {
+			if obj, ok := byID[tid]; ok {
+				list = append(list, obj)
+			}
+		}
+		r[field] = list
+	}
+	return truncated, nil
+}

@@ -62,6 +62,18 @@ While on **0.x**, minor versions may include breaking changes.
   otherwise. With no `preview` rule, the token gate is unchanged.
 
 ### Added
+- **Expand many-to-many relations on lists (issue #29).** `?expand=<m2m>` was
+  refused on list endpoints ("only belongs-to relations are expandable in lists"),
+  so a static build that needed each record's tags/topics fell back to one request
+  per record — 500 stories = 500 extra calls per deploy. Forward many-to-many is
+  now expanded across the whole page, batched: the join table and the target
+  collection are each fetched in `O(links/100)` queries (paginated past the store's
+  100-row page cap), filtered by the target's read rule and the request's lifecycle
+  view exactly as a direct read is. Each record's inlined relation is capped
+  (`maxM2MListExpand`, 100) so one fat record can't blow up a page; when any record
+  is capped the response carries `meta.expand_truncated: ["<field>", …]` so the
+  consumer can fetch that record's relation directly. Inverse (has-many / reverse
+  m2m) expansion stays single-record-only.
 - **`route` — where a collection's records live on the front end (issue #10).** A
   collection can declare `route: /golpo/{slug}` (with `{field}` placeholders) plus
   a `meta.site_url`; both are served on `/__schema`. It is metadata, not routing —

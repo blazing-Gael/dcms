@@ -229,7 +229,7 @@ func (s *Server) handleMediaList(w http.ResponseWriter, r *http.Request) {
 		s.collections[schema.MediaCollection].CoerceResponse(rec)
 		s.addMediaURL(rec)
 	}
-	writeListWith(w, r, page, effectiveLimit(q.Limit), nil)
+	writeListWith(w, r, page, effectiveLimit(q.Limit), nil, nil)
 }
 
 func (s *Server) handleMediaGet(w http.ResponseWriter, r *http.Request) {

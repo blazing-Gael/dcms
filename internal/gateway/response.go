@@ -62,12 +62,13 @@ func writeDataWith(w http.ResponseWriter, r *http.Request, status int, data any,
 
 // writeList writes a list success envelope with pagination metadata.
 func writeList(w http.ResponseWriter, page store.Page, limit int) {
-	writeListWith(w, nil, page, limit, nil)
+	writeListWith(w, nil, page, limit, nil, nil)
 }
 
 // writeListWith writes a list envelope, adding the `included` reference manifest
 // when non-empty (ADR-0015) and, for a GET, an ETag with If-None-Match handling.
-func writeListWith(w http.ResponseWriter, r *http.Request, page store.Page, limit int, included refManifest) {
+// extraMeta merges extra keys into the response `meta` (e.g. expand_truncated).
+func writeListWith(w http.ResponseWriter, r *http.Request, page store.Page, limit int, included refManifest, extraMeta map[string]any) {
 	data := page.Data
 	if data == nil {
 		data = []store.Record{} // encode an empty list as [], never null
@@ -80,6 +81,9 @@ func writeListWith(w http.ResponseWriter, r *http.Request, page store.Page, limi
 	// than report a bogus number.
 	if page.Total >= 0 {
 		meta["total"] = page.Total
+	}
+	for k, v := range extraMeta {
+		meta[k] = v
 	}
 	env := map[string]any{"data": data, "meta": meta}
 	if len(included) > 0 {
@@ -193,14 +197,19 @@ func (s *Server) writeRecords(w http.ResponseWriter, r *http.Request, collection
 		s.maskReadFields(r.Context(), collection, rec)
 	}
 	var included refManifest
+	var extraMeta map[string]any
 	if len(expand) > 0 {
 		included = refManifest{}
-		if err := s.expandListRecords(r.Context(), collection, page.Data, expand, included); err != nil {
+		truncated, err := s.expandListRecords(r.Context(), collection, page.Data, expand, included)
+		if err != nil {
 			writeStoreError(w, s.logger, r, err)
 			return
 		}
+		if len(truncated) > 0 {
+			extraMeta = map[string]any{"expand_truncated": truncated}
+		}
 	}
-	writeListWith(w, r, page, limit, included)
+	writeListWith(w, r, page, limit, included, extraMeta)
 }
 
 // writeError writes an error envelope: {"error": {...}}.
