@@ -28,6 +28,22 @@ While on **0.x**, minor versions may include breaking changes.
   `X-Robots-Tag: noindex, nofollow` so crawlers skip them even when public.
   `/__health` and `/__ready` stay ungated for probes.
 
+### Security
+- **`publish` access rule — gate going live separately from editing (issue #23).**
+  Publishing was authorized like any update, so anyone who could edit a draft could
+  also take it live. A new per-collection `publish` rule gates the
+  `publish`/`unpublish`/`archive` transitions independently of `update`, so a writer
+  can draft while only an editor ships. Evaluated per record like every other rule
+  (`owner`/`owner_field`/`any:` work); `restore` stays an update. Opt-in and
+  backward compatible (unset ⇒ transitions fall back to the `update` rule). `public`
+  is rejected and `publish` requires `publishing` — both schema-compile errors.
+- **Revision history follows the `preview` rule (issue #24).** A collection's
+  version history was visible only with the shared preview token — the same secret
+  problem #20 removed for records. When a collection declares a `preview` rule,
+  history reads (`/revisions`, `/revisions/:version`) now obey it per record, so a
+  writer sees their own draft's history and an editor diffs a submission, 404
+  otherwise. With no `preview` rule, the token gate is unchanged.
+
 ### Added
 - **`route` — where a collection's records live on the front end (issue #10).** A
   collection can declare `route: /golpo/{slug}` (with `{field}` placeholders) plus

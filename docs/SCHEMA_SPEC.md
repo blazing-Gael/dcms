@@ -449,9 +449,13 @@ revisions: true
 # lifecycle columns (_status/_published_at/_deleted_at) as they are, and is itself
 # recorded as a new revision (history is append-only).
 #
-# History endpoints are gated by the same preview token as above (a request without
-# it gets 404). Snapshots live in an engine-managed `_revisions` collection that is
-# added only when at least one collection opts in.
+# History reads follow the collection's `preview` rule when it declares one (issue
+# #24): a record's history is visible to whoever may preview that record — so a
+# writer sees their own draft's history and an editor diffs a submission, per
+# record, 404 otherwise. With no `preview` rule, history stays gated by the shared
+# preview token (a request without it gets 404). `restore` is a write and obeys the
+# `update`/`preview` rules like any transition. Snapshots live in an engine-managed
+# `_revisions` collection that is added only when at least one collection opts in.
 ```
 
 ---
@@ -526,6 +530,29 @@ stories:
   schema-compile errors. Consequence: once `preview` is set, a caller who holds
   `update` but is not in `preview` can no longer edit a *draft* (published records,
   being public, are unaffected), so name everyone who manages hidden states.
+
+**Publish — who may take content live (issue #23).** A sixth rule, `publish`,
+gates the go-live transitions (`publish` / `unpublish` / `archive`) *separately*
+from editing, so a writer may draft but not decide what ships:
+
+```yaml
+stories:
+  publishing: true
+  access:
+    create:  authenticated
+    update:  { any: [editor, owner] }   # owners edit their own drafts
+    publish: [editor]                   # only editors take a story live
+```
+
+- **Unset ⇒ transitions fall back to the `update` rule** (today's behaviour), so
+  existing schemas are unchanged.
+- **Set ⇒ `publish`/`unpublish`/`archive` require it instead of `update`.** The
+  `restore` transition (undo soft-delete) is *not* gated by `publish` — it stays an
+  update, governed by the `preview` rule like any other write on a hidden record.
+- Evaluated per record like every other rule, so `owner`/`owner_field`/`any:` work.
+- **`public` is not allowed** (anyone could publish) and `publish` requires
+  `publishing` (there are no go-live transitions to gate otherwise) — both are
+  schema-compile errors.
 
 Field-level access (LIVE — ADR-0016):
 
