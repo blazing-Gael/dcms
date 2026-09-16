@@ -206,8 +206,10 @@ func (s *Server) Handler() http.Handler {
 		c := rl.withDefaults()
 		apiLimiter := newMemoryLimiter(c.APIPerMinute, c.APIBurst)
 		authLimiter := newMemoryLimiter(c.AuthPerMinute, c.AuthBurst)
+		anonWriteLimiter := newMemoryLimiter(c.AnonWritePerMinute, c.AnonWriteBurst)
 		trust := s.opts.TrustProxy
-		apiLimit = s.rateLimit(apiLimiter, func(r *http.Request) string { return s.apiRateKey(r, trust) })
+		// Anonymous collection writes get their own tight per-IP tier (issue #34).
+		apiLimit = s.rateLimitAPI(apiLimiter, anonWriteLimiter, trust)
 		authLimit = s.rateLimit(authLimiter, func(r *http.Request) string { return "ip:" + clientIP(r, trust) })
 	}
 

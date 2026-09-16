@@ -8,6 +8,20 @@ While on **0.x**, minor versions may include breaking changes.
 
 ## [Unreleased]
 
+### Security
+- **Per-role session TTL (issue #33).** Session lifetime was a single
+  `auth.session.ttl`, so a stolen 30-day admin token lived as long as a reader's.
+  `auth.session.roles: { admin: 12h, editor: 72h }` now caps a session by the roles
+  its user holds — the shortest matching role wins, and a role TTL only shortens the
+  base, never lengthens it. A role named there that isn't declared is a schema error
+  (a typo would silently leave the long TTL in place).
+- **Anonymous writes get their own rate-limit tier (issue #34).** A `create: public`
+  form (a newsletter signup) sat in the general 6000/min API bucket, so throttling it
+  meant throttling every authenticated caller (a static-site sync, an editor's
+  autosave) too. Unauthenticated collection writes are now metered in a separate,
+  tight per-IP tier (default 30/min, burst 10; `server.rate_limit.anon_write_*`),
+  leaving the authenticated API budget untouched. Over-limit ⇒ 429 with `Retry-After`.
+
 ### Changed
 - **Strict config & schema keys — a typo is now an error, not a silent no-op
   (issue #35). BREAKING for files with stray keys.** An unknown key in

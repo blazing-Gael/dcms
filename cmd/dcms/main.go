@@ -260,10 +260,12 @@ func runServer(cmd *cobra.Command, mode serverMode) error {
 	rlEnabled := cfg.Server.RateLimit.Enabled == nil || *cfg.Server.RateLimit.Enabled
 	if rlEnabled {
 		rateLimit = &gateway.RateLimitOptions{
-			APIPerMinute:  cfg.Server.RateLimit.APIPerMinute,
-			APIBurst:      cfg.Server.RateLimit.APIBurst,
-			AuthPerMinute: cfg.Server.RateLimit.AuthPerMinute,
-			AuthBurst:     cfg.Server.RateLimit.AuthBurst,
+			APIPerMinute:       cfg.Server.RateLimit.APIPerMinute,
+			APIBurst:           cfg.Server.RateLimit.APIBurst,
+			AuthPerMinute:      cfg.Server.RateLimit.AuthPerMinute,
+			AuthBurst:          cfg.Server.RateLimit.AuthBurst,
+			AnonWritePerMinute: cfg.Server.RateLimit.AnonWritePerMinute,
+			AnonWriteBurst:     cfg.Server.RateLimit.AnonWriteBurst,
 		}
 	}
 

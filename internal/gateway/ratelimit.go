@@ -21,6 +21,12 @@ const (
 	defaultAPIBurst      = 200
 	defaultAuthPerMinute = 60 // per client IP
 	defaultAuthBurst     = 20
+	// Anonymous writes (unauthenticated POST/PUT/PATCH/DELETE — e.g. a public
+	// `create: public` signup form) get their own tight per-IP tier (issue #34), so
+	// lowering it to protect that one surface doesn't throttle authenticated callers
+	// (a static-site sync, an editor's autosave) sharing the general API bucket.
+	defaultAnonWritePerMinute = 30 // per client IP
+	defaultAnonWriteBurst     = 10
 	// maxRateBuckets bounds limiter memory: past this many distinct keys, idle
 	// (refilled-to-full) buckets are swept before a new key is admitted. This
 	// keeps an IP-spraying attacker from growing the map without bound.
@@ -45,6 +51,9 @@ type RateLimitOptions struct {
 	APIBurst      int
 	AuthPerMinute int // unauthenticated /auth endpoints, keyed per client IP
 	AuthBurst     int
+	// Anonymous collection writes get their own tier, keyed per client IP (issue #34).
+	AnonWritePerMinute int
+	AnonWriteBurst     int
 }
 
 func (o RateLimitOptions) withDefaults() RateLimitOptions {
@@ -59,6 +68,12 @@ func (o RateLimitOptions) withDefaults() RateLimitOptions {
 	}
 	if o.AuthBurst <= 0 {
 		o.AuthBurst = defaultAuthBurst
+	}
+	if o.AnonWritePerMinute <= 0 {
+		o.AnonWritePerMinute = defaultAnonWritePerMinute
+	}
+	if o.AnonWriteBurst <= 0 {
+		o.AnonWriteBurst = defaultAnonWriteBurst
 	}
 	return o
 }
@@ -128,22 +143,60 @@ func (l *memoryLimiter) sweep(now time.Time) {
 	}
 }
 
+// denyRateLimited writes the 429 with a Retry-After hint.
+func denyRateLimited(w http.ResponseWriter, retry time.Duration) {
+	secs := int(math.Ceil(retry.Seconds()))
+	if secs < 1 {
+		secs = 1
+	}
+	w.Header().Set("Retry-After", strconv.Itoa(secs))
+	writeError(w, http.StatusTooManyRequests, apiError{Code: "RATE_LIMITED", Message: "too many requests"})
+}
+
 // rateLimit builds a middleware that admits or rejects each request by the given
 // limiter, keyed by key(r). A rejection is a 429 with a Retry-After header.
 func (s *Server) rateLimit(l RateLimiter, key func(*http.Request) string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if ok, retry := l.Allow(key(r)); !ok {
-				secs := int(math.Ceil(retry.Seconds()))
-				if secs < 1 {
-					secs = 1
-				}
-				w.Header().Set("Retry-After", strconv.Itoa(secs))
-				writeError(w, http.StatusTooManyRequests, apiError{Code: "RATE_LIMITED", Message: "too many requests"})
+				denyRateLimited(w, retry)
 				return
 			}
 			next.ServeHTTP(w, r)
 		})
+	}
+}
+
+// rateLimitAPI is the collection-API middleware. An anonymous write (an
+// unauthenticated POST/PUT/PATCH/DELETE — e.g. a `create: public` form) is metered
+// by its own tight per-IP tier so it can't drain the general budget shared by
+// authenticated callers (issue #34); every other request uses the general API tier
+// keyed per principal (IP fallback). Runs after withPrincipal, so the identity is
+// known.
+func (s *Server) rateLimitAPI(api, anonWrite RateLimiter, trust bool) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			limiter, key := api, s.apiRateKey(r, trust)
+			if isWriteMethod(r.Method) && !principalFromContext(r.Context()).Authenticated {
+				limiter, key = anonWrite, "aw:"+clientIP(r, trust)
+			}
+			if ok, retry := limiter.Allow(key); !ok {
+				denyRateLimited(w, retry)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// isWriteMethod reports whether an HTTP method mutates state (so an anonymous one
+// is metered by the stricter anon-write tier).
+func isWriteMethod(method string) bool {
+	switch method {
+	case http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
+		return true
+	default:
+		return false
 	}
 }
 
