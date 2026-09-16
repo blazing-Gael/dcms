@@ -90,6 +90,18 @@ func (s *Server) handleRestore(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// publishTransition reports whether an operation is a publishing-state change
+// gated by the `publish` rule (#23). restore (undo soft-delete) is not — it stays
+// an update, and its visibility is governed by the preview rule.
+func publishTransition(op string) bool {
+	switch op {
+	case "publish", "unpublish", "archive":
+		return true
+	default:
+		return false
+	}
+}
+
 // applyTransition performs the managed Update and writes the resulting record,
 // capturing a revision (labeled with operation) on revisioned collections. A
 // missing id surfaces as 404 via the store's ErrNotFound.
@@ -103,7 +115,17 @@ func (s *Server) applyTransition(w http.ResponseWriter, r *http.Request, collect
 		s.recordNotFound(w)
 		return
 	}
-	if !s.authorizeRecordWrite(w, r, collection, id, schema.ActionUpdate) {
+	// A publishing transition (publish/unpublish/archive) is gated by the `publish`
+	// rule when the collection declares one, so going live can require more than
+	// editing (issue #23); it falls back to the update rule otherwise. restore is
+	// not a publishing transition — it stays an update.
+	rule := s.collections[collection].AccessRule(schema.ActionUpdate)
+	if publishTransition(operation) {
+		if pr, ok := s.collections[collection].PublishRule(); ok {
+			rule = pr
+		}
+	}
+	if !s.authorizeWriteRule(w, r, collection, id, rule) {
 		return
 	}
 	rec, err := s.updateAndRevise(r.Context(), collection, data, operation)

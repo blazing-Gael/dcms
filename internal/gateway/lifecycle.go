@@ -172,7 +172,19 @@ func (s *Server) recordPreviewVisible(ctx context.Context, collection string, re
 	if s.recordVisible(collection, rec, visibility{}) {
 		return true // publicly visible regardless of identity
 	}
-	// Hidden record: eligible only via the identity preview rule.
+	return s.previewEligible(ctx, collection, rec) // hidden: only the preview rule
+}
+
+// previewEligible reports whether the caller may see this record's hidden state —
+// the record-level preview decision alone, WITHOUT the public fallback. The
+// shared token grants it outright; otherwise the collection's `preview` rule must
+// admit the caller (allow, or ownerScope with the record's owner matching). Used
+// where "can this identity see behind the curtain" is the question independent of
+// whether the record happens to be public — e.g. revision history (issue #24).
+func (s *Server) previewEligible(ctx context.Context, collection string, rec store.Record) bool {
+	if visibilityFromContext(ctx).tokenPreview {
+		return true
+	}
 	switch d, field := s.previewDecision(ctx, collection); d {
 	case allow:
 		return true

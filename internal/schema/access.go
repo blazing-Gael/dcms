@@ -19,6 +19,10 @@ const (
 	// ActionPreview gates visibility of hidden lifecycle states (ADR-0023). It is
 	// not a CRUD operation and has no default rule; see CollectionDef.PreviewRule.
 	ActionPreview AccessAction = "preview"
+	// ActionPublish gates the publishing transitions (publish/unpublish/archive),
+	// separately from update (issue #23). No default; falls back to update when
+	// unset — see CollectionDef.PublishRule.
+	ActionPublish AccessAction = "publish"
 )
 
 // RuleKind is the parsed shape of a single access rule value (ADR-0016).
@@ -154,6 +158,10 @@ type AccessRules struct {
 	Update  *Rule `json:"update,omitempty"`
 	Delete  *Rule `json:"delete,omitempty"`
 	Preview *Rule `json:"preview,omitempty"`
+	// Publish gates publish/unpublish/archive (issue #23). Unset ⇒ these fall back
+	// to the update rule (today's behaviour), so a collection tightens who may go
+	// live without also tightening who may edit.
+	Publish *Rule `json:"publish,omitempty"`
 }
 
 // defaultRule is the effective policy for an action with no explicit rule.
@@ -194,6 +202,16 @@ func (c CollectionDef) AccessRule(action AccessAction) Rule {
 func (c CollectionDef) PreviewRule() (Rule, bool) {
 	if c.Access != nil && c.Access.Preview != nil {
 		return *c.Access.Preview, true
+	}
+	return Rule{}, false
+}
+
+// PublishRule returns the collection's `publish` rule and whether one is declared
+// (issue #23). Unset ⇒ the caller falls back to the update rule, so publishing is
+// no stricter than editing unless the schema says so.
+func (c CollectionDef) PublishRule() (Rule, bool) {
+	if c.Access != nil && c.Access.Publish != nil {
+		return *c.Access.Publish, true
 	}
 	return Rule{}, false
 }
@@ -339,8 +357,10 @@ func parseAccess(node *yaml.Node) (*AccessRules, error) {
 			ar.Delete = rule
 		case ActionPreview:
 			ar.Preview = rule
+		case ActionPublish:
+			ar.Publish = rule
 		default:
-			return nil, fmt.Errorf("unknown access action %q (want read, create, update, delete, or preview)", e.Key)
+			return nil, fmt.Errorf("unknown access action %q (want read, create, update, delete, preview, or publish)", e.Key)
 		}
 	}
 	return ar, nil

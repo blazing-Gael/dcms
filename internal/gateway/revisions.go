@@ -120,6 +120,23 @@ func (s *Server) previewDenied(r *http.Request) bool {
 	return s.opts.PreviewToken != "" && !visibilityFromContext(r.Context()).tokenPreview
 }
 
+// revisionHistoryDenied decides whether a record's history is hidden from the
+// caller (issue #24). When the collection declares a `preview` rule, history
+// follows it record-level (so a writer sees their own draft's history, an editor
+// diffs a submission), with the shared token still a bypass. Without a preview
+// rule, the pre-existing token gate stands. Returns true (→ 404) when denied; a
+// missing record is treated as denied and the read rule is checked separately.
+func (s *Server) revisionHistoryDenied(r *http.Request, collection, id string) bool {
+	if _, ok := s.collections[collection].PreviewRule(); !ok {
+		return s.previewDenied(r) // no preview rule → token gate as before
+	}
+	rec, err := s.db.FindOne(r.Context(), collection, id)
+	if err != nil {
+		return true
+	}
+	return !s.previewEligible(r.Context(), collection, rec)
+}
+
 // handleRevisionList returns a record's version history, newest first, without the
 // heavy snapshot blobs.
 func (s *Server) handleRevisionList(w http.ResponseWriter, r *http.Request) {
@@ -128,7 +145,7 @@ func (s *Server) handleRevisionList(w http.ResponseWriter, r *http.Request) {
 		s.handleNotFound(w, r)
 		return
 	}
-	if s.previewDenied(r) || !s.authorizeRecordRead(r.Context(), collection, chi.URLParam(r, "id")) {
+	if s.revisionHistoryDenied(r, collection, chi.URLParam(r, "id")) || !s.authorizeRecordRead(r.Context(), collection, chi.URLParam(r, "id")) {
 		s.handleNotFound(w, r)
 		return
 	}
@@ -159,7 +176,7 @@ func (s *Server) handleRevisionGet(w http.ResponseWriter, r *http.Request) {
 		s.handleNotFound(w, r)
 		return
 	}
-	if s.previewDenied(r) || !s.authorizeRecordRead(r.Context(), collection, chi.URLParam(r, "id")) {
+	if s.revisionHistoryDenied(r, collection, chi.URLParam(r, "id")) || !s.authorizeRecordRead(r.Context(), collection, chi.URLParam(r, "id")) {
 		s.handleNotFound(w, r)
 		return
 	}
@@ -187,6 +204,12 @@ func (s *Server) handleRevisionRestore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := chi.URLParam(r, "id")
+	// A record the caller may not preview does not exist for them (#20/#24), so a
+	// restore of it is 404 — agreeing with get-one and history.
+	if s.writeHidden(r.Context(), collection, id) {
+		s.recordNotFound(w)
+		return
+	}
 	if !s.authorizeRecordWrite(w, r, collection, id, schema.ActionUpdate) {
 		return
 	}
