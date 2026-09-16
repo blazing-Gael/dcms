@@ -49,6 +49,12 @@ server:
   #   api_burst: 200
   #   auth_per_minute: 60      # per client IP
   #   auth_burst: 20
+  #   # Anonymous collection writes (an unauthenticated POST/PATCH/DELETE — e.g. a
+  #   # `create: public` signup form) get their own tight per-IP tier, so lowering
+  #   # it to protect that surface doesn't throttle authenticated callers sharing
+  #   # the general API budget. Raise it if many users share one IP (CGNAT).
+  #   anon_write_per_minute: 30
+  #   anon_write_burst: 10
   # Trust a fronting reverse proxy's X-Forwarded-* headers: X-Forwarded-For for
   # rate-limit client-IP keying, and X-Forwarded-Proto for the session cookie's
   # Secure flag when the proxy terminates TLS. Enable ONLY behind a proxy you

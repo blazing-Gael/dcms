@@ -54,7 +54,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token, expiresAt, err := s.issueSession(r.Context(), user["id"].(string))
+	token, expiresAt, err := s.issueSession(r.Context(), user["id"].(string), rolesOf(user))
 	if err != nil {
 		writeStoreError(w, s.logger, r, err)
 		return
@@ -118,13 +118,14 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 }
 
 // issueSession creates a session row for userID and returns the raw opaque token
-// (shown to the client once) and its expiry. Only the token's hash is stored.
-func (s *Server) issueSession(ctx context.Context, userID string) (string, time.Time, error) {
+// (shown to the client once) and its expiry. Only the token's hash is stored. The
+// user's roles set the lifetime: a per-role TTL can shorten it (issue #33).
+func (s *Server) issueSession(ctx context.Context, userID string, roles []string) (string, time.Time, error) {
 	token, err := newSessionToken()
 	if err != nil {
 		return "", time.Time{}, err
 	}
-	expiresAt := time.Now().UTC().Add(s.sessionTTL())
+	expiresAt := time.Now().UTC().Add(s.sessionTTL(roles))
 	_, err = s.db.Create(ctx, store.WriteInput{
 		Collection: schema.SessionsCollection,
 		Data: store.Record{
@@ -139,14 +140,27 @@ func (s *Server) issueSession(ctx context.Context, userID string) (string, time.
 	return token, expiresAt, nil
 }
 
-// sessionTTL is the configured session lifetime, or the engine default.
-func (s *Server) sessionTTL() time.Duration {
+// sessionTTL is the session lifetime for a user with the given roles: the base
+// (auth.session.ttl, or the engine default), tightened by any per-role TTL the
+// user matches. Roles only shorten — the shortest matching role wins (issue #33) —
+// so naming a role can cap an admin's session without lengthening anyone else's.
+func (s *Server) sessionTTL(roles []string) time.Duration {
+	ttl := defaultSessionTTL
 	if raw := s.schema.Auth.Session.TTL; raw != "" {
 		if d, err := time.ParseDuration(raw); err == nil && d > 0 {
-			return d
+			ttl = d
 		}
 	}
-	return defaultSessionTTL
+	for _, role := range roles {
+		raw, ok := s.schema.Auth.Session.Roles[role]
+		if !ok {
+			continue
+		}
+		if d, err := time.ParseDuration(raw); err == nil && d > 0 && d < ttl {
+			ttl = d
+		}
+	}
+	return ttl
 }
 
 // findUserByEmail returns the _users row for an email, or nil if none exists.

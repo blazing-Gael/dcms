@@ -106,6 +106,14 @@ func (s *SchemaDefinition) Validate() error {
 	if p := s.Auth.Provider; p != "" && p != "local" && p != "oidc" && p != "both" {
 		add("auth.provider: %q is not one of local, oidc, both", p)
 	}
+	// A per-role session TTL keyed by an undeclared role would silently never apply
+	// (issue #33) — the exact silent-failure class strict keys guards against — so a
+	// typo is a compile error.
+	for role := range s.Auth.Session.Roles {
+		if !roleSet[role] {
+			add("auth.session.roles.%s: role %q is not declared in auth.roles", role, role)
+		}
+	}
 
 	seenCol := make(map[string]bool)
 	for _, col := range s.Collections {
