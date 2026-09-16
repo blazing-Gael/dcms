@@ -8,6 +8,23 @@ While on **0.x**, minor versions may include breaking changes.
 
 ## [Unreleased]
 
+### Changed
+- **Strict config & schema keys — a typo is now an error, not a silent no-op
+  (issue #35). BREAKING for files with stray keys.** An unknown key in
+  `dcms.config.yaml` was dropped, so `server.rate_limit.requests_per_minute: 60`
+  (no such key) left rate limiting on its 6000/min default with nothing logged;
+  likewise an unrecognised collection directive (`publising: true`,
+  `soft_delet: true`) was silently skipped, disabling the setting it meant to turn
+  on. Config is now decoded strictly (unknown key at any depth ⇒ startup error),
+  and unknown schema directives / top-level / `meta` keys fail compilation with a
+  did-you-mean. Directives reserved for later phases (`vectorize`, `i18n`, `hooks`,
+  `schedule`) still compile but emit a "recognized but not implemented yet" warning
+  at startup and from `dcms validate`. `dcms validate` now checks the config file
+  too. **Upgrade note:** a deployment with a stray or misspelled key will now fail
+  to start — run `dcms validate` and fix the reported key. Secrets left in the
+  config file (env-only fields like `auth.smtp.password`) are rejected rather than
+  ignored.
+
 ### Security
 - **Identity-based preview — hidden lifecycle states without a shared secret
   (issue #20, ADR-0023).** Who may see a draft/scheduled/archived/trashed record

@@ -73,6 +73,61 @@ func TestLoad_BadYAMLReportsFound(t *testing.T) {
 	}
 }
 
+func TestLoad_UnknownKeyIsRejected(t *testing.T) {
+	// The real Agrojatra bug: keys that don't exist under server.rate_limit, so
+	// rate limiting silently ran on its 6000/min default (issue #35). Strict decode
+	// must reject them at load time, at any depth, rather than dropping them.
+	cases := map[string]string{
+		"nested typo":    "server:\n  rate_limit:\n    requests_per_minute: 60\n    burst: 20\n",
+		"top-level typo": "databse:\n  driver: sqlite\n",
+		"secret in file": "auth:\n  smtp:\n    password: hunter2\n", // yaml:"-" ⇒ unknown
+	}
+	for name, body := range cases {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "dcms.config.yaml")
+			if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			_, found, err := Load(path)
+			if err == nil {
+				t.Fatal("expected an unknown-key error, got nil")
+			}
+			if !found {
+				t.Error("found = false even though the file exists")
+			}
+		})
+	}
+}
+
+func TestLoad_ExampleConfigIsStrictClean(t *testing.T) {
+	// The annotated example we ship (and point users at) must itself pass strict
+	// decode — otherwise the reference for "what keys exist" would contain a key
+	// that doesn't (issue #35).
+	path := filepath.Join("..", "..", "examples", "dcms.config.yaml")
+	if _, _, err := Load(path); err != nil {
+		t.Fatalf("examples/dcms.config.yaml failed strict decode: %v", err)
+	}
+}
+
+func TestLoad_EmptyFileKeepsDefaults(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "dcms.config.yaml")
+	if err := os.WriteFile(path, []byte(""), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, found, err := Load(path)
+	if err != nil {
+		t.Fatalf("empty file should load: %v", err)
+	}
+	if !found {
+		t.Error("found = false for an existing (empty) file")
+	}
+	if cfg.Server.Port != 3000 {
+		t.Errorf("port = %d, want default 3000 for an empty file", cfg.Server.Port)
+	}
+}
+
 func TestApplyEnv_OverridesAndValidates(t *testing.T) {
 	t.Setenv("DCMS_SCHEMA", "/etc/dcms/schema.yaml")
 	t.Setenv("DCMS_DB", "/var/lib/dcms/store.db")

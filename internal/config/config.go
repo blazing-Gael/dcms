@@ -15,8 +15,10 @@
 package config
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strconv"
 	"strings"
@@ -305,8 +307,20 @@ func Load(path string) (Config, bool, error) {
 		}
 		return cfg, false, fmt.Errorf("read config %q: %w", path, err)
 	}
-	if err := yaml.Unmarshal(src, &cfg); err != nil {
-		return cfg, true, fmt.Errorf("parse config %q: %w", path, err)
+	// Strict decode: an unknown key is a hard error, not a silent drop. A typo like
+	// `server.rate_limit.requests_per_minute` (a key that doesn't exist) must not
+	// leave the real setting on its default with nothing said — that is how a
+	// public form ended up on the 6000/min default (issue #35). KnownFields walks
+	// the whole nested struct, so a mistyped key at any depth is caught. Keys bound
+	// to env-only secret fields (yaml:"-") are unknown here too, so a secret left
+	// in the file is rejected rather than silently ignored (secrets rule, ADR-0009).
+	dec := yaml.NewDecoder(bytes.NewReader(src))
+	dec.KnownFields(true)
+	if err := dec.Decode(&cfg); err != nil {
+		if errors.Is(err, io.EOF) {
+			return cfg, true, nil // empty file — keep the defaults
+		}
+		return cfg, true, fmt.Errorf("parse config %q: %w\nan unrecognized key is usually a typo or a renamed/removed setting; check it against the documented config keys (see examples/dcms.config.yaml)", path, err)
 	}
 	return cfg, true, nil
 }

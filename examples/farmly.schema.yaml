@@ -11,22 +11,6 @@ meta:
   description: "Farm-to-table marketplace — local food producers selling direct to customers"
   base_url: /api/v1
 
-brand:
-  name: "Farmly"
-  tagline: "Farm to table, direct."
-  colors:
-    primary: "#2D6A4F"
-    accent: "#52B788"
-    background: "#F9FAF7"
-    text: "#1A1A1A"
-  fonts:
-    heading: "Fraunces"
-    body: "Inter"
-  logo_url: "https://cdn.farmly.com/logo.svg"
-  tone: "warm, honest, local"
-  rtl: false
-  locale: en
-
 # ── Auth (ADR-0016) ─────────────────────────────────────────────────────
 # Local identity: opaque, DB-backed sessions. Log in at POST /auth/login and
 # send the returned token as `Authorization: Bearer <token>` (a HttpOnly
