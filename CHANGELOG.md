@@ -62,6 +62,17 @@ While on **0.x**, minor versions may include breaking changes.
   otherwise. With no `preview` rule, the token gate is unchanged.
 
 ### Added
+- **Optimistic concurrency — `concurrency: true` + `If-Match` (issue #26, ADR-0027).**
+  Writes had no concurrency control, so two people editing the same record silently
+  overwrote each other (a lost update with no signal). A collection can now opt into
+  `concurrency: true`, which adds an engine-managed `_version` counter (starts at 1,
+  bumped on every write). A client reads `_version` and passes it back as an
+  `If-Match` header; if the record moved on since, the write is refused with **412
+  Precondition Failed** (`VERSION_CONFLICT`) instead of clobbering the other edit.
+  Applies to every write (PATCH, lifecycle transitions, restore, delete). Per-request
+  opt-in — a write without `If-Match` still succeeds (last-writer-wins) — and sending
+  `If-Match` to a collection that doesn't enable `concurrency` is a 400, never a
+  silent no-op. Gateway-owned; the store interface is untouched.
 - **Scheduled go-lives emit a `went_live` event (issue #28, ADR-0026).** A scheduled
   publish (a future `_published_at`) became visible when the clock passed it with no
   write, so the change feed and webhooks — which are write-driven — never reported

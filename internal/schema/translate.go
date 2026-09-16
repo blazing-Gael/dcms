@@ -150,6 +150,11 @@ func (c CollectionDef) ToCollectionMeta() store.CollectionMeta {
 	meta.Columns = append(meta.Columns, lcCols...)
 	meta.Indexes = append(meta.Indexes, lcIdx...)
 
+	// Optimistic-concurrency version column (issue #26), when opted in.
+	if vc, ok := c.versionColumn(); ok {
+		meta.Columns = append(meta.Columns, vc)
+	}
+
 	for _, idx := range c.Indexes {
 		meta.Indexes = append(meta.Indexes, store.IndexMeta{Columns: idx.Columns})
 	}

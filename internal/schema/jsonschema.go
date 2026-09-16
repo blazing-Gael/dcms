@@ -166,6 +166,9 @@ func (c CollectionDef) recordSchema() obj {
 	if c.SoftDelete {
 		props[LifecycleDeletedAt] = readOnlyDateTime()
 	}
+	if c.Concurrency {
+		props[ConcurrencyVersion] = obj{"type": "integer", "readOnly": true}
+	}
 	return obj{"type": "object", "properties": props}
 }
 

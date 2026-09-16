@@ -13,7 +13,7 @@ import (
 
 // knownDirectives are the collection directives the parser handles today. Used
 // to make an unknown-directive error actionable (did-you-mean) — issue #35.
-var knownDirectives = []string{"fields", "timestamps", "indexes", "publishing", "soft_delete", "revisions", "events", "route", "access"}
+var knownDirectives = []string{"fields", "timestamps", "indexes", "publishing", "soft_delete", "revisions", "events", "concurrency", "route", "access"}
 
 // reservedDirectives are recognized but not implemented yet (later phases). They
 // are allowed with a warning rather than an error, so a schema can forward-declare
@@ -207,6 +207,10 @@ func toCollection(name string, node *yaml.Node) (CollectionDef, []string, error)
 		case "events":
 			if err := e.Val.Decode(&col.Events); err != nil {
 				return col, nil, fmt.Errorf("events: %w", err)
+			}
+		case "concurrency":
+			if err := e.Val.Decode(&col.Concurrency); err != nil {
+				return col, nil, fmt.Errorf("concurrency: %w", err)
 			}
 		case "route":
 			if err := e.Val.Decode(&col.Route); err != nil {

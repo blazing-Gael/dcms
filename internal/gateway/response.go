@@ -222,6 +222,12 @@ func writeError(w http.ResponseWriter, status int, e apiError) {
 func writeStoreError(w http.ResponseWriter, logger *slog.Logger, r *http.Request, err error) {
 	var ve *store.ValidationError
 	switch {
+	case errors.Is(err, errVersionConflict):
+		// Optimistic concurrency (issue #26): the record moved on since the caller
+		// read it, so the write is refused rather than silently overwriting.
+		writeError(w, http.StatusPreconditionFailed, apiError{
+			Code: "VERSION_CONFLICT", Message: "record was modified by another write; re-read it and retry",
+		})
 	case errors.As(err, &ve):
 		writeError(w, http.StatusUnprocessableEntity, apiError{
 			Code: "VALIDATION_ERROR", Message: "validation failed", Fields: ve.Fields,

@@ -476,6 +476,30 @@ revisions: true
 
 ---
 
+## Optimistic concurrency (issue #26, ADR-0027)
+
+```yaml
+concurrency: true
+# Adds an engine-managed `_version` column: an integer that starts at 1 and the
+# engine increments on every write (readonly, never client-settable).
+#
+# A client reads `_version` from a record and passes it back as an `If-Match`
+# header on a write:
+#   PATCH /api/v1/<collection>/:id      If-Match: "3"   {...}
+# If the record's current version still matches, the write proceeds and the version
+# bumps; if it has moved on (someone else wrote in between), the write is refused
+# with 412 Precondition Failed (code VERSION_CONFLICT) instead of silently
+# overwriting the concurrent edit. Re-read the record and retry.
+#
+# - Per-request opt-in: a write WITHOUT If-Match still succeeds (last-writer-wins),
+#   so concurrency is enforced only when a client asks for it.
+# - Applies to every write: PATCH, the lifecycle transitions, restore, and delete.
+# - Sending If-Match to a collection that does NOT set `concurrency` is a 400, not a
+#   silent no-op — so a client never gets a false sense of protection.
+```
+
+---
+
 ## Access control (collection-level rules are LIVE — ADR-0016)
 
 ```yaml

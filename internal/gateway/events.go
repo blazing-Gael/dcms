@@ -22,7 +22,7 @@ func (s *Server) emitsEvents(collection string) bool {
 // (ADR-0013) and/or a change-log event (ADR-0021). The fast paths that skip the
 // transaction consult this so event-emitting collections are never missed.
 func (s *Server) needsWriteTx(collection string) bool {
-	return s.revised(collection) || s.emitsEvents(collection)
+	return s.revised(collection) || s.emitsEvents(collection) || s.versioned(collection)
 }
 
 // captureWrite records the durable side effects of a write, using db (which must
@@ -86,20 +86,27 @@ func (s *Server) captureEventRow(ctx context.Context, db store.DB, collection, r
 	return err
 }
 
-// deleteRecord hard-deletes a record. When the collection emits events, the
-// delete and its `deleted` event commit together in one transaction; otherwise it
-// is a plain delete. A referential-integrity error propagates unchanged, so the
-// caller's RESTRICT handling still applies.
-func (s *Server) deleteRecord(ctx context.Context, collection, id string) error {
-	if !s.emitsEvents(collection) {
+// deleteRecord hard-deletes a record, honoring an optimistic-concurrency If-Match
+// precondition (expect, issue #26). When the collection emits events, the delete
+// and its `deleted` event commit together in one transaction; a version check runs
+// in that same transaction so a stale delete is refused. A referential-integrity
+// error propagates unchanged, so the caller's RESTRICT handling still applies.
+func (s *Server) deleteRecord(ctx context.Context, collection, id string, expect *int64) error {
+	// Fast path: no precondition and no events → a plain delete needs no transaction.
+	if expect == nil && !s.emitsEvents(collection) {
 		return s.db.Delete(ctx, collection, id)
 	}
 	return s.db.Tx(ctx, func(ctx context.Context, tx store.DB) error {
+		if err := s.checkVersion(ctx, tx, collection, id, expect); err != nil {
+			return err
+		}
 		if err := tx.Delete(ctx, collection, id); err != nil {
 			return err
 		}
-		if err := s.captureEventRow(ctx, tx, collection, id, schema.EventDeleted, "", ""); err != nil {
-			return err
+		if s.emitsEvents(collection) {
+			if err := s.captureEventRow(ctx, tx, collection, id, schema.EventDeleted, "", ""); err != nil {
+				return err
+			}
 		}
 		// A hard-deleted record can't go live; drop any pending marker (issue #28).
 		// Guarded on publishing+events, the only case where the marker table exists.
