@@ -9,6 +9,24 @@ While on **0.x**, minor versions may include breaking changes.
 ## [Unreleased]
 
 ### Security
+- **Media access by inheritance — `_media.access.read: inherit` (issue #30,
+  ADR-0028).** The media library had one read rule for every file, so shared
+  editorial images and private user uploads couldn't coexist: the rule that
+  protected a `backups` row didn't protect the file its `blob` field pointed at, and
+  every editor could download every user's backup. Setting `_media.access.read` to
+  `inherit` makes a file readable iff the caller can read a record that references it
+  (the referencing record's own rule decides, per file), with an unreferenced upload
+  readable only by its uploader. Works across belongs-to and gallery references; the
+  `/raw` byte path and `?expand` follow it; a denied read is 404. Opt-in — unset,
+  `_media` keeps its fixed rule. `inherit` anywhere but the `_media` read rule is a
+  schema error.
+- **Per-principal media storage quota (issue #31).** Uploads were capped per file
+  and nothing else, so one account could fill a bucket at the rate limit. `media.quotas`
+  sets a per-principal total (`default` size + optional per-role overrides, most
+  permissive wins; sizes like `200MiB`/`5GiB`/`unlimited`). An upload that would push
+  the caller over their quota is refused with `413 QUOTA_EXCEEDED` naming the usage
+  and limit. The total is one indexed `SUM` over the uploader's `_media` rows.
+
 - **Per-role session TTL (issue #33).** Session lifetime was a single
   `auth.session.ttl`, so a stolen 30-day admin token lived as long as a reader's.
   `auth.session.roles: { admin: 12h, editor: 72h }` now caps a session by the roles

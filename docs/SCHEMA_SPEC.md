@@ -223,6 +223,35 @@ The rule covers the bytes as well as the metadata, so `/__media/{id}/raw` is nev
 a way around it, and a `file` relation pointing at an asset the caller may not
 read stays an unexpanded id.
 
+**`read: inherit` — one library, per-file access (issue #30, ADR-0028).** A single
+read rule can't host both shared editorial images and private user uploads. Setting
+`_media.access.read: inherit` makes a file readable **iff the caller can read a
+record that references it** — the referencing record's own rule decides, per file:
+
+```yaml
+collections:
+  _media:
+    access:
+      read: inherit          # a file inherits the access of what points at it
+  articles:
+    fields: { cover: { type: file } }
+    access: { read: public }        # cover images are public — anyone may fetch them
+  backups:
+    fields: { blob: { type: file } }
+    access: { read: owner }         # a backup's bytes are readable only by its owner
+```
+
+An unreferenced upload is readable only by whoever uploaded it (`created_by`). This
+holds across belongs-to and `many` (gallery) references, and `/raw` follows it.
+`inherit` is valid **only** as the `_media` read rule (a schema error elsewhere).
+Because an inherited file isn't statically public, its bytes are served privately
+(no shared-cache or direct-object-URL fast path).
+
+**Storage quota (issue #31).** A per-principal upload cap lives in the config, not
+the schema — `media.quotas` (a `default` size plus optional per-role overrides,
+most-permissive wins). An upload that would exceed the caller's quota is refused
+with `413 QUOTA_EXCEEDED`. See `examples/dcms.config.yaml`.
+
 #### Rich content — `richtext` (ADR-0014)
 
 Formatted body content: headings, bold/italic/links, lists, and inline embeds

@@ -106,6 +106,15 @@ media:
   # Restrict uploads by content type — exact types or a trailing-slash prefix.
   # Omit to accept any type.
   # allowed_content_types: ["image/", "application/pdf"]
+  # Per-principal storage quota (issue #31): the total bytes one account may upload
+  # (sum of the sizes they created). `default` is required when this block is set;
+  # per-role overrides raise it (the most permissive matching role wins). Sizes are
+  # strings — 200MiB / 5GiB / "unlimited". An over-quota upload answers 413.
+  # quotas:
+  #   default: 200MiB
+  #   roles:
+  #     editor: 5GiB
+  #     admin: unlimited
 
   # ── S3-compatible storage (driver: s3) ────────────────────────────────────
   # One driver reaches MinIO, SeaweedFS, Cloudflare R2, AWS S3, Backblaze B2, …
