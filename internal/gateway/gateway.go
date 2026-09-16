@@ -70,6 +70,8 @@ type Options struct {
 	// AllowedContentTypes optionally restricts uploads (exact matches, or a
 	// trailing-slash prefix like "image/"). Empty means any type is accepted.
 	AllowedContentTypes []string
+	// MediaQuota caps total uploaded bytes per principal (issue #31). Nil ⇒ no quota.
+	MediaQuota *MediaQuotaOptions
 
 	// PreviewToken, when set, unlocks the lifecycle preview bypass (ADR-0012): a
 	// request presenting it via X-DCMS-Preview (or ?preview_token=) may view

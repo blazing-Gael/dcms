@@ -54,6 +54,86 @@ func (s *Server) mediaReadGated() bool {
 	return d != allow
 }
 
+// mediaInheritMode reports whether the media library reads by inheritance from the
+// referencing record (issue #30) rather than a fixed rule.
+func (s *Server) mediaInheritMode() bool {
+	return s.collections[schema.MediaCollection].AccessRule(schema.ActionRead).Kind == schema.RuleInherit
+}
+
+// mediaReadable decides whether the caller may read a media record. Under the
+// ordinary rule it is the standard read check; under `inherit` (issue #30) the file
+// is readable iff the caller uploaded it or can read some record that references it.
+func (s *Server) mediaReadable(ctx context.Context, rec store.Record) bool {
+	if !s.authEnabled() || !s.mediaInheritMode() {
+		return s.recordReadable(ctx, schema.MediaCollection, rec)
+	}
+	p := principalFromContext(ctx)
+	if owner, _ := rec[createdByField].(string); owner != "" && owner == p.ID {
+		return true // the uploader always sees their own upload, referenced or not
+	}
+	id, _ := rec["id"].(string)
+	return s.mediaReferencedReadable(ctx, id)
+}
+
+// mediaReferencedReadable reports whether the caller can read any record that
+// references the media id, across every belongs-to and many-to-many `file` edge in
+// the schema (issue #30). Each edge's query carries the referencing collection's own
+// read rule (owner scoping included), so the check never admits a record the caller
+// couldn't read directly, and needs no post-filtering.
+func (s *Server) mediaReferencedReadable(ctx context.Context, id string) bool {
+	if id == "" {
+		return false
+	}
+	p := principalFromContext(ctx)
+	readFilters := func(source string) ([]store.Filter, bool) {
+		d, ownerField := evalRule(s.collections[source].AccessRule(schema.ActionRead), p)
+		if d == deny {
+			return nil, false
+		}
+		if d == ownerScope {
+			return []store.Filter{{Field: ownerField, Operator: store.Eq, Value: p.ID}}, true
+		}
+		return nil, true
+	}
+	// belongs-to references (a `file` field is a belongs-to relation to _media).
+	for _, inv := range s.schema.InverseRelations(schema.MediaCollection) {
+		extra, ok := readFilters(inv.Source)
+		if !ok {
+			continue
+		}
+		filters := append([]store.Filter{{Field: inv.Field, Operator: store.Eq, Value: id}}, extra...)
+		if page, err := s.db.Find(ctx, store.Query{Collection: inv.Source, Filters: filters, Limit: 1, SkipCount: true}); err == nil && len(page.Data) > 0 {
+			return true
+		}
+	}
+	// many-to-many references (a `file` gallery: `many: true`).
+	for _, inv := range s.schema.InverseM2M(schema.MediaCollection) {
+		extra, ok := readFilters(inv.Source)
+		if !ok {
+			continue
+		}
+		links, err := s.db.Find(ctx, store.Query{
+			Collection: schema.JoinTableName(inv.Source, inv.Field),
+			Filters:    []store.Filter{{Field: "target_id", Operator: store.Eq, Value: id}},
+			Limit:      maxM2MExpand, SkipCount: true,
+		})
+		if err != nil || len(links.Data) == 0 {
+			continue
+		}
+		var ids []any
+		for _, l := range links.Data {
+			if sid, ok := l["source_id"].(string); ok {
+				ids = append(ids, sid)
+			}
+		}
+		filters := append([]store.Filter{{Field: "id", Operator: store.In, Value: ids}}, extra...)
+		if page, err := s.db.Find(ctx, store.Query{Collection: inv.Source, Filters: filters, Limit: 1, SkipCount: true}); err == nil && len(page.Data) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *Server) mediaUnavailable(w http.ResponseWriter) {
 	writeError(w, http.StatusServiceUnavailable, apiError{
 		Code: "UNAVAILABLE", Message: "media storage is not configured",
@@ -147,7 +227,14 @@ func withVersion(u, ver string) string {
 // leaves a belongs-to as its bare id, or drops the record from a list, so an
 // expansion cannot be used to probe for records the caller may not read.
 func (s *Server) coerceExpanded(ctx context.Context, collection string, rec store.Record) bool {
-	if !s.recordReadable(ctx, collection, rec) {
+	// A `file` reference expanded on a record follows the media read rule, including
+	// `inherit` (issue #30) — so an inline media object is never exposed where a
+	// direct media read would withhold it.
+	if collection == schema.MediaCollection {
+		if !s.mediaReadable(ctx, rec) {
+			return false
+		}
+	} else if !s.recordReadable(ctx, collection, rec) {
 		return false
 	}
 	s.collections[collection].CoerceResponse(rec)
@@ -238,7 +325,7 @@ func (s *Server) handleMediaGet(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, s.logger, r, err)
 		return
 	}
-	if !s.recordReadable(r.Context(), schema.MediaCollection, rec) {
+	if !s.mediaReadable(r.Context(), rec) {
 		s.mediaNotFound(w)
 		return
 	}
@@ -348,8 +435,8 @@ func (s *Server) handleMediaRaw(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// The bytes are gated by the same rule as the metadata — otherwise /raw would
-	// be a way around a media record the caller may not read.
-	if !s.recordReadable(r.Context(), schema.MediaCollection, rec) {
+	// be a way around a media record the caller may not read (honours `inherit`).
+	if !s.mediaReadable(r.Context(), rec) {
 		s.mediaNotFound(w)
 		return
 	}
@@ -453,6 +540,27 @@ func (s *Server) storeUpload(w http.ResponseWriter, r *http.Request, existingID 
 			Code: "UNSUPPORTED_MEDIA_TYPE", Message: "content type " + contentType + " is not allowed",
 		})
 		return nil, false
+	}
+
+	// Per-principal storage quota (issue #31): a new upload that would push the
+	// caller over their limit is refused with 413. Replacing bytes for an existing
+	// id keeps the record count bounded, so it is not quota-checked here.
+	if q := s.opts.MediaQuota; q != nil && existingID == "" {
+		p := principalFromContext(r.Context())
+		if limit := q.quotaFor(p.Roles); limit >= 0 {
+			used, err := s.mediaUsage(r.Context(), p.ID)
+			if err != nil {
+				writeStoreError(w, s.logger, r, err)
+				return nil, false
+			}
+			if used+header.Size > limit {
+				writeError(w, http.StatusRequestEntityTooLarge, apiError{
+					Code:    "QUOTA_EXCEEDED",
+					Message: fmt.Sprintf("storage quota exceeded: %d of %d bytes used; this upload is %d bytes", used, limit, header.Size),
+				})
+				return nil, false
+			}
+		}
 	}
 
 	// A new asset needs its id before we can key the blob, so create the row first.

@@ -387,6 +387,28 @@ func runServer(cmd *cobra.Command, mode serverMode) error {
 		scheme = "https"
 	}
 
+	// Media storage quota (issue #31): resolve the human sizes into a byte policy.
+	// A quotas block must name a default, so users with no matching role aren't
+	// left silently unlimited.
+	var mediaQuota *gateway.MediaQuotaOptions
+	if q := cfg.Media.Quotas; q.Default != "" || len(q.Roles) > 0 {
+		if q.Default == "" {
+			return fmt.Errorf("media.quotas.default is required when media.quotas is set")
+		}
+		def, err := config.ParseByteSize(q.Default)
+		if err != nil {
+			return fmt.Errorf("media.quotas.default: %w", err)
+		}
+		mediaQuota = &gateway.MediaQuotaOptions{Default: def, Roles: map[string]int64{}}
+		for role, sz := range q.Roles {
+			n, err := config.ParseByteSize(sz)
+			if err != nil {
+				return fmt.Errorf("media.quotas.roles.%s: %w", role, err)
+			}
+			mediaQuota.Roles[role] = n
+		}
+	}
+
 	fmt.Printf("dcms %s — %d collection(s) from %s\n", mode.name, len(def.Collections), cfg.Schema)
 	fmt.Printf("listening on %s://localhost:%d  (Ctrl+C to stop)\n", scheme, cfg.Server.Port)
 	return engine.Serve(ctx, def, db, fmt.Sprintf(":%d", cfg.Server.Port), logger, gateway.Options{
@@ -394,6 +416,7 @@ func runServer(cmd *cobra.Command, mode serverMode) error {
 		Blob:                bs,
 		MaxUploadBytes:      cfg.Media.MaxUploadBytes,
 		AllowedContentTypes: cfg.Media.AllowedContentTypes,
+		MediaQuota:          mediaQuota,
 		PreviewToken:        cfg.Content.PreviewToken,
 		Introspection:       cfg.Server.Introspection,
 		Authenticator:       authenticator,

@@ -317,6 +317,10 @@ func (s *SchemaDefinition) Validate() error {
 				for _, msg := range validateOwnerFields(*rule, col) {
 					add("%s.access.%s: %s", cpath, action, msg)
 				}
+				// `inherit` (issue #30) is meaningful only as the _media read rule.
+				if rule.mentionsInherit() && !(col.Name == MediaCollection && action == ActionRead && rule.Kind == RuleInherit) {
+					add("%s.access.%s: `inherit` is only valid as the read rule of the _media library", cpath, action)
+				}
 			}
 			// preview (ADR-0023) gates hidden lifecycle states, so it needs hidden
 			// states to gate, and a `public` preview would show every draft to

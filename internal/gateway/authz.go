@@ -50,6 +50,15 @@ func evalRule(rule schema.Rule, p principal) (decision, string) {
 			return deny, ""
 		}
 		return ownerScope, createdByField
+	case schema.RuleInherit:
+		// Baseline for `_media` inherit (issue #30): the uploader always sees their
+		// own uploads (so a list is owner-scoped and the library counts as gated).
+		// The reference-based widening — readable via a record that points at the
+		// file — is layered on top in the media byte path (mediaReadable).
+		if !p.Authenticated {
+			return deny, ""
+		}
+		return ownerScope, createdByField
 	case schema.RuleOwnerField:
 		// An anonymous caller can never match a relation to their identity.
 		if !p.Authenticated {

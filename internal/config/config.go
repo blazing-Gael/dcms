@@ -157,6 +157,10 @@ type Media struct {
 	// AllowedContentTypes optionally restricts uploads (exact types, or a
 	// trailing-slash prefix like "image/"). Empty accepts any type.
 	AllowedContentTypes []string `yaml:"allowed_content_types"`
+	// Quotas caps total uploaded bytes per principal (issue #31): a `default`
+	// size and optional per-role overrides (the most permissive matching role
+	// wins). Sizes are strings like "200MiB" / "5GiB" / "unlimited". Empty ⇒ no quota.
+	Quotas MediaQuotas `yaml:"quotas"`
 
 	// S3-compatible driver settings (MinIO, SeaweedFS, Cloudflare R2, AWS S3, …).
 	Endpoint       string `yaml:"endpoint"`
@@ -169,6 +173,59 @@ type Media struct {
 	// from the config file (the yaml:"-" enforces this; see the secrets rule).
 	AccessKey string `yaml:"-"`
 	SecretKey string `yaml:"-"`
+}
+
+// MediaQuotas configures per-principal storage limits (issue #31). Sizes are
+// human strings ("200MiB", "5GiB", "unlimited"); ParseByteSize converts them.
+type MediaQuotas struct {
+	Default string            `yaml:"default"`
+	Roles   map[string]string `yaml:"roles"`
+}
+
+// ParseByteSize parses a human byte size ("200MiB", "5GB", "1024", "unlimited")
+// into a byte count. "unlimited" (any case) returns -1. Binary units (KiB/MiB/GiB)
+// are powers of 1024; decimal units (KB/MB/GB) are powers of 1000; a bare number
+// is bytes.
+func ParseByteSize(s string) (int64, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, fmt.Errorf("empty size")
+	}
+	if strings.EqualFold(s, "unlimited") {
+		return -1, nil
+	}
+	i := 0
+	for i < len(s) && (s[i] >= '0' && s[i] <= '9' || s[i] == '.') {
+		i++
+	}
+	f, err := strconv.ParseFloat(strings.TrimSpace(s[:i]), 64)
+	if err != nil || f < 0 {
+		return 0, fmt.Errorf("invalid size %q", s)
+	}
+	var mult int64
+	switch strings.ToLower(strings.TrimSpace(s[i:])) {
+	case "", "b":
+		mult = 1
+	case "kb":
+		mult = 1000
+	case "kib", "k":
+		mult = 1 << 10
+	case "mb":
+		mult = 1000 * 1000
+	case "mib", "m":
+		mult = 1 << 20
+	case "gb":
+		mult = 1000 * 1000 * 1000
+	case "gib", "g":
+		mult = 1 << 30
+	case "tb":
+		mult = 1000 * 1000 * 1000 * 1000
+	case "tib", "t":
+		mult = 1 << 40
+	default:
+		return 0, fmt.Errorf("unknown size unit in %q", s)
+	}
+	return int64(f * float64(mult)), nil
 }
 
 // Database selects and locates the backing store.

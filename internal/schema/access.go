@@ -35,6 +35,11 @@ const (
 	RuleOwner         RuleKind = "owner"         // principal is the record's created_by
 	RuleOwnerField    RuleKind = "owner_field"   // principal.ID equals the record's named relation
 	RuleAny           RuleKind = "any"           // satisfied if ANY sub-rule is (logical OR)
+	// RuleInherit is valid only as `_media.access.read` (issue #30): a media file is
+	// readable iff the caller can read a record that references it (else the uploader
+	// only). It lets private user uploads and shared editorial images coexist on one
+	// library without per-file rules — the referencing record's own read rule decides.
+	RuleInherit RuleKind = "inherit"
 )
 
 // Rule is a single access rule. For RuleRoles, Roles lists the accepted role
@@ -231,6 +236,21 @@ func (r Rule) mentionsPublic() bool {
 	return false
 }
 
+// mentionsInherit reports whether the rule tree contains an `inherit` gate
+// anywhere. `inherit` is only meaningful as the top-level _media read rule, so
+// validation uses this to reject it elsewhere (issue #30).
+func (r Rule) mentionsInherit() bool {
+	if r.Kind == RuleInherit {
+		return true
+	}
+	for _, sub := range r.Any {
+		if sub.mentionsInherit() {
+			return true
+		}
+	}
+	return false
+}
+
 // FieldAccess is a field's per-direction policy (ADR-0016 milestone 2). A nil
 // direction means unrestricted: the collection-level rule already gated the
 // operation, and the field adds nothing on top.
@@ -386,6 +406,8 @@ func parseRule(node *yaml.Node) (*Rule, error) {
 			return &Rule{Kind: RuleAuthenticated}, nil
 		case RuleOwner:
 			return &Rule{Kind: RuleOwner}, nil
+		case RuleInherit:
+			return &Rule{Kind: RuleInherit}, nil
 		default:
 			// A bare scalar that isn't a keyword is a single role name.
 			if node.Value == "" {
