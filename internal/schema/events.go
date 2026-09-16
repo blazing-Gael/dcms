@@ -31,6 +31,10 @@ const (
 	EventUnpublished = "unpublished"
 	EventArchived    = "archived"
 	EventRestored    = "restored"
+	// EventWentLive marks a *scheduled* publish crossing its go-live time — a
+	// state change with no write, so it is emitted by a background worker rather
+	// than in a request transaction (issue #28). from_status is "scheduled".
+	EventWentLive = "went_live"
 )
 
 // eventsCollectionDef is the canonical shape of the _events collection. Rows are

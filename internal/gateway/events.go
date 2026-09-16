@@ -98,7 +98,15 @@ func (s *Server) deleteRecord(ctx context.Context, collection, id string) error 
 		if err := tx.Delete(ctx, collection, id); err != nil {
 			return err
 		}
-		return s.captureEventRow(ctx, tx, collection, id, schema.EventDeleted, "", "")
+		if err := s.captureEventRow(ctx, tx, collection, id, schema.EventDeleted, "", ""); err != nil {
+			return err
+		}
+		// A hard-deleted record can't go live; drop any pending marker (issue #28).
+		// Guarded on publishing+events, the only case where the marker table exists.
+		if cd := s.collections[collection]; cd.Publishing && cd.Events {
+			return s.clearScheduledMarker(ctx, tx, collection, id)
+		}
+		return nil
 	})
 }
 

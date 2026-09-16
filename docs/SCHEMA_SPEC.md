@@ -345,6 +345,12 @@ publishing: true
 # instant the clock passes it, with no background job. `archived` is retired-but-
 # kept: hidden from the public and from the drafts view, but preserved.
 #
+# On a collection that also emits events, a scheduled go-live (a future
+# _published_at crossing the clock) emits a `went_live` change event
+# (from_status: scheduled) when its time arrives — so the change feed and webhooks
+# see it even though no write happens (issue #28, ADR-0026). An immediate publish
+# emits `published`, not `went_live`.
+#
 # Transition endpoints (a record starts as draft):
 #   POST /api/v1/<collection>/:id/publish     {"at"?: "<RFC3339>"}  → published (or scheduled)
 #   POST /api/v1/<collection>/:id/unpublish                          → draft

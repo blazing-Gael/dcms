@@ -101,6 +101,10 @@ func Serve(ctx context.Context, def *schema.SchemaDefinition, db store.Adapter, 
 	// Notification delivery worker (ADR-0021 phase 3): durable, retried account
 	// email off the request path.
 	go gw.RunNotifications(ctx)
+	// Scheduled go-live worker (issue #28): emits a `went_live` event when a
+	// scheduled publish crosses its time, so the change feed and webhooks see it. A
+	// no-op unless a collection both publishes and emits events.
+	go gw.RunScheduledPublishes(ctx)
 
 	errCh := make(chan error, 1)
 	go func() {

@@ -62,6 +62,18 @@ While on **0.x**, minor versions may include breaking changes.
   otherwise. With no `preview` rule, the token gate is unchanged.
 
 ### Added
+- **Scheduled go-lives emit a `went_live` event (issue #28, ADR-0026).** A scheduled
+  publish (a future `_published_at`) became visible when the clock passed it with no
+  write, so the change feed and webhooks — which are write-driven — never reported
+  it: an SSG rebuild at publish time correctly omitted the not-yet-live record, and
+  nothing fired at go-live time. A publish transition that sets a future
+  `_published_at` now enqueues a marker in an engine-managed `_scheduled_publishes`
+  outbox (in the write's own transaction), and a background worker emits a
+  `went_live` event (`from_status: scheduled`) when the marker comes due, deleting
+  it in the same transaction so the emit is exactly-once. Opt-in by construction
+  (only when a collection both `publishing:` and `events:`); an immediate publish
+  emits `published`, not `went_live`. This is the only time-triggered behaviour in
+  core — deliberately not a general scheduler.
 - **Expand many-to-many relations on lists (issue #29).** `?expand=<m2m>` was
   refused on list endpoints ("only belongs-to relations are expandable in lists"),
   so a static build that needed each record's tags/topics fell back to one request
