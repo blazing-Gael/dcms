@@ -295,6 +295,7 @@ func (s *SchemaDefinition) Validate() error {
 				ActionRead: col.Access.Read, ActionCreate: col.Access.Create,
 				ActionUpdate: col.Access.Update, ActionDelete: col.Access.Delete,
 				ActionPreview: col.Access.Preview,
+				ActionPublish: col.Access.Publish,
 			} {
 				if rule == nil {
 					continue
@@ -317,6 +318,17 @@ func (s *SchemaDefinition) Validate() error {
 				}
 				if p.mentionsPublic() {
 					add("%s.access.preview: `public` is not allowed — a public preview would expose every hidden record to everyone", cpath)
+				}
+			}
+			// publish (#23) gates publish/unpublish/archive — it needs the
+			// publishing state machine to gate, and a `public` publish rule (anyone
+			// may go live) defeats the point.
+			if pub := col.Access.Publish; pub != nil {
+				if !col.Publishing {
+					add("%s.access.publish: only valid on a collection with publishing (no go-live transitions to gate otherwise)", cpath)
+				}
+				if pub.mentionsPublic() {
+					add("%s.access.publish: `public` is not allowed — anyone could publish", cpath)
 				}
 			}
 		}

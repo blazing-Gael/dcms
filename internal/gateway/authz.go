@@ -191,11 +191,17 @@ func (s *Server) authorizeRecordRead(ctx context.Context, collection, id string)
 // For `owner` it loads the record and compares created_by; a missing record is a
 // 404 and a non-owner is a 403. Returns false (and writes the error) when denied.
 func (s *Server) authorizeRecordWrite(w http.ResponseWriter, r *http.Request, collection, id string, action schema.AccessAction) bool {
+	return s.authorizeWriteRule(w, r, collection, id, s.collections[collection].AccessRule(action))
+}
+
+// authorizeWriteRule is authorizeRecordWrite against an explicit rule, so a write
+// path can authorize against a rule other than the CRUD default — e.g. a
+// transition against the `publish` rule (issue #23).
+func (s *Server) authorizeWriteRule(w http.ResponseWriter, r *http.Request, collection, id string, rule schema.Rule) bool {
 	if !s.authEnabled() {
 		return true
 	}
 	p := principalFromContext(r.Context())
-	rule := s.collections[collection].AccessRule(action)
 	switch d, field := evalRule(rule, p); d {
 	case allow:
 		return true
