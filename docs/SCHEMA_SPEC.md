@@ -62,6 +62,16 @@ collections:
       ...
 ```
 
+**Unknown directives are errors, not no-ops.** A directive the parser doesn't
+recognise fails schema compilation with a did-you-mean, so a typo like
+`publising: true` or `soft_delet: true` can't silently disable a real setting.
+The directives above that aren't implemented yet — `vectorize`, `i18n`, `hooks`,
+`schedule` — are *reserved*: they parse and compile, but emit a startup warning
+("recognized but not implemented yet") so nobody believes they're active. The same
+strictness applies to the top-level document and the `meta:` block (an unknown key
+there is an error). Config files (`dcms.config.yaml`) are decoded strictly too — an
+unknown key aborts startup rather than falling back to a default silently.
+
 ### Collection naming rules
 
 - Lowercase letters, digits, underscores only

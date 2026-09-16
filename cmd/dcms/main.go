@@ -223,6 +223,11 @@ func runServer(cmd *cobra.Command, mode serverMode) error {
 	// Seed the first admin from env when the user table is empty (ADR-0016),
 	// so a fresh backend is reachable without a chicken-and-egg lockout.
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	// Recognized-but-unimplemented schema directives (issue #35) load fine but do
+	// nothing yet — log them so an operator isn't misled into thinking they're active.
+	for _, warn := range def.Warnings {
+		logger.Warn("schema", "note", warn)
+	}
 	if err := gateway.EnsureSeedAdmin(ctx, db, cfg.Auth.AdminEmail, cfg.Auth.AdminPassword, logger); err != nil {
 		return err
 	}
@@ -409,8 +414,10 @@ func runServer(cmd *cobra.Command, mode serverMode) error {
 func newValidateCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "validate",
-		Short: "Parse and validate the schema, exit non-zero on failure",
+		Short: "Parse and validate the schema and config, exit non-zero on failure",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// resolveConfig loads the config with strict key checking, so an unknown
+			// config key fails here too (issue #35), not just at server start.
 			cfg, err := resolveConfig(cmd)
 			if err != nil {
 				return err
@@ -418,6 +425,9 @@ func newValidateCmd() *cobra.Command {
 			def, err := engine.LoadSchema(cfg.Schema)
 			if err != nil {
 				return err
+			}
+			for _, warn := range def.Warnings {
+				fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s\n", warn)
 			}
 			fmt.Printf("schema OK — %d collection(s)\n", len(def.Collections))
 			return nil

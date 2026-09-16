@@ -123,4 +123,9 @@ type SchemaDefinition struct {
 	Meta        Meta            `json:"meta"`
 	Auth        AuthConfig      `json:"auth,omitempty"`
 	Collections []CollectionDef `json:"collections"`
+
+	// Warnings are non-fatal parse notes (e.g. a recognized-but-unimplemented
+	// directive) surfaced by Parse for the CLI to log. Not part of the compiled
+	// IR, so it is excluded from any serialized/introspected schema (issue #35).
+	Warnings []string `json:"-"`
 }
