@@ -52,6 +52,7 @@ var reservedFields = map[string]bool{
 	"id": true, "created_at": true, "updated_at": true,
 	"created_by": true, "updated_by": true,
 	LifecycleStatus: true, LifecyclePublishedAt: true, LifecycleDeletedAt: true,
+	ConcurrencyVersion: true,
 }
 
 // phase1Types are the field types implemented in Phase 1.
@@ -126,7 +127,7 @@ func (s *SchemaDefinition) Validate() error {
 			// CollectionDef must be added here too — TestMedia_RejectsEveryNonAccessDirective
 			// reflects over the struct to fail the build if one isn't.
 			if len(col.Fields) > 0 || len(col.Indexes) > 0 || col.Timestamps ||
-				col.Publishing || col.SoftDelete || col.Revisions || col.Events || col.Route != "" {
+				col.Publishing || col.SoftDelete || col.Revisions || col.Events || col.Concurrency || col.Route != "" {
 				add("%s: the media library is engine-managed — it accepts an `access:` block only", cpath)
 			}
 		case reservedCollections[col.Name]:

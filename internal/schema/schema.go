@@ -96,6 +96,10 @@ type CollectionDef struct {
 	// transaction, and exposes them on the change feed (ADR-0021, M-B). Opt-in:
 	// a collection that never declares it writes no event rows and pays nothing.
 	Events bool `json:"events,omitempty"`
+	// Concurrency adds an engine-managed `_version` counter and enables optimistic
+	// concurrency: a write may carry an `If-Match` version, and a stale one is
+	// refused with 412 instead of silently overwriting a concurrent edit (issue #26).
+	Concurrency bool `json:"concurrency,omitempty"`
 
 	// Access is the per-operation authorization policy (ADR-0016), enforced at
 	// the gateway. Nil (or a nil action) falls back to the engine default:

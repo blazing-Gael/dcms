@@ -128,7 +128,13 @@ func (s *Server) applyTransition(w http.ResponseWriter, r *http.Request, collect
 	if !s.authorizeWriteRule(w, r, collection, id, rule) {
 		return
 	}
-	rec, err := s.updateAndRevise(r.Context(), collection, data, operation)
+	// Optimistic concurrency (issue #26): a transition is a write, so a stale
+	// If-Match is refused like any other.
+	expect, ok := s.writePrecondition(w, r, collection)
+	if !ok {
+		return
+	}
+	rec, err := s.updateAndRevise(r.Context(), collection, data, operation, expect)
 	if err != nil {
 		writeStoreError(w, s.logger, r, err)
 		return

@@ -83,16 +83,14 @@ func (s *Server) nextRevisionVersion(ctx context.Context, db store.DB, collectio
 // durable side effects (a revision snapshot and/or a change-log event) when the
 // collection opts into them. Shared by plain PATCH, lifecycle transitions, and
 // soft-delete, so all of them record history and emit events consistently.
-func (s *Server) updateAndRevise(ctx context.Context, collection string, data store.Record, operation string) (store.Record, error) {
+func (s *Server) updateAndRevise(ctx context.Context, collection string, data store.Record, operation string, expect *int64) (store.Record, error) {
 	if !s.needsWriteTx(collection) {
 		return s.db.Update(ctx, store.WriteInput{Collection: collection, Data: data})
 	}
 	var rec store.Record
 	err := s.db.Tx(ctx, func(ctx context.Context, tx store.DB) error {
-		// For a lifecycle transition on an event-emitting collection, read the
-		// prior status in the same transaction so the event records both ends of
-		// the change. Only transitions pay this extra read — ordinary updates and
-		// non-event collections skip it entirely.
+		// For a lifecycle transition on an event-emitting collection, read the prior
+		// status in the same transaction so the event records both ends of the change.
 		fromStatus := ""
 		if s.emitsEvents(collection) && isStatusOperation(operation) {
 			if id, _ := data["id"].(string); id != "" {
@@ -100,6 +98,10 @@ func (s *Server) updateAndRevise(ctx context.Context, collection string, data st
 					fromStatus, _ = prev[schema.LifecycleStatus].(string)
 				}
 			}
+		}
+		// Optimistic concurrency (issue #26): refuse a stale write, then bump _version.
+		if e := s.applyVersion(ctx, tx, collection, data, expect); e != nil {
+			return e
 		}
 		var e error
 		if rec, e = tx.Update(ctx, store.WriteInput{Collection: collection, Data: data}); e != nil {
@@ -218,6 +220,11 @@ func (s *Server) handleRevisionRestore(w http.ResponseWriter, r *http.Request) {
 	if !s.authorizeRecordWrite(w, r, collection, id, schema.ActionUpdate) {
 		return
 	}
+	// Optimistic concurrency (issue #26): a restore is a write, so honor If-Match.
+	expect, ok := s.writePrecondition(w, r, collection)
+	if !ok {
+		return
+	}
 	rev, err := s.findRevision(r.Context(), collection, id, chi.URLParam(r, "version"))
 	if err != nil {
 		writeStoreError(w, s.logger, r, err)
@@ -229,9 +236,9 @@ func (s *Server) handleRevisionRestore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	data := store.Record(snapshot)
-	stripManagedFields(data) // content-only: leave _status/_published_at/_deleted_at as they are
+	stripManagedFields(data) // content-only: leave _status/_published_at/_deleted_at (and _version) as managed
 	data["id"] = id
-	rec, err := s.updateAndRevise(r.Context(), collection, data, "restore")
+	rec, err := s.updateAndRevise(r.Context(), collection, data, "restore", expect)
 	if err != nil {
 		writeStoreError(w, s.logger, r, err)
 		return

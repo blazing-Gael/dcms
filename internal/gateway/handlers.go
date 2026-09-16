@@ -220,6 +220,11 @@ func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
 	stripManagedFields(data) // _status/_published_at/_deleted_at change only via transitions
 	// The id comes from the URL, not the body — it is the source of truth.
 	data["id"] = chi.URLParam(r, "id")
+	// Optimistic concurrency (issue #26): resolve any If-Match precondition.
+	expect, ok := s.writePrecondition(w, r, collection)
+	if !ok {
+		return
+	}
 	// Drop fields the caller may not write (ADR-0016 M2). On update an `owner`
 	// write rule is checked against the stored record's created_by, loaded lazily.
 	s.stripUnwritableFields(r.Context(), collection, chi.URLParam(r, "id"), data, false)
@@ -228,6 +233,9 @@ func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
 	if s.hasInlineRelations(collection, data) {
 		var rec store.Record
 		err := s.db.Tx(r.Context(), func(ctx context.Context, tx store.DB) error {
+			if e := s.applyVersion(ctx, tx, collection, data, expect); e != nil {
+				return e
+			}
 			var e error
 			if rec, e = s.updateRecord(ctx, tx, collection, data, 0); e != nil {
 				return e
@@ -257,6 +265,9 @@ func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rec, err := s.writeWithLinks(r.Context(), collection, "update", data, func(ctx context.Context, db store.DB, base store.Record) (store.Record, error) {
+		if e := s.applyVersion(ctx, db, collection, base, expect); e != nil {
+			return nil, e
+		}
 		return db.Update(ctx, store.WriteInput{Collection: collection, Data: base})
 	})
 	if err != nil {
@@ -280,13 +291,18 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 	if !s.authorizeRecordWrite(w, r, collection, id, schema.ActionDelete) {
 		return
 	}
+	// Optimistic concurrency (issue #26): a stale delete is refused like a stale write.
+	expect, ok := s.writePrecondition(w, r, collection)
+	if !ok {
+		return
+	}
 
 	// Soft-delete collections trash the row (reversible via /restore) unless the
 	// caller asks to purge. Purge falls through to the hard delete below and still
 	// honors on_delete: restrict (ADR-0012).
 	if s.collections[collection].SoftDelete && !strings.EqualFold(r.URL.Query().Get("purge"), "true") {
 		_, err := s.updateAndRevise(r.Context(), collection,
-			store.Record{"id": id, schema.LifecycleDeletedAt: nowUTC()}, "delete")
+			store.Record{"id": id, schema.LifecycleDeletedAt: nowUTC()}, "delete", expect)
 		if err != nil {
 			writeStoreError(w, s.logger, r, err)
 			return
@@ -295,7 +311,7 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.deleteRecord(r.Context(), collection, id); err != nil {
+	if err := s.deleteRecord(r.Context(), collection, id, expect); err != nil {
 		// A foreign-key violation on delete is the RESTRICT default (ADR-0010):
 		// the record is still referenced. That's a legitimate client-facing
 		// conflict, not the invariant breach it would be on a write.
