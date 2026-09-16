@@ -245,17 +245,21 @@ func (s *Server) findRelated(ctx context.Context, inv schema.Inverse, parentID s
 	return s.coerceExpandedList(ctx, inv.Source, page.Data), nil
 }
 
-// expandListRecords expands a page of records. Only belongs-to tokens are
-// allowed on lists (has-many on a list is expensive and disallowed for now);
-// belongs-to is batched — distinct ids fetched once — to avoid N+1 queries.
-func (s *Server) expandListRecords(ctx context.Context, collection string, recs []store.Record, tokens []string, m refManifest) error {
+// expandListRecords expands a page of records. Belongs-to, forward many-to-many
+// (issue #29), and richtext tokens are allowed on lists; each is batched — one
+// query (or two for m2m) for the whole page, not per record — to avoid N+1.
+// Inverse (has-many / reverse m2m) tokens remain single-record only. Returns the
+// distinct fields whose relation was truncated for at least one record, so the
+// caller can report them in meta.expand_truncated.
+func (s *Server) expandListRecords(ctx context.Context, collection string, recs []store.Record, tokens []string, m refManifest) ([]string, error) {
 	if err := checkExpandBudget(tokens); err != nil {
-		return err
+		return nil, err
 	}
 	cd := s.collections[collection]
+	var truncated []string
 	for _, tok := range tokens {
 		if strings.Contains(tok, ".") {
-			return badRequest("expand", fmt.Sprintf("nested expansion (%q) is only supported on single-record reads, not lists", tok))
+			return nil, badRequest("expand", fmt.Sprintf("nested expansion (%q) is only supported on single-record reads, not lists", tok))
 		}
 		// A richtext field resolves its in-content references across the whole page
 		// into one shared, deduplicated manifest (ADR-0015) — collect every
@@ -266,19 +270,29 @@ func (s *Server) expandListRecords(ctx context.Context, collection string, recs 
 				docs = append(docs, docOf(r[tok]))
 			}
 			if err := s.expandRichTextDocs(ctx, fd, docs, m); err != nil {
-				return err
+				return nil, err
 			}
 			continue
 		}
-		target, ok := cd.BelongsTo(tok)
-		if !ok {
-			return badRequest("expand", fmt.Sprintf("cannot expand %q on a list (only belongs-to relations are expandable in lists)", tok))
+		if target, ok := cd.BelongsTo(tok); ok {
+			if err := s.expandBelongsToBatch(ctx, target, recs, tok); err != nil {
+				return nil, err
+			}
+			continue
 		}
-		if err := s.expandBelongsToBatch(ctx, target, recs, tok); err != nil {
-			return err
+		if target, ok := cd.ManyToMany(tok); ok {
+			cut, err := s.expandM2MBatch(ctx, collection, target, recs, tok)
+			if err != nil {
+				return nil, err
+			}
+			if cut {
+				truncated = append(truncated, tok)
+			}
+			continue
 		}
+		return nil, badRequest("expand", fmt.Sprintf("cannot expand %q on a list (only belongs-to and many-to-many relations are expandable in lists)", tok))
 	}
-	return nil
+	return truncated, nil
 }
 
 func (s *Server) expandBelongsToBatch(ctx context.Context, target string, recs []store.Record, field string) error {
