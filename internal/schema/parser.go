@@ -71,6 +71,9 @@ func Parse(src []byte) (*SchemaDefinition, error) {
 	// (ADR-0021, M-B), then the webhook-delivery collections beside it.
 	def.injectEvents()
 	def.injectWebhooks()
+	// Inject the engine-managed go-live outbox when a collection both publishes and
+	// emits events (issue #28); after injectEvents so it sits beside _events.
+	def.injectScheduledPublishes()
 	return def, nil
 }
 

@@ -105,7 +105,12 @@ func (s *Server) updateAndRevise(ctx context.Context, collection string, data st
 		if rec, e = tx.Update(ctx, store.WriteInput{Collection: collection, Data: data}); e != nil {
 			return e
 		}
-		return s.captureWriteFrom(ctx, tx, collection, rec, operation, fromStatus)
+		if e = s.captureWriteFrom(ctx, tx, collection, rec, operation, fromStatus); e != nil {
+			return e
+		}
+		// Arm or clear the go-live marker (issue #28) in the same transaction, so a
+		// scheduled publish / unpublish / reschedule is durable with the status change.
+		return s.reconcileScheduled(ctx, tx, collection, rec, operation)
 	})
 	return rec, err
 }
