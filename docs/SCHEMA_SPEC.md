@@ -750,6 +750,17 @@ Two engine-managed collections back this: `_users` (email, password_hash, roles)
 and `_sessions` — both reserved and not JSON-CRUD routable. `password_hash` is
 never serialized in any response.
 
+**Passwordless email-OTP login** (opt-in, ADR-0029) adds a second way in for a
+consumer audience that shouldn't manage passwords. Enable it with
+`auth.otp.enabled: true` in the config. `POST /auth/otp/request {email}` emails a
+short numeric code — always `204`, whether or not the account exists, so it can't
+enumerate users — and `POST /auth/otp/verify {email, code}` exchanges a correct
+code for a session, identical to a password login. The code is single-use,
+short-lived (`ttl_minutes`, default 10), burned after too many wrong guesses
+(`max_attempts`, default 5), and superseded whenever a new one is requested. Every
+verify failure is a flat `401`. Needs a mailer configured (`auth.smtp`) to deliver
+in production; the dev-log mailer prints the code to the console.
+
 **Bootstrap:** create the first admin with `dcms admin create --email … --password
 …`, or set `DCMS_ADMIN_EMAIL` / `DCMS_ADMIN_PASSWORD` (env-only secrets) and the
 server seeds an admin on first run when no users exist yet.

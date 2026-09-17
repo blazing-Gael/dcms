@@ -143,6 +143,10 @@ type Options struct {
 	// ResetTokenTTL is how long a reset token is valid; 0 uses the default (1h).
 	ResetTokenTTL time.Duration
 
+	// OTPLogin enables passwordless email-OTP login when non-nil (issue #11). Nil ⇒
+	// the /auth/otp/* endpoints are not mounted (404).
+	OTPLogin *OTPLoginOptions
+
 	// Webhooks configures signed webhook delivery of change events (ADR-0021 M-B
 	// phase 2). Nil ⇒ no delivery worker runs; the change feed still works. Only
 	// meaningful for collections that opt into `events:`.
@@ -155,6 +159,30 @@ type RegistrationOptions struct {
 	// against declared, non-admin roles).
 	DefaultRoles []string
 }
+
+// OTPLoginOptions configures passwordless email-OTP login (issue #11, ADR-0029).
+// Its zero value is usable: the defaults below apply to any unset field.
+type OTPLoginOptions struct {
+	// TTL is how long an emailed code stays valid; 0 uses the default (10m). Kept
+	// short because a 6-digit code is low-entropy — the brief window plus the
+	// per-code attempt cap is what makes it safe.
+	TTL time.Duration
+	// MaxAttempts is the number of wrong guesses a single code tolerates before it
+	// is burned; 0 uses the default (5). Bounds brute-forcing of the 10^6 space.
+	MaxAttempts int
+}
+
+const (
+	defaultOTPTTL         = 10 * time.Minute
+	defaultOTPMaxAttempts = 5
+	// otpCodeDigits is the length of the emailed numeric code.
+	otpCodeDigits = 6
+	// otpRequestsPerMinutePerEmail throttles code requests per recipient (on top of
+	// the per-IP auth tier), so the endpoint can't be used to bomb one inbox from
+	// many IPs. Fixed — not a config knob — since it guards a person, not a client.
+	otpRequestsPerMinutePerEmail = 4
+	otpRequestBurstPerEmail      = 2
+)
 
 // IdempotencyOptions configures idempotent-write handling (ADR-0018).
 type IdempotencyOptions struct {
@@ -169,6 +197,9 @@ type Server struct {
 	collections map[string]schema.CollectionDef // by name, for O(1) lookup
 	logger      *slog.Logger
 	opts        Options
+	// otpEmailLimiter throttles email-OTP code requests per recipient (issue #11);
+	// nil when OTP login is disabled. Built once so its buckets persist.
+	otpEmailLimiter RateLimiter
 }
 
 // New constructs a gateway Server. If logger is nil, slog.Default() is used.
@@ -185,7 +216,11 @@ func New(s *schema.SchemaDefinition, db store.Adapter, logger *slog.Logger, opts
 	if len(opts) > 0 {
 		o = opts[0]
 	}
-	return &Server{schema: s, db: db, collections: cols, logger: logger, opts: o}
+	srv := &Server{schema: s, db: db, collections: cols, logger: logger, opts: o}
+	if o.OTPLogin != nil {
+		srv.otpEmailLimiter = newMemoryLimiter(otpRequestsPerMinutePerEmail, otpRequestBurstPerEmail)
+	}
+	return srv
 }
 
 // Handler returns the root http.Handler with all routes registered.
@@ -254,6 +289,11 @@ func (s *Server) Handler() http.Handler {
 		r.Post("/logout-all", s.handleLogoutAll)
 		r.Post("/forgot", s.handleForgotPassword)
 		r.Post("/reset", s.handleResetPassword)
+		// Passwordless email-OTP login (issue #11), mounted only when enabled.
+		if s.opts.OTPLogin != nil {
+			r.Post("/otp/request", s.handleOTPRequest)
+			r.Post("/otp/verify", s.handleOTPVerify)
+		}
 	})
 
 	// User administration (ADR-0019) — admin-role-gated, JSON bodies. Gets the

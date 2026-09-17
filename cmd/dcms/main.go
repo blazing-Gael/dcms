@@ -312,6 +312,13 @@ func runServer(cmd *cobra.Command, mode serverMode) error {
 		}
 		registration = &gateway.RegistrationOptions{DefaultRoles: cfg.Auth.Registration.DefaultRoles}
 	}
+	var otpLogin *gateway.OTPLoginOptions
+	if cfg.Auth.OTP.Enabled {
+		otpLogin = &gateway.OTPLoginOptions{
+			TTL:         time.Duration(cfg.Auth.OTP.TTLMinutes) * time.Minute,
+			MaxAttempts: cfg.Auth.OTP.MaxAttempts,
+		}
+	}
 
 	// Mailer for account emails (ADR-0019). SMTP host set ⇒ send via SMTP;
 	// otherwise the gateway falls back to a dev-log notifier.
@@ -433,6 +440,7 @@ func runServer(cmd *cobra.Command, mode serverMode) error {
 		ResetLinkBase:       cfg.Auth.Reset.LinkBase,
 		ResetLinkBases:      cfg.Auth.Reset.LinkBases,
 		ResetTokenTTL:       time.Duration(cfg.Auth.Reset.TTLMinutes) * time.Minute,
+		OTPLogin:            otpLogin,
 		Webhooks:            webhooks,
 	}, tlsCfg)
 }

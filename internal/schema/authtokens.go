@@ -8,11 +8,12 @@ const AuthTokensCollection = "_auth_tokens"
 
 // _auth_tokens field names.
 const (
-	AuthTokenHash      = "token_hash" // sha256 of the raw token; never the token
+	AuthTokenHash      = "token_hash" // sha256 of the raw token/code; never the token
 	AuthTokenUserID    = "user_id"    // belongs-to _users
-	AuthTokenPurpose   = "purpose"    // reset | verify | invite
+	AuthTokenPurpose   = "purpose"    // reset | verify | invite | login
 	AuthTokenExpiresAt = "expires_at"
-	AuthTokenUsedAt    = "used_at" // set when consumed (defense in depth; rows are also deleted)
+	AuthTokenUsedAt    = "used_at"  // set when consumed (defense in depth; rows are also deleted)
+	AuthTokenAttempts  = "attempts" // wrong-guess counter, so a short login code can't be brute-forced (issue #11)
 )
 
 // _auth_tokens purpose values.
@@ -20,6 +21,9 @@ const (
 	AuthTokenPurposeReset  = "reset"
 	AuthTokenPurposeVerify = "verify"
 	AuthTokenPurposeInvite = "invite"
+	// AuthTokenPurposeLogin backs passwordless email-OTP login (issue #11): a
+	// short-lived, single-use, attempt-limited numeric code emailed to the user.
+	AuthTokenPurposeLogin = "login"
 )
 
 // authTokensCollectionDef is the canonical shape of the _auth_tokens collection.
@@ -33,6 +37,7 @@ func authTokensCollectionDef() CollectionDef {
 			{Name: AuthTokenPurpose, Type: TypeString, Required: true},
 			{Name: AuthTokenExpiresAt, Type: TypeDateTime, Required: true},
 			{Name: AuthTokenUsedAt, Type: TypeDateTime},
+			{Name: AuthTokenAttempts, Type: TypeInteger},
 		},
 		Indexes: []Index{
 			{Columns: []string{AuthTokenExpiresAt}}, // for the expiry sweep

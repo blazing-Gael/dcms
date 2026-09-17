@@ -23,6 +23,7 @@ func (s *Server) enqueueNotification(ctx context.Context, msg Notification) erro
 		schema.NotificationTo:       msg.To,
 		schema.NotificationKind:     msg.Kind,
 		schema.NotificationLink:     msg.Link,
+		schema.NotificationCode:     msg.Code,
 		schema.NotificationStatus:   schema.NotificationPending,
 		schema.NotificationAttempts: 0,
 		schema.NotificationNextAt:   nowUTC().Format(time.RFC3339),
@@ -82,6 +83,7 @@ func (s *Server) attemptNotification(ctx context.Context, n store.Record) {
 		To:   stringOf(n[schema.NotificationTo]),
 		Kind: stringOf(n[schema.NotificationKind]),
 		Link: stringOf(n[schema.NotificationLink]),
+		Code: stringOf(n[schema.NotificationCode]),
 	})
 	if err == nil {
 		if delErr := s.db.Delete(ctx, schema.NotificationsCollection, id); delErr != nil {
