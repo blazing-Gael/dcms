@@ -9,6 +9,14 @@ While on **0.x**, minor versions may include breaking changes.
 ## [Unreleased]
 
 ### Security
+- **Multi-frontend password reset — `auth.reset.link_bases` + `return_to` (issue
+  #32).** A reset email always pointed at one `link_base`, so an instance serving
+  several frontends (a PWA, a writing app, an admin app) sent every user to the same
+  place. `auth.reset.link_bases` is an allowlist of reset URLs; `POST /auth/forgot`
+  may include a `return_to` that is honoured only when it exactly matches an entry,
+  otherwise the first entry is used — never an arbitrary URL, so a forged `return_to`
+  can't turn the reset email into an open redirect. The single `link_base` still
+  works as the one-frontend shorthand.
 - **Media access by inheritance — `_media.access.read: inherit` (issue #30,
   ADR-0028).** The media library had one read rule for every file, so shared
   editorial images and private user uploads couldn't coexist: the rule that

@@ -135,6 +135,11 @@ type Options struct {
 	// ResetLinkBase is the frontend URL a reset link points at; the token is
 	// appended as ?token=. Empty ⇒ the raw token is delivered (dev).
 	ResetLinkBase string
+	// ResetLinkBases is an allowlist of reset URLs for a multi-frontend instance
+	// (issue #32). When set it takes precedence over ResetLinkBase; a forgot
+	// request's `return_to` is honoured only if it exactly matches an entry, else
+	// the first entry is used (never an arbitrary URL — no open redirect).
+	ResetLinkBases []string
 	// ResetTokenTTL is how long a reset token is valid; 0 uses the default (1h).
 	ResetTokenTTL time.Duration
 

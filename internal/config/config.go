@@ -112,6 +112,12 @@ type AuthReset struct {
 	// LinkBase is the frontend URL a reset link points at; the token is appended
 	// as ?token=. Empty ⇒ the raw token is delivered (dev).
 	LinkBase string `yaml:"link_base"`
+	// LinkBases is an allowlist of reset URLs for an instance with several
+	// frontends (issue #32). A `POST /auth/forgot` may name a `return_to`; it is
+	// honoured only when it exactly matches one of these, else the first is used —
+	// never an arbitrary URL, so this is not an open redirect. Takes precedence over
+	// LinkBase when set (LinkBase is then the single-frontend shorthand).
+	LinkBases []string `yaml:"link_bases"`
 	// TTLMinutes is how long a reset token is valid; 0 uses the default (60).
 	TTLMinutes int `yaml:"ttl_minutes"`
 }

@@ -187,6 +187,15 @@ auth:
   # reset:
   #   link_base: "https://blog.example/reset"
   #   ttl_minutes: 60
+  # Multi-frontend reset (issue #32): instead of one link_base, list every allowed
+  # reset URL. POST /auth/forgot may include { "return_to": "<one of these>" } to
+  # pick the client the user started from; a return_to that isn't an exact match is
+  # ignored and the first entry is used — never an arbitrary URL (no open redirect).
+  # reset:
+  #   link_bases:
+  #     - "https://app.example/restore"     # PWA (default — first entry)
+  #     - "https://write.example/reset"     # writing app
+  #     - "https://admin.example/reset"     # admin app
   #
   # Mailer for account emails. Omit (no host) to use a dev-log mailer that prints
   # the reset link to the console — handy for local testing. SMTP credentials are
