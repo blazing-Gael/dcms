@@ -28,11 +28,13 @@ type ConnectionVerifier interface {
 }
 
 // Notification is one message to send. Link is the action URL the user follows
-// (e.g. the password-reset page with the token).
+// (e.g. the password-reset page with the token); Code is a short human-typed code
+// (email-OTP login, issue #11). A given kind uses one or the other.
 type Notification struct {
 	To   string // recipient email
-	Kind string // "password_reset" (more later)
+	Kind string // "password_reset" | "login_otp" (more later)
 	Link string
+	Code string
 }
 
 // subjectBody renders a notification to a subject line and a plain-text body.
@@ -42,6 +44,11 @@ func (n Notification) subjectBody() (string, string) {
 		return "Reset your password",
 			"We received a request to reset your password.\r\n\r\n" +
 				"Follow this link to choose a new one:\r\n" + n.Link + "\r\n\r\n" +
+				"If you didn't request this, you can ignore this email."
+	case "login_otp":
+		return "Your sign-in code",
+			"Your sign-in code is:\r\n\r\n" + n.Code + "\r\n\r\n" +
+				"Enter it to finish signing in. It expires shortly and can be used once.\r\n\r\n" +
 				"If you didn't request this, you can ignore this email."
 	default:
 		return "Notification", n.Link
@@ -55,7 +62,7 @@ type logNotifier struct{ logger *slog.Logger }
 
 func (n logNotifier) Notify(_ context.Context, msg Notification) error {
 	n.logger.Info("account notification (dev — no mailer configured)",
-		"to", msg.To, "kind", msg.Kind, "link", msg.Link)
+		"to", msg.To, "kind", msg.Kind, "link", msg.Link, "code", msg.Code)
 	return nil
 }
 

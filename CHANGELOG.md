@@ -9,6 +9,21 @@ While on **0.x**, minor versions may include breaking changes.
 ## [Unreleased]
 
 ### Security
+- **Passwordless email-OTP login — `auth.otp` (issue #11, ADR-0029).** Login was
+  email + password only, which is the wrong shape for a consumer audience: a PWA
+  where the account is a side effect of a purchase had to mint a password the user
+  never sees, and for students who routinely lose passwords, reset became a
+  primary path rather than an edge case. With `auth.otp.enabled: true`,
+  `POST /auth/otp/request {email}` emails a 6-digit code (always `204`, so it can't
+  enumerate accounts) and `POST /auth/otp/verify {email, code}` exchanges a correct
+  code for a session — the same opaque session a password login issues. The code is
+  single-use, short-lived (`ttl_minutes`, default 10), burned after `max_attempts`
+  wrong guesses (default 5, constant-time compare) so the 10^6 space can't be
+  walked, and superseded when a new one is requested; requests are throttled per
+  recipient on top of the per-IP auth tier so the endpoint can't bomb an inbox.
+  Off by default — enabling it lets anyone with inbox access obtain a session, so
+  it's an explicit operator choice; when off the routes are not mounted. Reuses the
+  `_auth_tokens` table (a new `login` purpose) and the durable notification outbox.
 - **Multi-frontend password reset — `auth.reset.link_bases` + `return_to` (issue
   #32).** A reset email always pointed at one `link_base`, so an instance serving
   several frontends (a PWA, a writing app, an admin app) sent every user to the same

@@ -85,6 +85,8 @@ type Auth struct {
 	Password Password `yaml:"password"`
 	// Reset configures the password-reset flow (ADR-0019 phase 2).
 	Reset AuthReset `yaml:"reset"`
+	// OTP configures passwordless email-OTP login (issue #11). Off unless enabled.
+	OTP AuthOTP `yaml:"otp"`
 	// SMTP configures the mailer for account emails. Host empty ⇒ a dev-log
 	// mailer that prints reset links to the console.
 	SMTP SMTP `yaml:"smtp"`
@@ -120,6 +122,17 @@ type AuthReset struct {
 	LinkBases []string `yaml:"link_bases"`
 	// TTLMinutes is how long a reset token is valid; 0 uses the default (60).
 	TTLMinutes int `yaml:"ttl_minutes"`
+}
+
+// AuthOTP configures passwordless email-OTP login (issue #11, ADR-0029). Off by
+// default: enabling it lets anyone with access to a user's inbox obtain a session,
+// so it is an explicit operator choice.
+type AuthOTP struct {
+	Enabled bool `yaml:"enabled"`
+	// TTLMinutes is how long an emailed code is valid; 0 uses the default (10).
+	TTLMinutes int `yaml:"ttl_minutes"`
+	// MaxAttempts is the wrong-guess budget for one code; 0 uses the default (5).
+	MaxAttempts int `yaml:"max_attempts"`
 }
 
 // SMTP configures outbound mail. Credentials are env-only (secrets rule).

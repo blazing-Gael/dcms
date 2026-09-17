@@ -10,8 +10,9 @@ const NotificationsCollection = "_notifications"
 // Notification row fields. The audit columns supply when/who enqueued it.
 const (
 	NotificationTo        = "recipient"       // destination (email address)
-	NotificationKind      = "kind"            // e.g. "password_reset"
+	NotificationKind      = "kind"            // e.g. "password_reset", "login_otp"
 	NotificationLink      = "link"            // the action URL delivered to the user
+	NotificationCode      = "code"            // a short code delivered to the user (email-OTP login, issue #11)
 	NotificationStatus    = "status"          // pending | failed | dead
 	NotificationAttempts  = "attempts"        // delivery attempts so far
 	NotificationNextAt    = "next_attempt_at" // earliest time to (re)try, RFC3339
@@ -34,6 +35,7 @@ func notificationsCollectionDef() CollectionDef {
 			{Name: NotificationTo, Type: TypeString, Required: true},
 			{Name: NotificationKind, Type: TypeString, Required: true},
 			{Name: NotificationLink, Type: TypeText},
+			{Name: NotificationCode, Type: TypeString},
 			{Name: NotificationStatus, Type: TypeString, Required: true},
 			{Name: NotificationAttempts, Type: TypeInteger},
 			{Name: NotificationNextAt, Type: TypeString},

@@ -197,6 +197,18 @@ auth:
   #     - "https://write.example/reset"     # writing app
   #     - "https://admin.example/reset"     # admin app
   #
+  # Passwordless email-OTP login (issue #11). OFF by default — enabling it lets
+  # anyone with access to a user's inbox obtain a session, so it's an explicit
+  # choice. POST /auth/otp/request { "email": ... } emails a 6-digit code (always
+  # 204, never revealing whether the account exists); POST /auth/otp/verify
+  # { "email": ..., "code": ... } exchanges it for a session, same as login. The
+  # code is single-use, short-lived, and burned after too many wrong guesses.
+  # Needs a mailer (smtp below) in production; the dev-log mailer prints the code.
+  # otp:
+  #   enabled: true
+  #   ttl_minutes: 10   # code validity (default 10)
+  #   max_attempts: 5   # wrong guesses before the code is burned (default 5)
+  #
   # Mailer for account emails. Omit (no host) to use a dev-log mailer that prints
   # the reset link to the console — handy for local testing. SMTP credentials are
   # SECRETS and env-only: DCMS_SMTP_USERNAME / DCMS_SMTP_PASSWORD (host/from may
