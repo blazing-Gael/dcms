@@ -129,6 +129,111 @@ func TestOTPLogin_NewRequestInvalidatesOld(t *testing.T) {
 	}
 }
 
+// loginTokenRow returns the single outstanding login-purpose _auth_tokens row.
+func loginTokenRow(t *testing.T, db store.Adapter) store.Record {
+	t.Helper()
+	page, err := db.Find(context.Background(), store.Query{
+		Collection: schema.AuthTokensCollection,
+		Filters:    []store.Filter{{Field: schema.AuthTokenPurpose, Operator: store.Eq, Value: schema.AuthTokenPurposeLogin}},
+		SkipCount:  true,
+	})
+	if err != nil {
+		t.Fatalf("read login tokens: %v", err)
+	}
+	if len(page.Data) != 1 {
+		t.Fatalf("expected exactly 1 login token, got %d", len(page.Data))
+	}
+	return page.Data[0]
+}
+
+func TestOTPLogin_ExpiredCodeRejected(t *testing.T) {
+	base, db := newAccountsServer(t, gateway.Options{OTPLogin: &gateway.OTPLoginOptions{}})
+	seedUser(t, db, "u@x.com", "irrelevant-pw", "author")
+
+	requestOTP(t, base, "u@x.com")
+	code := otpCodeFromQueue(t, db)
+
+	// Force the code past its TTL, then verify — the short-TTL defense must reject it.
+	row := loginTokenRow(t, db)
+	if _, err := db.Update(context.Background(), store.WriteInput{Collection: schema.AuthTokensCollection, Data: store.Record{
+		"id":                      row["id"],
+		schema.AuthTokenExpiresAt: "2000-01-01T00:00:00Z",
+	}}); err != nil {
+		t.Fatalf("age the token: %v", err)
+	}
+	if st, _ := do(t, http.MethodPost, base+"/auth/otp/verify", `{"email":"u@x.com","code":"`+code+`"}`); st != http.StatusUnauthorized {
+		t.Fatalf("expired code should be 401, got %d", st)
+	}
+}
+
+func TestOTPLogin_DisabledUserRejected(t *testing.T) {
+	base, db := newAccountsServer(t, gateway.Options{OTPLogin: &gateway.OTPLoginOptions{}})
+	id := seedUserID(t, db, "u@x.com", "irrelevant-pw", "author")
+
+	requestOTP(t, base, "u@x.com")
+	code := otpCodeFromQueue(t, db)
+
+	// Suspend the account after the code was issued: a valid code must not let a
+	// disabled user in (mirrors the password-login guard).
+	if _, err := db.Update(context.Background(), store.WriteInput{Collection: schema.UsersCollection, Data: store.Record{
+		"id":              id,
+		schema.UserStatus: schema.UserStatusDisabled,
+	}}); err != nil {
+		t.Fatalf("disable user: %v", err)
+	}
+	if st, _ := do(t, http.MethodPost, base+"/auth/otp/verify", `{"email":"u@x.com","code":"`+code+`"}`); st != http.StatusUnauthorized {
+		t.Fatalf("disabled user with a valid code should be 401, got %d", st)
+	}
+}
+
+func TestOTPLogin_CodeIsUserBound(t *testing.T) {
+	base, db := newAccountsServer(t, gateway.Options{OTPLogin: &gateway.OTPLoginOptions{}})
+	seedUser(t, db, "a@x.com", "irrelevant-pw", "author")
+	seedUser(t, db, "b@x.com", "irrelevant-pw", "author")
+
+	// Only A has an outstanding code.
+	requestOTP(t, base, "a@x.com")
+	code := otpCodeFromQueue(t, db)
+
+	// B cannot use A's code — the stored hash binds the user id.
+	if st, _ := do(t, http.MethodPost, base+"/auth/otp/verify", `{"email":"b@x.com","code":"`+code+`"}`); st != http.StatusUnauthorized {
+		t.Fatalf("A's code used as B should be 401, got %d", st)
+	}
+	// And A's own code still works (B's failed attempt didn't consume it).
+	if st, _ := do(t, http.MethodPost, base+"/auth/otp/verify", `{"email":"a@x.com","code":"`+code+`"}`); st != http.StatusOK {
+		t.Fatalf("A's code for A should be 200, got %d", st)
+	}
+}
+
+func TestOTPLogin_RequestThrottledPerEmail(t *testing.T) {
+	base, db := newAccountsServer(t, gateway.Options{OTPLogin: &gateway.OTPLoginOptions{}})
+	seedUser(t, db, "u@x.com", "irrelevant-pw", "author")
+
+	// The per-email limiter admits a small burst then throttles. Fire more requests
+	// than the burst back-to-back; throttled ones are still generic 204s but mint
+	// and queue nothing, so the outbox holds at most the burst count — never one per
+	// request. This is what stops the endpoint bombing an inbox.
+	for range 6 {
+		if st, _ := do(t, http.MethodPost, base+"/auth/otp/request", `{"email":"u@x.com"}`); st != http.StatusNoContent {
+			t.Fatalf("otp request should be 204 even when throttled, got %d", st)
+		}
+	}
+	if n := len(queuedNotifications(t, db)); n == 0 || n >= 6 {
+		t.Fatalf("per-email throttle: %d codes queued from 6 requests, want a small burst (>0, <6)", n)
+	}
+}
+
+func TestOTPLogin_VerifyRequiresBothFields(t *testing.T) {
+	base, db := newAccountsServer(t, gateway.Options{OTPLogin: &gateway.OTPLoginOptions{}})
+	seedUser(t, db, "u@x.com", "irrelevant-pw", "author")
+
+	for _, body := range []string{`{"email":"u@x.com"}`, `{"code":"123456"}`, `{}`} {
+		if st, _ := do(t, http.MethodPost, base+"/auth/otp/verify", body); st != http.StatusUnprocessableEntity {
+			t.Fatalf("verify %s should be 422, got %d", body, st)
+		}
+	}
+}
+
 func TestOTPLogin_DisabledNotMounted(t *testing.T) {
 	base, db := newAccountsServer(t, gateway.Options{}) // OTP off
 	seedUser(t, db, "u@x.com", "irrelevant-pw", "author")
