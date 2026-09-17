@@ -269,3 +269,40 @@ collections:
 		}
 	}
 }
+
+// An inner enum renders as a string-literal union inside the element type, and an
+// inner belongs-to relation follows the same input/record distinction as a
+// top-level one (issue #6).
+func TestTypeScript_ObjectListInnerEnumAndRelation(t *testing.T) {
+	src := []byte(`
+version: "1"
+collections:
+  authors:
+    fields:
+      name: { type: string, required: true }
+  pages:
+    fields:
+      cards:
+        type: object_list
+        of:
+          kind:   { type: enum, values: [hero, quote] }
+          author: { type: relation, target: authors }
+`)
+	def, err := schema.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	out, err := TypeScript(def)
+	if err != nil {
+		t.Fatalf("TypeScript: %v", err)
+	}
+	// Create input: enum union + relation as id-or-inline-create.
+	wantInput := "cards?: Array<{ _key?: string; kind?: 'hero' | 'quote'; author?: string | CreateAuthors }>;"
+	// Response record: relation as id or expanded object.
+	wantRecord := "cards?: Array<{ _key?: string; kind?: 'hero' | 'quote'; author?: string | Authors }>;"
+	for _, want := range []string{wantInput, wantRecord} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("missing element type.\nwant: %s\n\ngot:\n%s", want, out)
+		}
+	}
+}

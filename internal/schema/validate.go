@@ -322,8 +322,10 @@ func (s *SchemaDefinition) Validate() error {
 						add("%s: an object_list may not contain another object_list (nesting is one level deep)", ipath)
 					case inner.Type == TypeRichText:
 						add("%s: an object_list element may not contain richtext", ipath)
-					case inner.Type == TypeRelation && inner.Many:
-						add("%s: an object_list element may not hold a many-to-many relation", ipath)
+					case (inner.Type == TypeRelation || inner.Type == TypeFile) && inner.Many:
+						// A many relation is a join table; an element stored as JSON has
+						// none, so a gallery/m2m inside an element is not representable.
+						add("%s: an object_list element may not hold a many-to-many relation (a %q with many: true)", ipath, inner.Type)
 					case inner.Type == TypeRelation:
 						switch {
 						case inner.Target == "":
