@@ -2,6 +2,8 @@ package gateway
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"strconv"
@@ -30,10 +32,18 @@ func (s *Server) captureRevision(ctx context.Context, db store.DB, collection st
 	if id == "" {
 		return nil
 	}
-	version, err := s.nextRevisionVersion(ctx, db, collection, id)
+	lastVersion, lastHash, err := s.lastRevision(ctx, db, collection, id)
 	if err != nil {
 		return err
 	}
+	// Skip-if-unchanged (issue #25): a write whose content matches the previous
+	// revision — the autosave case — records no new snapshot, so identical versions
+	// don't accumulate. The first revision (no prior) always captures.
+	hash := revisionContentHash(rec)
+	if lastVersion > 0 && hash == lastHash {
+		return nil
+	}
+	version := lastVersion + 1
 	snapshot, err := json.Marshal(rec)
 	if err != nil {
 		return err
@@ -41,41 +51,85 @@ func (s *Server) captureRevision(ctx context.Context, db store.DB, collection st
 	_, err = db.Create(ctx, store.WriteInput{
 		Collection: schema.RevisionsCollection,
 		Data: store.Record{
-			schema.RevisionCollection: collection,
-			schema.RevisionRecordID:   id,
-			schema.RevisionVersion:    version,
-			schema.RevisionOperation:  operation,
-			schema.RevisionData:       string(snapshot),
+			schema.RevisionCollection:  collection,
+			schema.RevisionRecordID:    id,
+			schema.RevisionVersion:     version,
+			schema.RevisionOperation:   operation,
+			schema.RevisionData:        string(snapshot),
+			schema.RevisionContentHash: hash,
 		},
 	})
+	if err != nil {
+		return err
+	}
+	return s.pruneRevisions(ctx, db, collection, id, version)
+}
+
+// revisionContentHash hashes a record's content for the skip-if-unchanged check
+// (issue #25), excluding the managed columns that change on every write regardless
+// of content (updated_at/updated_by/_version) — otherwise no two writes would ever
+// hash equal. json.Marshal sorts map keys, so the hash is deterministic.
+func revisionContentHash(rec store.Record) string {
+	clone := make(store.Record, len(rec))
+	for k, v := range rec {
+		switch k {
+		case "updated_at", "updated_by", schema.ConcurrencyVersion:
+			continue
+		}
+		clone[k] = v
+	}
+	b, _ := json.Marshal(clone)
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:])
+}
+
+// pruneRevisions enforces per-collection retention (issue #25): after a capture at
+// latestVersion, versions older than the newest `max` are deleted. A no-op when the
+// collection sets no cap. One bounded delete per capture keeps history at `max`.
+func (s *Server) pruneRevisions(ctx context.Context, db store.DB, collection, id string, latestVersion int64) error {
+	max := s.collections[collection].RevisionsMax
+	if max <= 0 {
+		return nil
+	}
+	cutoff := latestVersion - int64(max)
+	if cutoff < 1 {
+		return nil
+	}
+	_, err := db.RawExec(ctx,
+		`DELETE FROM "`+schema.RevisionsCollection+`" WHERE `+schema.RevisionCollection+` = $1 AND `+schema.RevisionRecordID+` = $2 AND `+schema.RevisionVersion+` <= $3`,
+		collection, id, cutoff)
 	return err
 }
 
 // nextRevisionVersion returns the next per-record version number (1 for the
 // first). Backed by the (collection, record_id, version) index → one cheap query.
-func (s *Server) nextRevisionVersion(ctx context.Context, db store.DB, collection, id string) (int64, error) {
+// lastRevision returns the newest revision's version and content hash for a record
+// (0 / "" when it has none) — one indexed query on (collection, record_id, version).
+func (s *Server) lastRevision(ctx context.Context, db store.DB, collection, id string) (int64, string, error) {
 	page, err := db.Find(ctx, store.Query{
 		Collection: schema.RevisionsCollection,
 		Filters: []store.Filter{
 			{Field: schema.RevisionCollection, Operator: store.Eq, Value: collection},
 			{Field: schema.RevisionRecordID, Operator: store.Eq, Value: id},
 		},
-		Sort:  "-" + schema.RevisionVersion,
-		Limit: 1,
+		Sort:      "-" + schema.RevisionVersion,
+		Limit:     1,
+		SkipCount: true,
 	})
 	if err != nil {
-		return 0, err
+		return 0, "", err
 	}
 	if len(page.Data) == 0 {
-		return 1, nil
+		return 0, "", nil
 	}
+	hash, _ := page.Data[0][schema.RevisionContentHash].(string)
 	switch v := page.Data[0][schema.RevisionVersion].(type) {
 	case int64:
-		return v + 1, nil
+		return v, hash, nil
 	case float64:
-		return int64(v) + 1, nil
+		return int64(v), hash, nil
 	default:
-		return 1, nil
+		return 0, hash, nil
 	}
 }
 

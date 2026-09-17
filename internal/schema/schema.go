@@ -91,6 +91,10 @@ type CollectionDef struct {
 	// Revisions captures append-only version history for the collection in the
 	// engine-managed _revisions collection (ADR-0013), with view/restore endpoints.
 	Revisions bool `json:"revisions,omitempty"`
+	// RevisionsMax caps retained versions per record (issue #25): after each
+	// capture, versions older than the newest `max` are pruned. 0 ⇒ unbounded.
+	// Declared as `revisions: { max: N }`; `revisions: true` leaves it 0.
+	RevisionsMax int `json:"revisions_max,omitempty"`
 	// Events appends a row to the engine-managed _events log on each state change
 	// (create/update/delete and lifecycle transitions), captured in the write
 	// transaction, and exposes them on the change feed (ADR-0021, M-B). Opt-in:
