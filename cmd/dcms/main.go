@@ -431,6 +431,7 @@ func runServer(cmd *cobra.Command, mode serverMode) error {
 		PasswordMinLength:   cfg.Auth.Password.MinLength,
 		Notifier:            notifier,
 		ResetLinkBase:       cfg.Auth.Reset.LinkBase,
+		ResetLinkBases:      cfg.Auth.Reset.LinkBases,
 		ResetTokenTTL:       time.Duration(cfg.Auth.Reset.TTLMinutes) * time.Minute,
 		Webhooks:            webhooks,
 	}, tlsCfg)

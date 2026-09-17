@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -28,13 +29,31 @@ func (s *Server) resetTokenTTL() time.Duration {
 	return defaultResetTokenTTL
 }
 
-// resetLink builds the link a user follows to reset. With a configured frontend
-// base it appends the token as a query param; otherwise the "link" is the bare
-// token (useful in dev, where the operator reads it off the log).
-func (s *Server) resetLink(rawToken string) string {
-	base := s.opts.ResetLinkBase
-	if base == "" {
+// resetBases returns the allowlist of reset frontend URLs: the multi-frontend list
+// when set (issue #32), else the single ResetLinkBase, else empty (dev: bare token).
+func (s *Server) resetBases() []string {
+	if len(s.opts.ResetLinkBases) > 0 {
+		return s.opts.ResetLinkBases
+	}
+	if s.opts.ResetLinkBase != "" {
+		return []string{s.opts.ResetLinkBase}
+	}
+	return nil
+}
+
+// resetLink builds the link a user follows to reset. It sends them to returnTo when
+// that EXACTLY matches an allowlisted base (issue #32) — otherwise to the first
+// allowlisted base, never to an arbitrary URL, so a forged return_to can't turn the
+// reset email into an open redirect. With no base configured the "link" is the bare
+// token (dev, where the operator reads it off the log).
+func (s *Server) resetLink(rawToken, returnTo string) string {
+	bases := s.resetBases()
+	if len(bases) == 0 {
 		return rawToken
+	}
+	base := bases[0]
+	if returnTo != "" && slices.Contains(bases, returnTo) {
+		base = returnTo
 	}
 	sep := "?"
 	if strings.Contains(base, "?") {
@@ -54,9 +73,12 @@ func (s *Server) handleForgotPassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	email, _ := data[schema.UserEmail].(string)
+	// return_to lets a multi-frontend instance send the user back to the client they
+	// started from (issue #32); it is validated against the allowlist in resetLink.
+	returnTo, _ := data["return_to"].(string)
 	if email != "" {
 		if user, uerr := s.findUserByEmail(r.Context(), email); uerr == nil && user != nil && !userDisabled(user) {
-			s.issueResetToken(r.Context(), user)
+			s.issueResetToken(r.Context(), user, returnTo)
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})
@@ -66,7 +88,7 @@ func (s *Server) handleForgotPassword(w http.ResponseWriter, r *http.Request) {
 // the link. Failures are logged, never surfaced — the caller still returns 200.
 // The recipient is the user's stored (validated, normalized) email, so no
 // client-supplied string reaches the mailer.
-func (s *Server) issueResetToken(ctx context.Context, user store.Record) {
+func (s *Server) issueResetToken(ctx context.Context, user store.Record, returnTo string) {
 	email, _ := user[schema.UserEmail].(string)
 	raw, err := newSessionToken()
 	if err != nil {
@@ -85,7 +107,7 @@ func (s *Server) issueResetToken(ctx context.Context, user store.Record) {
 	}
 	// Enqueue for durable, off-request-path delivery (ADR-0021 phase 3). A slow or
 	// down mailer no longer blocks the response or drops the email.
-	if err := s.enqueueNotification(ctx, Notification{To: email, Kind: "password_reset", Link: s.resetLink(raw)}); err != nil {
+	if err := s.enqueueNotification(ctx, Notification{To: email, Kind: "password_reset", Link: s.resetLink(raw, returnTo)}); err != nil {
 		s.logger.Error("reset notification enqueue failed", "err", err)
 	}
 }
