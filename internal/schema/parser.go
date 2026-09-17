@@ -201,7 +201,7 @@ func toCollection(name string, node *yaml.Node) (CollectionDef, []string, error)
 				return col, nil, fmt.Errorf("soft_delete: %w", err)
 			}
 		case "revisions":
-			if err := e.Val.Decode(&col.Revisions); err != nil {
+			if err := parseRevisions(e.Val, &col); err != nil {
 				return col, nil, fmt.Errorf("revisions: %w", err)
 			}
 		case "events":
@@ -274,6 +274,35 @@ func levenshtein(a, b string) int {
 		prev = cur
 	}
 	return prev[len(rb)]
+}
+
+// parseRevisions decodes the `revisions` directive: either a boolean
+// (`revisions: true`) or a mapping of options (`revisions: { max: 50 }`, issue
+// #25). Unknown options are rejected, matching the strict-keys stance (ADR-0025).
+func parseRevisions(node *yaml.Node, col *CollectionDef) error {
+	switch node.Kind {
+	case yaml.ScalarNode:
+		return node.Decode(&col.Revisions)
+	case yaml.MappingNode:
+		col.Revisions = true
+		entries, err := mappingEntries(node)
+		if err != nil {
+			return err
+		}
+		for _, e := range entries {
+			switch e.Key {
+			case "max":
+				if err := e.Val.Decode(&col.RevisionsMax); err != nil {
+					return fmt.Errorf("max: %w", err)
+				}
+			default:
+				return fmt.Errorf("unknown revisions option %q (want max)", e.Key)
+			}
+		}
+		return nil
+	default:
+		return fmt.Errorf("expected a boolean or a { max: N } mapping, got %s", kindName(node.Kind))
+	}
 }
 
 func toFields(node *yaml.Node) ([]FieldDef, error) {

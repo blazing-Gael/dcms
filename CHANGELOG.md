@@ -49,6 +49,17 @@ While on **0.x**, minor versions may include breaking changes.
   leaving the authenticated API budget untouched. Over-limit ⇒ 429 with `Retry-After`.
 
 ### Changed
+- **Revision retention — skip-if-unchanged capture + `revisions: { max: N }`
+  (issue #25).** Every write captured a full snapshot, so an autosaving editor that
+  re-PATCHed identical content grew history without bound and buried the meaningful
+  versions. Capture now hashes the record's content (ignoring the volatile
+  `updated_at`/`updated_by`/`_version`) and skips when it matches the newest
+  revision, so a no-op save records nothing. `revisions` also accepts a mapping —
+  `revisions: { max: N }` — that caps retained versions per record: after each
+  capture, versions older than the newest `N` are pruned in the same write
+  transaction. The boolean `revisions: true` shorthand keeps unbounded history;
+  `max` is per-collection schema, and a negative `max`, or `max` without revisions
+  enabled, is a compile error.
 - **Strict config & schema keys — a typo is now an error, not a silent no-op
   (issue #35). BREAKING for files with stray keys.** An unknown key in
   `dcms.config.yaml` was dropped, so `server.rate_limit.requests_per_minute: 60`

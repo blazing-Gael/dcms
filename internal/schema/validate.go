@@ -135,7 +135,7 @@ func (s *SchemaDefinition) Validate() error {
 			// CollectionDef must be added here too — TestMedia_RejectsEveryNonAccessDirective
 			// reflects over the struct to fail the build if one isn't.
 			if len(col.Fields) > 0 || len(col.Indexes) > 0 || col.Timestamps ||
-				col.Publishing || col.SoftDelete || col.Revisions || col.Events || col.Concurrency || col.Route != "" {
+				col.Publishing || col.SoftDelete || col.Revisions || col.RevisionsMax != 0 || col.Events || col.Concurrency || col.Route != "" {
 				add("%s: the media library is engine-managed — it accepts an `access:` block only", cpath)
 			}
 		case reservedCollections[col.Name]:
@@ -344,6 +344,15 @@ func (s *SchemaDefinition) Validate() error {
 					add("%s.access.publish: `public` is not allowed — anyone could publish", cpath)
 				}
 			}
+		}
+
+		// Revision retention (issue #25): a negative cap is meaningless, and a cap
+		// without revisions has nothing to prune (a typo worth catching).
+		if col.RevisionsMax < 0 {
+			add("%s.revisions.max: must be zero (unbounded) or positive", cpath)
+		}
+		if col.RevisionsMax > 0 && !col.Revisions {
+			add("%s.revisions.max: only valid when revisions are enabled", cpath)
 		}
 
 		// Index columns must reference real columns.

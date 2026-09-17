@@ -13,6 +13,11 @@ const (
 	RevisionVersion    = "version"    // per-record monotonic counter (1 = create)
 	RevisionOperation  = "operation"  // create | update | publish | ... | restore | delete
 	RevisionData       = "data"       // full JSON snapshot of the record at this version
+	// RevisionContentHash is a hash of the record's content at this version, minus
+	// volatile managed columns (updated_at/updated_by/_version). It lets a write
+	// skip capturing a revision whose content matches the previous one — so autosave
+	// doesn't flood history with identical snapshots (issue #25).
+	RevisionContentHash = "content_hash"
 )
 
 // revisionsCollectionDef is the canonical shape of the _revisions collection. The
@@ -29,6 +34,7 @@ func revisionsCollectionDef() CollectionDef {
 			{Name: RevisionVersion, Type: TypeInteger, Required: true},
 			{Name: RevisionOperation, Type: TypeString},
 			{Name: RevisionData, Type: TypeJSON},
+			{Name: RevisionContentHash, Type: TypeString},
 		},
 		Indexes: []Index{
 			{Columns: []string{RevisionCollection, RevisionRecordID, RevisionVersion}},

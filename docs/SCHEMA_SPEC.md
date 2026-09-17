@@ -478,12 +478,17 @@ record is answered with `404`, never `403`, so its existence doesn't leak.
 ## Revisions / version history (ADR-0013)
 
 ```yaml
-revisions: true
+revisions: true            # or: revisions: { max: 50 }  — cap retained versions
 # Keeps a full-snapshot version history of every record in the collection. On each
 # write DCMS captures the whole record as JSON in the same transaction (history can
 # never diverge from the record), labeled with the operation and a per-record
 # incrementing version:
 #   create / update / publish / unpublish / archive / restore / delete
+#
+# A write whose CONTENT is unchanged from the previous version captures no new
+# snapshot (issue #25) — so an autosave loop resending the same body doesn't flood
+# history. `revisions: { max: N }` additionally keeps only the newest N versions per
+# record, pruning older ones in the write transaction (0/omitted ⇒ unbounded).
 #
 #   GET  /api/v1/<collection>/:id/revisions                  history (newest first,
 #                                                            no snapshot blobs)
