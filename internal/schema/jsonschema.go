@@ -47,6 +47,30 @@ func fieldJSONSchema(f FieldDef) obj {
 	case TypeRichText:
 		// A structured content document — a shared reusable component (ADR-0014).
 		return ref("RichText")
+	case TypeObjectList:
+		// A repeatable group with a declared element shape (issue #6): an array of
+		// objects, each built from the same per-field schema as a top-level field,
+		// plus the optional `_key` element identifier.
+		props := obj{objectListKey: obj{"type": "string"}}
+		var required []any
+		for _, inner := range f.Of {
+			props[inner.Name] = fieldJSONSchema(inner)
+			if inner.Required {
+				required = append(required, inner.Name)
+			}
+		}
+		items := obj{"type": "object", "properties": props, "additionalProperties": false}
+		if len(required) > 0 {
+			items["required"] = required
+		}
+		m["type"] = "array"
+		m["items"] = items
+		if f.Min != nil {
+			m["minItems"] = int(*f.Min)
+		}
+		if f.Max != nil {
+			m["maxItems"] = int(*f.Max)
+		}
 	case TypeJSON:
 		// any JSON value — no "type" constraint
 	}

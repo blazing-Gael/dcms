@@ -72,6 +72,14 @@ func (s *SchemaDefinition) injectMedia() {
 				f.Type = TypeRelation
 				f.Target = MediaCollection
 			}
+			// A `file` inside an object_list element is the same sugar (issue #6):
+			// rewrite it to a _media relation so the element carries a media id.
+			for oi := range f.Of {
+				if in := &f.Of[oi]; in.Type == TypeFile {
+					in.Type = TypeRelation
+					in.Target = MediaCollection
+				}
+			}
 		}
 	}
 	def := mediaCollectionDef()

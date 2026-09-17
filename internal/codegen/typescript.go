@@ -28,6 +28,19 @@ func TypeScript(def *schema.SchemaDefinition) (string, error) {
 // the id(s) OR — when `?expand=` is used — the expanded target object(s). Stripe
 // popularized this "id or object" union; it lets one field serve both shapes.
 func tsType(f Field, record bool) string {
+	if f.Kind == KindObjectList {
+		// An inline array-of-object type, built from the element fields (issue #6):
+		// `Array<{ _key?: string; title: string; body?: string }>`.
+		parts := make([]string, 0, len(f.Elem))
+		for _, e := range f.Elem {
+			opt := ""
+			if e.Optional {
+				opt = "?"
+			}
+			parts = append(parts, e.Name+opt+": "+tsType(e, record))
+		}
+		return "Array<{ " + strings.Join(parts, "; ") + " }>"
+	}
 	if f.Relation {
 		if f.Many {
 			if record {

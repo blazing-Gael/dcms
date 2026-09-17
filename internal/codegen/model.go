@@ -29,6 +29,7 @@ const (
 	KindEnum
 	KindJSON
 	KindRichText
+	KindObjectList
 	KindUnknown
 )
 
@@ -50,6 +51,11 @@ type Field struct {
 	// Set for media relations: a media asset is created by uploading bytes, never
 	// as an inline JSON object, so its input is only the id.
 	NoInlineCreate bool
+
+	// Elem is the element shape when Kind == KindObjectList (issue #6): the inner
+	// fields, mapped the same way as any other, so a backend renders an inline
+	// array-of-object type. Includes the readonly `_key` element identifier.
+	Elem []Field
 }
 
 // Collection is one collection's three generated shapes plus its names.
@@ -104,6 +110,8 @@ func kindOf(t schema.FieldType) Kind {
 		return KindJSON
 	case schema.TypeRichText:
 		return KindRichText
+	case schema.TypeObjectList:
+		return KindObjectList
 	case schema.TypeRelation:
 		// A belongs-to relation is the target's id (a string) on the wire.
 		// Typed relation expansion comes in a later codegen increment.
@@ -123,6 +131,14 @@ func fieldOf(f schema.FieldDef, optional bool) Field {
 		fld.Many = f.Many
 		fld.Target = pascal(f.Target)
 		fld.NoInlineCreate = f.Target == schema.MediaCollection
+	}
+	if f.Type == schema.TypeObjectList {
+		// The `_key` element identifier, then each declared inner field (optional in
+		// the type when it's neither required nor defaulted, as for a top-level field).
+		fld.Elem = append(fld.Elem, Field{Name: "_key", Kind: KindString, Optional: true})
+		for _, inner := range f.Of {
+			fld.Elem = append(fld.Elem, fieldOf(inner, !inner.Required && inner.Default == nil))
+		}
 	}
 	return fld
 }

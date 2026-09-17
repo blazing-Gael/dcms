@@ -29,7 +29,7 @@ func (c CollectionDef) CoerceResponse(data map[string]any) {
 			if b, ok := numToBool(v); ok {
 				data[f.Name] = b
 			}
-		case TypeJSON, TypeRichText:
+		case TypeJSON, TypeRichText, TypeObjectList:
 			if decoded, ok := decodeJSONColumn(v); ok {
 				data[f.Name] = decoded
 			}

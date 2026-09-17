@@ -112,7 +112,8 @@ func (c CollectionDef) ToCollectionMeta() store.CollectionMeta {
 		}
 		// A richtext value is a structured document persisted as JSON; it needs no
 		// new physical column type (ADR-0014), keeping the store interface untouched.
-		if f.Type == TypeRichText {
+		// An object_list persists the same way — a JSON array in one column (issue #6).
+		if f.Type == TypeRichText || f.Type == TypeObjectList {
 			colType = string(TypeJSON)
 		}
 		// A decimal is stored as int64 minor units (ADR-0017), so its column

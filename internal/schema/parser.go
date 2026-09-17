@@ -113,6 +113,7 @@ type rawField struct {
 	Styles   []string  `yaml:"styles"`
 	Marks    []string  `yaml:"marks"`
 	Blocks   []string  `yaml:"blocks"`
+	Of       yaml.Node `yaml:"of"`
 	Access   yaml.Node `yaml:"access"`
 }
 
@@ -340,6 +341,12 @@ func toFields(node *yaml.Node) ([]FieldDef, error) {
 			f.Styles = rf.Styles
 			f.Marks = rf.Marks
 			f.Blocks = rf.Blocks
+			if rf.Of.Kind != 0 {
+				f.Of, err = toFields(&rf.Of)
+				if err != nil {
+					return nil, fmt.Errorf("%s: of: %w", e.Key, err)
+				}
+			}
 			if rf.Access.Kind != 0 {
 				f.Access, err = parseFieldAccess(&rf.Access)
 				if err != nil {
