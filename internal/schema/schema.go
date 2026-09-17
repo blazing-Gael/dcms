@@ -11,23 +11,30 @@ package schema
 type FieldType string
 
 const (
-	TypeString   FieldType = "string"
-	TypeText     FieldType = "text"
-	TypeNumber   FieldType = "number"
-	TypeInteger  FieldType = "integer"
-	TypeDecimal  FieldType = "decimal" // exact fixed-point (money), stored as int64 minor units (ADR-0017)
-	TypeBoolean  FieldType = "boolean"
-	TypeDate     FieldType = "date"
-	TypeDateTime FieldType = "datetime"
-	TypeEnum     FieldType = "enum"
-	TypeJSON     FieldType = "json"
-	TypeRelation FieldType = "relation"
-	TypeFile     FieldType = "file"     // sugar: a relation to the engine's _media collection
-	TypeRichText FieldType = "richtext" // structured (portable-text-style) content, stored as JSON (ADR-0014)
+	TypeString     FieldType = "string"
+	TypeText       FieldType = "text"
+	TypeNumber     FieldType = "number"
+	TypeInteger    FieldType = "integer"
+	TypeDecimal    FieldType = "decimal" // exact fixed-point (money), stored as int64 minor units (ADR-0017)
+	TypeBoolean    FieldType = "boolean"
+	TypeDate       FieldType = "date"
+	TypeDateTime   FieldType = "datetime"
+	TypeEnum       FieldType = "enum"
+	TypeJSON       FieldType = "json"
+	TypeRelation   FieldType = "relation"
+	TypeFile       FieldType = "file"        // sugar: a relation to the engine's _media collection
+	TypeRichText   FieldType = "richtext"    // structured (portable-text-style) content, stored as JSON (ADR-0014)
+	TypeObjectList FieldType = "object_list" // a repeatable group of fields with a declared shape, stored as JSON (issue #6)
 
 	// TODO(phase-2): i18n
 	// TODO(phase-3): media, geo, computed
 )
+
+// objectListKey is the stable per-element identifier on an object_list element
+// (issue #6), the same role richtext markDefs' `_key` plays: it lets an admin UI
+// reorder elements without losing per-element state. Client-supplied and optional;
+// reserved as an inner field name.
+const objectListKey = "_key"
 
 // FieldDef is a single field within a collection.
 type FieldDef struct {
@@ -54,6 +61,12 @@ type FieldDef struct {
 	Styles []string `json:"styles,omitempty"` // allowed block styles (free-form labels)
 	Marks  []string `json:"marks,omitempty"`  // allowed decorators + annotation types
 	Blocks []string `json:"blocks,omitempty"` // allowed custom (non-text) block types
+
+	// Object-list fields (Type == object_list, issue #6): the declared shape of
+	// each element, as an ordinary field set. One level deep — an element may not
+	// itself contain an object_list or richtext (enforced in validation). Min/Max
+	// bound the list length. Stored as JSON, like richtext, so no store change.
+	Of []FieldDef `json:"of,omitempty"`
 
 	// Access is the field's per-direction policy (ADR-0016 milestone 2). Nil
 	// means unrestricted. Read masks the field out of responses; Write drops an

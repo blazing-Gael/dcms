@@ -233,3 +233,39 @@ func section(t *testing.T, out, header string) string {
 	}
 	return rest[:j]
 }
+
+// An object_list renders as an inline array-of-object type with the element's
+// declared fields and the readonly-ish `_key` identifier (issue #6).
+func TestTypeScript_ObjectList(t *testing.T) {
+	src := []byte(`
+version: "1"
+collections:
+  pages:
+    fields:
+      key: { type: string, required: true }
+      capabilities:
+        type: object_list
+        of:
+          title: { type: string, required: true }
+          body:  { type: text }
+          image: { type: file }
+`)
+	def, err := schema.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	out, err := TypeScript(def)
+	if err != nil {
+		t.Fatalf("TypeScript: %v", err)
+	}
+	// In an input body a media relation is the id only (NoInlineCreate); the inner
+	// `_key`/`body`/`image` are optional, `title` is required.
+	wantInput := "capabilities?: Array<{ _key?: string; title: string; body?: string; image?: string }>;"
+	// In the response record a media relation is the id or the expanded object.
+	wantRecord := "capabilities?: Array<{ _key?: string; title: string; body?: string; image?: string | Media }>;"
+	for _, want := range []string{wantInput, wantRecord} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("generated TS missing object_list type.\nwant substring: %s\n\ngot:\n%s", want, out)
+		}
+	}
+}

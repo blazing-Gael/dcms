@@ -128,6 +128,20 @@ While on **0.x**, minor versions may include breaking changes.
   otherwise. With no `preview` rule, the token gate is unchanged.
 
 ### Added
+- **`object_list` field type — repeatable groups of fields (issue #6, ADR-0030).**
+  There was no type for a fixed-composition list of small records, so modelling a
+  page's feature cards or FAQ meant either a `type: json` blob (no per-element
+  validation, nothing useful in the generated types or admin UI, malformed elements
+  accepted silently) or a whole child collection with a relation and an `order`
+  column for three items that belong to one document. `object_list` declares the
+  element shape inline with `of` and optional `min`/`max`, stored as JSON in one
+  column like `richtext` (no new table, join, or `order` column; ADR-0003 intact).
+  Each element is validated against its shape on write (a `422` names the offending
+  item), inner `file`/relation ids are existence-checked on the same batched pass as
+  other references, and elements carry an optional `_key` for admin-UI reordering.
+  Bounded one level deep — an element may not nest another `object_list`, a
+  `richtext`, or a many-to-many relation (compile errors). OpenAPI emits an
+  array-of-object schema and the TypeScript SDK an inline `Array<{ … }>` type.
 - **Optimistic concurrency — `concurrency: true` + `If-Match` (issue #26, ADR-0027).**
   Writes had no concurrency control, so two people editing the same record silently
   overwrote each other (a lost update with no signal). A collection can now opt into

@@ -305,6 +305,59 @@ shared reference once across a list, and makes reference cycles harmless. Like
 relation expansion it is batched (one query per target collection, no N+1) and
 lifecycle-aware (a hidden or missing target is simply absent from `included`).
 
+#### Repeatable groups — `object_list` (issue #6)
+
+A **fixed set of slots, each a short list of small records** — the shape stays
+fixed (it's part of the design) while the content of each element is editable.
+Use it when a document owns a handful of structured items (feature cards, a FAQ,
+CTA buttons) that don't warrant their own collection. Stored as a JSON array in one
+column (like `richtext`), so there's no extra table, no join, and no `order`
+column to maintain — the whole list reads and writes with its parent record.
+
+```yaml
+capabilities:
+  type: object_list
+  max: 4                          # optional min/max on the list length
+  of:                             # the element shape — an ordinary field set
+    title: { type: string, required: true }
+    body:  { type: text }
+    image: { type: file }
+```
+
+The value is an array of objects, each matching `of`:
+
+```jsonc
+[
+  { "_key": "a", "title": "Fast",    "body": "Loads instantly", "image": "<media id>" },
+  { "_key": "b", "title": "Offline" }
+]
+```
+
+Rules:
+
+- **One level deep.** An element's fields may be any scalar type, an `enum`, a
+  `decimal`, a `file`, or a belongs-to `relation`. An element may **not** contain
+  another `object_list`, a `richtext`, or a many-to-many relation — each is a
+  compile error. `of` must be non-empty.
+- **Per-element validation.** Every element is validated against `of` on write
+  (inner `required`, `min`/`max`, `pattern`, `enum`, etc.), with a `422` naming the
+  offending item — not a blob that fails at build time. The list itself honours
+  `min`/`max`.
+- **Soft references.** An inner `file`/`relation` id is checked for existence in
+  the same batched pass as top-level and `richtext` references (a dangling id is a
+  `422`). Because it lives inside the JSON blob there is no DB foreign key — the
+  validation layer owns its correctness, exactly as for `richtext` embeds.
+- **`_key`.** Each element may carry an optional `_key` string, a stable identifier
+  (the way `richtext` `markDefs` do) so an admin UI can reorder elements without
+  losing per-element state. Client-supplied; reserved as an inner field name.
+- **Codegen.** The generated TypeScript is an inline array-of-object type, e.g.
+  `Array<{ _key?: string; title: string; body?: string; image?: string }>`; OpenAPI
+  emits `type: array` with an object `items` schema.
+
+For a genuinely editor-rearranged page, or items shared across documents, prefer a
+child collection with a relation instead — `object_list` is for fixed-composition,
+document-owned groups.
+
 #### i18n (Phase 2)
 
 ```yaml
@@ -924,7 +977,7 @@ schema validation failed:
 
 For Phase 1, implement only:
 
-**Supported field types:** `string`, `text`, `number`, `integer`, `decimal`, `boolean`, `date`, `datetime`, `enum`, `json`, `richtext`, `relation`, `file`
+**Supported field types:** `string`, `text`, `number`, `integer`, `decimal`, `boolean`, `date`, `datetime`, `enum`, `json`, `richtext`, `object_list`, `relation`, `file`
 
 **Supported collection directives:** `fields`, `timestamps`, `indexes`,
 `publishing`, `soft_delete`, `revisions`

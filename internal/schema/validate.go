@@ -206,6 +206,9 @@ func (s *SchemaDefinition) Validate() error {
 			case f.Type == TypeRichText:
 				// Structured content (ADR-0014). Its per-field allowlists are
 				// validated just below.
+			case f.Type == TypeObjectList:
+				// A repeatable group of fields (issue #6). Its element shape is
+				// validated just below.
 			case f.Type == TypeDecimal:
 				// Exact fixed-point (ADR-0017). Scale + default validated just below.
 			default:
@@ -284,6 +287,68 @@ func (s *SchemaDefinition) Validate() error {
 			if f.Type == TypeRichText {
 				for _, msg := range f.validateRichTextConfig() {
 					add("%s: %s", fpath, msg)
+				}
+			}
+
+			// Object-list element shape (issue #6). One level deep: an element is an
+			// ordinary field set, but may not itself nest an object_list or richtext,
+			// nor hold a many-to-many relation (a group of small records shouldn't own
+			// a join table). Inner relation/file targets are resolved like any other.
+			if f.Type == TypeObjectList {
+				if len(f.Of) == 0 {
+					add("%s: object_list requires a non-empty 'of' shape", fpath)
+				}
+				if f.Min != nil && f.Max != nil && *f.Min > *f.Max {
+					add("%s: min (%s) may not exceed max (%s)", fpath, trimNum(*f.Min), trimNum(*f.Max))
+				}
+				seenInner := make(map[string]bool)
+				for _, inner := range f.Of {
+					ipath := fpath + ".of." + inner.Name
+					if !nameRe.MatchString(inner.Name) {
+						add("%s: invalid field name (must be lowercase snake_case, starting with a letter)", ipath)
+					}
+					if inner.Name == objectListKey {
+						add("%s: %q is reserved (added automatically to each element)", ipath, objectListKey)
+					}
+					if seenInner[inner.Name] {
+						add("%s: duplicate field name", ipath)
+					}
+					seenInner[inner.Name] = true
+
+					switch {
+					case inner.Type == "":
+						add("%s: missing type", ipath)
+					case inner.Type == TypeObjectList:
+						add("%s: an object_list may not contain another object_list (nesting is one level deep)", ipath)
+					case inner.Type == TypeRichText:
+						add("%s: an object_list element may not contain richtext", ipath)
+					case inner.Type == TypeRelation && inner.Many:
+						add("%s: an object_list element may not hold a many-to-many relation", ipath)
+					case inner.Type == TypeRelation:
+						switch {
+						case inner.Target == "":
+							add("%s: relation requires a 'target' collection", ipath)
+						case !allCols[inner.Target] && !referenceableEngineCollections[inner.Target]:
+							add("%s: relation target %q is not a declared collection", ipath, inner.Target)
+						}
+					case inner.Type == TypeFile:
+						if inner.Target != "" {
+							add("%s: a file field targets the built-in media library implicitly; do not set 'target'", ipath)
+						}
+					case inner.Type == TypeEnum:
+						if len(inner.Values) == 0 {
+							add("%s: enum requires a non-empty values list", ipath)
+						}
+					case phase1Types[inner.Type], inner.Type == TypeDecimal:
+						// ok
+					default:
+						add("%s: unsupported type %q inside an object_list", ipath, inner.Type)
+					}
+					if inner.Pattern != "" {
+						if _, err := regexp.Compile(inner.Pattern); err != nil {
+							add("%s: invalid pattern: %v", ipath, err)
+						}
+					}
 				}
 			}
 

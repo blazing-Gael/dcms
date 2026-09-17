@@ -83,6 +83,36 @@ func (s *Server) checkReferences(ctx context.Context, db store.DB, collection st
 				}
 				add(f.Name, rr.Collection, rr.ID)
 			}
+		case f.Type == schema.TypeObjectList:
+			// An element's belongs-to/file ids are soft references inside the JSON
+			// blob (no FK column), so — like richtext — they're existence-checked here
+			// on the same batched pass. Field validation has already confirmed the
+			// shape, so we only harvest ids. The target of a `file` field is _media.
+			inner := make(map[string]schema.FieldDef, len(f.Of))
+			for _, in := range f.Of {
+				inner[in.Name] = in
+			}
+			arr, _ := v.([]any)
+			for i, e := range arr {
+				elem, ok := e.(map[string]any)
+				if !ok {
+					continue
+				}
+				for name, in := range inner {
+					if in.Type != schema.TypeRelation && in.Type != schema.TypeFile {
+						continue
+					}
+					id, ok := elem[name].(string)
+					if !ok {
+						continue
+					}
+					target := in.Target
+					if in.Type == schema.TypeFile {
+						target = schema.MediaCollection
+					}
+					add(fmt.Sprintf("%s[%d].%s", f.Name, i, name), target, id)
+				}
+			}
 		}
 	}
 

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -84,6 +85,17 @@ func (c CollectionDef) validateRecord(data map[string]any, isCreate bool) FieldE
 			continue
 		}
 
+		// An object_list value is a JSON array of small records, each matching the
+		// field's `of` shape (issue #6). The whole list is replace-on-write, so each
+		// element is validated as a complete record; inner relation/file existence is
+		// checked at the gateway (batched), like top-level and richtext references.
+		if f.Type == TypeObjectList {
+			if msg := f.validateObjectList(v); msg != "" {
+				errs[f.Name] = msg
+			}
+			continue
+		}
+
 		// A decimal crosses the wire as an exact string, never a JSON number
 		// (ADR-0017): a number would already be a lossy float by the time it
 		// arrives. Reject numbers explicitly, and validate the string parses to
@@ -119,6 +131,68 @@ func (c CollectionDef) validateRecord(data map[string]any, isCreate bool) FieldE
 	return errs
 }
 
+// validateObjectList checks an object_list value: a JSON array within the field's
+// min/max length, whose every element is an object matching the `of` shape. It
+// reuses validateRecord for each element (create semantics — a supplied list fully
+// specifies its elements) so the inner fields get the exact same type and
+// constraint checks as top-level ones. A `_key` string per element is accepted (it
+// carries per-element identity for admin-UI reordering) but not required. Inner
+// relation/file existence is verified at the gateway, not here. Returns "" if valid.
+func (f FieldDef) validateObjectList(v any) string {
+	arr, ok := v.([]any)
+	if !ok {
+		return "must be a list of objects"
+	}
+	n := float64(len(arr))
+	if f.Min != nil && n < *f.Min {
+		return fmt.Sprintf("must have at least %s items", trimNum(*f.Min))
+	}
+	if f.Max != nil && n > *f.Max {
+		return fmt.Sprintf("must have at most %s items", trimNum(*f.Max))
+	}
+	elemDef := CollectionDef{Fields: f.Of}
+	for i, e := range arr {
+		elem, ok := e.(map[string]any)
+		if !ok {
+			return fmt.Sprintf("item %d must be an object", i)
+		}
+		// Split off the optional per-element key; the rest is validated as a record.
+		var body map[string]any
+		if _, hasKey := elem[objectListKey]; hasKey {
+			if _, isStr := elem[objectListKey].(string); !isStr {
+				return fmt.Sprintf("item %d: %s must be a string", i, objectListKey)
+			}
+			body = make(map[string]any, len(elem))
+			for k, val := range elem {
+				if k != objectListKey {
+					body[k] = val
+				}
+			}
+		} else {
+			body = elem
+		}
+		if fe := elemDef.validateRecord(body, true); fe != nil {
+			return fmt.Sprintf("item %d: %s", i, fe.oneLine())
+		}
+	}
+	return ""
+}
+
+// oneLine renders field errors as a single deterministic message, for embedding a
+// nested (object_list element) failure into its parent field's error.
+func (e FieldErrors) oneLine() string {
+	keys := make([]string, 0, len(e))
+	for k := range e {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	parts := make([]string, len(keys))
+	for i, k := range keys {
+		parts[i] = k + " " + e[k]
+	}
+	return strings.Join(parts, "; ")
+}
+
 // typeMatches reports whether a Go value (as produced by JSON decoding) is
 // compatible with the field's declared type.
 func typeMatches(t FieldType, v any) bool {
@@ -139,6 +213,9 @@ func typeMatches(t FieldType, v any) bool {
 		return ok && f == math.Trunc(f)
 	case TypeJSON:
 		return true // any JSON value is acceptable
+	case TypeObjectList:
+		_, ok := v.([]any) // a decoded JSON array (issue #6)
+		return ok
 	default:
 		return true
 	}
