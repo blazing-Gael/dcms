@@ -176,7 +176,7 @@ func resolveValidateResponses(mode serverMode, cfg config.Config) bool {
 // runServer is the shared body of `dev` and `serve`; serverMode supplies the two
 // differing defaults.
 func runServer(cmd *cobra.Command, mode serverMode) error {
-	opts := dcms.Options{AutoMigrate: mode.migrate, Dev: mode.validateDefault}
+	opts := dcms.Options{AutoMigrate: mode.migrate, Dev: mode.validateDefault, Label: mode.name}
 	if f := cmd.Flags().Lookup("config"); f != nil {
 		opts.ConfigPath = f.Value.String()
 		opts.ConfigRequired = f.Changed

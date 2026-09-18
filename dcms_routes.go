@@ -25,6 +25,6 @@ type RouteFunc func(*Request)
 // principal (from the middleware-populated context) and the app's store.
 func (a *App) wrapRoute(fn RouteFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		fn(&Request{W: w, R: r, Principal: auth.FromContext(r.Context()), Store: a.db})
+		fn(&Request{W: w, R: r, Principal: auth.FromContext(r.Context()), Store: a.srv.DB()})
 	}
 }

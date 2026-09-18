@@ -1,4 +1,4 @@
-package dcms
+package app
 
 import (
 	"context"
@@ -11,17 +11,17 @@ import (
 	"github.com/blazing-Gael/dcms/internal/gateway"
 )
 
-// gatewayOptions maps the resolved config into gateway.Options and TLS config,
-// merging in the App's registered hooks and custom routes. It is the single place
-// config becomes runtime options, shared by the library App and the `dcms` binary
-// (which calls Serve), so the two never diverge.
-func (a *App) gatewayOptions(ctx context.Context) (gateway.Options, engine.TLSConfig, error) {
-	cfg := a.cfg
+// GatewayOptions maps the resolved config into gateway.Options and TLS config,
+// merging in the given hooks and custom routes. It is the single place config
+// becomes runtime options, shared by the library App and the `dcms` binary (both
+// via Serve), so the two never diverge.
+func (s *Server) GatewayOptions(ctx context.Context, hooks *gateway.HookRegistry, routes []gateway.CustomRoute) (gateway.Options, engine.TLSConfig, error) {
+	cfg := s.cfg
 	var zero gateway.Options
 
 	// Strict response validation: the config's explicit setting wins, else the
 	// mode default (on in dev, off in serve).
-	validateResponses := a.opts.Dev
+	validateResponses := s.dev
 	if cfg.Server.ValidateResponses != nil {
 		validateResponses = *cfg.Server.ValidateResponses
 	}
@@ -67,7 +67,7 @@ func (a *App) gatewayOptions(ctx context.Context) (gateway.Options, engine.TLSCo
 	var registration *gateway.RegistrationOptions
 	if cfg.Auth.Registration.Enabled {
 		for _, role := range cfg.Auth.Registration.DefaultRoles {
-			if !a.def.HasRole(role) {
+			if !s.def.HasRole(role) {
 				return zero, engine.TLSConfig{}, fmt.Errorf("registration default_role %q is not a declared role", role)
 			}
 			for _, ar := range adminRoles {
@@ -96,10 +96,10 @@ func (a *App) gatewayOptions(ctx context.Context) (gateway.Options, engine.TLSCo
 		if v, ok := notifier.(gateway.ConnectionVerifier); ok {
 			vctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 			if err := v.VerifyConnection(vctx); err != nil {
-				a.logger.Warn("SMTP pre-flight failed — account emails will not send until resolved",
+				s.logger.Warn("SMTP pre-flight failed — account emails will not send until resolved",
 					"host", cfg.Auth.SMTP.Host, "port", cfg.Auth.SMTP.Port, "err", err)
 			} else {
-				a.logger.Info("SMTP connection verified", "host", cfg.Auth.SMTP.Host)
+				s.logger.Info("SMTP connection verified", "host", cfg.Auth.SMTP.Host)
 			}
 			cancel()
 		}
@@ -128,19 +128,19 @@ func (a *App) gatewayOptions(ctx context.Context) (gateway.Options, engine.TLSCo
 	var authenticator gateway.Authenticator
 	switch cfg.Auth.Provider {
 	case "", "session":
-		authenticator = gateway.NewSessionAuthenticator(a.db)
+		authenticator = gateway.NewSessionAuthenticator(s.db)
 	case "proxy_header":
 		if cfg.Auth.ProxyHeader.UserHeader == "" {
 			return zero, engine.TLSConfig{}, fmt.Errorf("auth.provider proxy_header requires auth.proxy_header.user_header")
 		}
 		authenticator = gateway.NewProxyHeaderAuthenticator(
 			cfg.Auth.ProxyHeader.UserHeader, cfg.Auth.ProxyHeader.RolesHeader, cfg.Auth.ProxyHeader.RolesSeparator)
-		a.logger.Warn("auth provider is proxy_header — DCMS trusts the identity header verbatim; your proxy MUST strip it from inbound requests",
+		s.logger.Warn("auth provider is proxy_header — DCMS trusts the identity header verbatim; your proxy MUST strip it from inbound requests",
 			"user_header", cfg.Auth.ProxyHeader.UserHeader)
 	default:
 		return zero, engine.TLSConfig{}, fmt.Errorf("auth.provider %q is not supported (want session or proxy_header)", cfg.Auth.Provider)
 	}
-	authenticator = gateway.WithAPITokens(a.db, authenticator)
+	authenticator = gateway.WithAPITokens(s.db, authenticator)
 
 	var mediaQuota *gateway.MediaQuotaOptions
 	if q := cfg.Media.Quotas; q.Default != "" || len(q.Roles) > 0 {
@@ -185,8 +185,8 @@ func (a *App) gatewayOptions(ctx context.Context) (gateway.Options, engine.TLSCo
 		ResetTokenTTL:       time.Duration(cfg.Auth.Reset.TTLMinutes) * time.Minute,
 		OTPLogin:            otpLogin,
 		Webhooks:            webhooks,
-		Hooks:               a.hooks,
-		Routes:              a.routes,
+		Hooks:               hooks,
+		Routes:              routes,
 	}
 	tlsCfg := engine.TLSConfig{CertFile: cfg.Server.TLS.CertFile, KeyFile: cfg.Server.TLS.KeyFile}
 	return opts, tlsCfg, nil
