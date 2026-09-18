@@ -128,6 +128,24 @@ While on **0.x**, minor versions may include breaking changes.
   otherwise. With no `preview` rule, the token gate is unchanged.
 
 ### Added
+- **Extension hooks — in-process business logic on generated endpoints (ADR-0031).**
+  DCMS could swap identity (`Authenticator`) and react to writes asynchronously
+  (events/webhooks), but there was no way to run *synchronous, in-request* logic —
+  reject a write on a business rule, derive a field, or perform a side-effect
+  atomically with the write. Hooks close that gap: register Go functions per
+  `(collection, event)` via `gateway.Options.Hooks` (`NewHookRegistry().On(...)`) for
+  the write lifecycle — `BeforeCreate`/`AfterCreate`/`BeforeUpdate`/`AfterUpdate`/
+  `BeforeDelete`/`AfterDelete` — and they run on the schema-*generated*
+  `POST`/`PATCH`/`DELETE` routes (create, update, hard + soft delete, and the
+  inline-relation path). A `Before*` hook may mutate the record or reject it (return
+  a `*HookError` to choose the status; default 422); every hook runs **inside the
+  write transaction**, so a rejection rolls the whole write back and a hook's own
+  writes commit atomically. Hooks receive the **verified** principal (read-only — the
+  adapter still stamps `created_by`) and a **narrow** store handle (no raw SQL, no
+  migrations). Off by default; opt-in per collection. Response/read shaping is
+  deliberately excluded (that is the schema's job) so the generated OpenAPI/SDK stay
+  honest. Docs: `docs/HOOKS.md`. Out-of-process (RPC) and WASM transports are
+  deferred until an untrusted-plugin marketplace is a committed goal.
 - **`object_list` field type — repeatable groups of fields (issue #6, ADR-0030).**
   There was no type for a fixed-composition list of small records, so modelling a
   page's feature cards or FAQ meant either a `type: json` blob (no per-element

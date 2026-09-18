@@ -157,6 +157,19 @@ func (s *Server) updateAndRevise(ctx context.Context, collection string, data st
 		if e := s.applyVersion(ctx, tx, collection, data, expect); e != nil {
 			return e
 		}
+		// A soft delete (operation "delete") fires the delete hooks (ADR-0031): a
+		// BeforeDelete may reject it, seeing the row about to be trashed.
+		softDelete := operation == "delete" && s.hasDeleteHooks(collection)
+		if softDelete {
+			id, _ := data["id"].(string)
+			row, e := tx.FindOne(ctx, collection, id)
+			if e != nil {
+				return e
+			}
+			if _, e = s.beforeWrite(ctx, tx, collection, BeforeDelete, row); e != nil {
+				return e
+			}
+		}
 		var e error
 		if rec, e = tx.Update(ctx, store.WriteInput{Collection: collection, Data: data}); e != nil {
 			return e
@@ -166,7 +179,13 @@ func (s *Server) updateAndRevise(ctx context.Context, collection string, data st
 		}
 		// Arm or clear the go-live marker (issue #28) in the same transaction, so a
 		// scheduled publish / unpublish / reschedule is durable with the status change.
-		return s.reconcileScheduled(ctx, tx, collection, rec, operation)
+		if e = s.reconcileScheduled(ctx, tx, collection, rec, operation); e != nil {
+			return e
+		}
+		if softDelete {
+			return s.afterWrite(ctx, tx, collection, AfterDelete, rec)
+		}
+		return nil
 	})
 	return rec, err
 }

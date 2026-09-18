@@ -22,7 +22,8 @@ func (s *Server) emitsEvents(collection string) bool {
 // (ADR-0013) and/or a change-log event (ADR-0021). The fast paths that skip the
 // transaction consult this so event-emitting collections are never missed.
 func (s *Server) needsWriteTx(collection string) bool {
-	return s.revised(collection) || s.emitsEvents(collection) || s.versioned(collection)
+	return s.revised(collection) || s.emitsEvents(collection) || s.versioned(collection) ||
+		s.hasWriteHooks(collection)
 }
 
 // captureWrite records the durable side effects of a write, using db (which must
@@ -92,13 +93,25 @@ func (s *Server) captureEventRow(ctx context.Context, db store.DB, collection, r
 // in that same transaction so a stale delete is refused. A referential-integrity
 // error propagates unchanged, so the caller's RESTRICT handling still applies.
 func (s *Server) deleteRecord(ctx context.Context, collection, id string, expect *int64) error {
-	// Fast path: no precondition and no events → a plain delete needs no transaction.
-	if expect == nil && !s.emitsEvents(collection) {
+	// Fast path: no precondition, no events, no delete hooks → no transaction needed.
+	if expect == nil && !s.emitsEvents(collection) && !s.hasDeleteHooks(collection) {
 		return s.db.Delete(ctx, collection, id)
 	}
 	return s.db.Tx(ctx, func(ctx context.Context, tx store.DB) error {
 		if err := s.checkVersion(ctx, tx, collection, id, expect); err != nil {
 			return err
+		}
+		// Before/After delete hooks (ADR-0031) see the record being removed, so load
+		// it inside the transaction when a delete hook is registered.
+		var row store.Record
+		if s.hasDeleteHooks(collection) {
+			var e error
+			if row, e = tx.FindOne(ctx, collection, id); e != nil {
+				return e
+			}
+			if _, e = s.beforeWrite(ctx, tx, collection, BeforeDelete, row); e != nil {
+				return e
+			}
 		}
 		if err := tx.Delete(ctx, collection, id); err != nil {
 			return err
@@ -111,10 +124,21 @@ func (s *Server) deleteRecord(ctx context.Context, collection, id string, expect
 		// A hard-deleted record can't go live; drop any pending marker (issue #28).
 		// Guarded on publishing+events, the only case where the marker table exists.
 		if cd := s.collections[collection]; cd.Publishing && cd.Events {
-			return s.clearScheduledMarker(ctx, tx, collection, id)
+			if err := s.clearScheduledMarker(ctx, tx, collection, id); err != nil {
+				return err
+			}
+		}
+		if s.hasDeleteHooks(collection) {
+			return s.afterWrite(ctx, tx, collection, AfterDelete, row)
 		}
 		return nil
 	})
+}
+
+// hasDeleteHooks reports whether a Before/AfterDelete hook is registered for a
+// collection (ADR-0031), so the delete path loads the record and takes a transaction.
+func (s *Server) hasDeleteHooks(collection string) bool {
+	return len(s.hooksFor(collection, BeforeDelete)) > 0 || len(s.hooksFor(collection, AfterDelete)) > 0
 }
 
 // isStatusOperation reports whether an operation changes the lifecycle _status,

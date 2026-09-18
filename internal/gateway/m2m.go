@@ -27,6 +27,12 @@ func (s *Server) writeWithLinks(
 	var rec store.Record
 	err := s.db.Tx(ctx, func(ctx context.Context, tx store.DB) error {
 		var e error
+		// Before* hook (ADR-0031): may mutate the base record or reject the write.
+		if ev, ok := beforeWriteEvent(operation); ok {
+			if base, e = s.beforeWrite(ctx, tx, collection, ev, base); e != nil {
+				return e
+			}
+		}
 		if rec, e = write(ctx, tx, base); e != nil {
 			return e
 		}
@@ -36,7 +42,14 @@ func (s *Server) writeWithLinks(
 				return e
 			}
 		}
-		return s.captureWrite(ctx, tx, collection, rec, operation)
+		if e = s.captureWrite(ctx, tx, collection, rec, operation); e != nil {
+			return e
+		}
+		// After* hook: reacts to the completed write, in the same transaction.
+		if ev, ok := afterWriteEvent(operation); ok {
+			return s.afterWrite(ctx, tx, collection, ev, rec)
+		}
+		return nil
 	})
 	return rec, err
 }

@@ -151,6 +151,11 @@ type Options struct {
 	// phase 2). Nil ⇒ no delivery worker runs; the change feed still works. Only
 	// meaningful for collections that opt into `events:`.
 	Webhooks *WebhookOptions
+
+	// Hooks holds opt-in, in-process business-logic hooks that run on the write
+	// lifecycle of the generated endpoints (ADR-0031). Nil ⇒ no hooks. Build one
+	// with NewHookRegistry().On(collection, event, fn).
+	Hooks *HookRegistry
 }
 
 // RegistrationOptions configures self-registration (ADR-0019).
