@@ -156,6 +156,19 @@ type Options struct {
 	// lifecycle of the generated endpoints (ADR-0031). Nil ⇒ no hooks. Build one
 	// with NewHookRegistry().On(collection, event, fn).
 	Hooks *HookRegistry
+
+	// Routes are user-registered custom endpoints (ADR-0031 §5), mounted inside the
+	// API middleware stack (identity, body cap, timeout, rate limit). Empty ⇒ none.
+	Routes []CustomRoute
+}
+
+// CustomRoute is one user-registered endpoint. Method is an HTTP method, Path a
+// chi pattern (may contain {params}); Handler runs after the request's identity is
+// resolved, so it can read the principal from the context.
+type CustomRoute struct {
+	Method  string
+	Path    string
+	Handler http.HandlerFunc
 }
 
 // RegistrationOptions configures self-registration (ADR-0019).
@@ -360,6 +373,23 @@ func (s *Server) Handler() http.Handler {
 		r.Get("/{collection}/{id}/revisions/{version}", s.handleRevisionGet)
 		r.Post("/{collection}/{id}/revisions/{version}/restore", s.handleRevisionRestore)
 	})
+
+	// Custom routes (ADR-0031 §5) mount at their own paths with the same API
+	// middleware — identity is already resolved globally (withPrincipal), so a
+	// handler reads the principal from the request context. Registered last so a
+	// user route never shadows a built-in one.
+	if len(s.opts.Routes) > 0 {
+		r.Group(func(r chi.Router) {
+			if apiLimit != nil {
+				r.Use(apiLimit)
+			}
+			r.Use(s.limitBody)
+			r.Use(s.withTimeout)
+			for _, rt := range s.opts.Routes {
+				r.Method(rt.Method, rt.Path, rt.Handler)
+			}
+		})
+	}
 
 	return r
 }
