@@ -40,7 +40,7 @@ collections:
 		t.Fatalf("New: %v", err)
 	}
 	t.Cleanup(func() { _ = app.Close() })
-	if err := engine.Apply(context.Background(), app.db, app.def); err != nil {
+	if err := engine.Apply(context.Background(), app.srv.DB(), app.srv.Def()); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	return app, nil
@@ -50,11 +50,11 @@ collections:
 // test can drive hooks and routes over HTTP without binding a port.
 func (a *App) handler(t *testing.T) http.Handler {
 	t.Helper()
-	opts, _, err := a.gatewayOptions(context.Background())
+	opts, _, err := a.srv.GatewayOptions(context.Background(), a.hooks, a.routes)
 	if err != nil {
-		t.Fatalf("gatewayOptions: %v", err)
+		t.Fatalf("GatewayOptions: %v", err)
 	}
-	return gateway.New(a.def, a.db, a.logger, opts).Handler()
+	return gateway.New(a.srv.Def(), a.srv.DB(), a.srv.Logger(), opts).Handler()
 }
 
 func TestApp_HookFiresThroughLibraryPath(t *testing.T) {

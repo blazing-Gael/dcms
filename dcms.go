@@ -8,21 +8,17 @@
 //	app.Route("POST", "/checkout", checkout)
 //	log.Fatal(app.Serve(context.Background()))
 //
-// The `dcms` binary is itself a thin consumer of this package, so the library
-// path and the CLI never diverge. Hooks and their contract are documented in
-// docs/HOOKS.md and ADR-0031.
+// This package is a thin facade: the server orchestration lives in internal/app,
+// which both this library and the `dcms` binary run, so the two never diverge.
+// Hooks and their contract are documented in docs/HOOKS.md and ADR-0031.
 package dcms
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
-	"os"
 
-	"github.com/blazing-Gael/dcms/internal/config"
-	"github.com/blazing-Gael/dcms/internal/engine"
+	"github.com/blazing-Gael/dcms/internal/app"
 	"github.com/blazing-Gael/dcms/internal/gateway"
-	"github.com/blazing-Gael/dcms/internal/schema"
 	"github.com/blazing-Gael/dcms/internal/store"
 	"github.com/blazing-Gael/dcms/pkg/auth"
 )
@@ -82,68 +78,39 @@ type Options struct {
 	// Dev turns on strict response validation by default (unless the config sets it
 	// explicitly). Off by default.
 	Dev bool
+	// Label is shown in the startup banner (e.g. the CLI passes "dev"/"serve").
+	// Optional; empty prints just "dcms".
+	Label string
 	// Logger receives server logs. Nil ⇒ a text logger on stderr.
 	Logger *slog.Logger
 }
 
-// App is a configured DCMS server: schema, store, and any hooks/routes registered
-// before Serve. Build one with New.
+// App is a configured DCMS server: the loaded server plus any hooks and routes
+// registered before Serve. Build one with New.
 type App struct {
-	cfg    config.Config
-	def    *schema.SchemaDefinition
-	db     store.Adapter
-	logger *slog.Logger
-	opts   Options
-
+	srv    *app.Server
 	hooks  *gateway.HookRegistry
 	routes []gateway.CustomRoute
 }
 
-// New loads the schema and config, opens the store, and returns an App ready for
+// New loads the schema and config and opens the store, returning an App ready for
 // hook/route registration and Serve. It does not migrate or listen.
 func New(o Options) (*App, error) {
-	cfg, found, err := config.Load(configPath(o.ConfigPath))
+	srv, err := app.Load(app.LoadOptions{
+		SchemaPath:     o.SchemaPath,
+		ConfigPath:     o.ConfigPath,
+		ConfigRequired: o.ConfigRequired,
+		DBPath:         o.DBPath,
+		Port:           o.Port,
+		AutoMigrate:    o.AutoMigrate,
+		Dev:            o.Dev,
+		Label:          o.Label,
+		Logger:         o.Logger,
+	})
 	if err != nil {
 		return nil, err
 	}
-	if o.ConfigRequired && !found {
-		return nil, fmt.Errorf("config file %q not found", configPath(o.ConfigPath))
-	}
-	if err := cfg.ApplyEnv(); err != nil {
-		return nil, err
-	}
-	if o.SchemaPath != "" {
-		cfg.Schema = o.SchemaPath
-	}
-	if o.DBPath != "" {
-		cfg.Database.Path = o.DBPath
-	}
-	if o.Port != 0 {
-		cfg.Server.Port = o.Port
-	}
-	// Guard against a config naming a driver we don't ship yet, so a stale setting
-	// fails loudly instead of being silently ignored.
-	if cfg.Database.Driver != "sqlite" {
-		return nil, fmt.Errorf("database driver %q not supported yet (only %q)", cfg.Database.Driver, "sqlite")
-	}
-
-	if _, statErr := os.Stat(cfg.Schema); os.IsNotExist(statErr) {
-		return nil, fmt.Errorf("no schema at %s — run `dcms init` to scaffold a project first", cfg.Schema)
-	}
-	def, err := engine.LoadSchema(cfg.Schema)
-	if err != nil {
-		return nil, err
-	}
-	db, err := engine.OpenStore(cfg.Database.Path)
-	if err != nil {
-		return nil, err
-	}
-
-	logger := o.Logger
-	if logger == nil {
-		logger = slog.New(slog.NewTextHandler(os.Stderr, nil))
-	}
-	return &App{cfg: cfg, def: def, db: db, logger: logger, opts: o, hooks: gateway.NewHookRegistry()}, nil
+	return &App{srv: srv, hooks: gateway.NewHookRegistry()}, nil
 }
 
 // On registers a write-lifecycle hook for a collection (ADR-0031). Hooks fire in
@@ -162,54 +129,13 @@ func (a *App) Route(method, path string, fn RouteFunc) *App {
 	return a
 }
 
-// Close releases the store. Call it when the App is done (Serve blocks until the
-// context is cancelled, so this is typically deferred right after New).
-func (a *App) Close() error { return a.db.Close() }
-
-// Serve builds the gateway options from config (merging in the registered hooks
-// and routes), applies or checks migrations, seeds the bootstrap admin, and serves
-// until ctx is cancelled. It is the same orchestration the `dcms` binary runs.
+// Serve runs the server (migrations, admin seed, listen) with the registered hooks
+// and routes, until ctx is cancelled. It is the same orchestration `dcms serve`
+// runs.
 func (a *App) Serve(ctx context.Context) error {
-	// Recognized-but-unimplemented directives (issue #35) load but do nothing yet.
-	for _, warn := range a.def.Warnings {
-		a.logger.Warn("schema", "note", warn)
-	}
-
-	if a.opts.AutoMigrate {
-		if err := engine.Apply(ctx, a.db, a.def); err != nil {
-			return err
-		}
-	} else {
-		pending, err := engine.Plan(ctx, a.db, a.def)
-		if err != nil {
-			return err
-		}
-		if len(pending) > 0 {
-			return fmt.Errorf("database has %d pending migration(s); run `dcms migrate` before serving", len(pending))
-		}
-	}
-
-	if err := gateway.EnsureSeedAdmin(ctx, a.db, a.cfg.Auth.AdminEmail, a.cfg.Auth.AdminPassword, a.logger); err != nil {
-		return err
-	}
-
-	opts, tlsCfg, err := a.gatewayOptions(ctx)
-	if err != nil {
-		return err
-	}
-	scheme := "http"
-	if tlsCfg.CertFile != "" && tlsCfg.KeyFile != "" {
-		scheme = "https"
-	}
-	fmt.Printf("dcms — %d collection(s) from %s\n", len(a.def.Collections), a.cfg.Schema)
-	fmt.Printf("listening on %s://localhost:%d  (Ctrl+C to stop)\n", scheme, a.cfg.Server.Port)
-	return engine.Serve(ctx, a.def, a.db, fmt.Sprintf(":%d", a.cfg.Server.Port), a.logger, opts, tlsCfg)
+	return a.srv.Serve(ctx, a.hooks, a.routes)
 }
 
-// configPath returns p, or the default config path when p is empty.
-func configPath(p string) string {
-	if p == "" {
-		return config.DefaultConfigPath
-	}
-	return p
-}
+// Close releases the store. Serve blocks until ctx is cancelled, so this is
+// typically deferred right after New.
+func (a *App) Close() error { return a.srv.Close() }
