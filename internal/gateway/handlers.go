@@ -139,10 +139,16 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 		var rec store.Record
 		err := s.db.Tx(r.Context(), func(ctx context.Context, tx store.DB) error {
 			var e error
+			if data, e = s.beforeWrite(ctx, tx, collection, BeforeCreate, data); e != nil {
+				return e
+			}
 			if rec, e = s.createRecord(ctx, tx, collection, data, 0); e != nil {
 				return e
 			}
-			return s.captureWrite(ctx, tx, collection, rec, "create")
+			if e = s.captureWrite(ctx, tx, collection, rec, "create"); e != nil {
+				return e
+			}
+			return s.afterWrite(ctx, tx, collection, AfterCreate, rec)
 		})
 		if err != nil {
 			writeStoreError(w, s.logger, r, err)
@@ -237,13 +243,18 @@ func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
 				return e
 			}
 			var e error
+			if data, e = s.beforeWrite(ctx, tx, collection, BeforeUpdate, data); e != nil {
+				return e
+			}
 			if rec, e = s.updateRecord(ctx, tx, collection, data, 0); e != nil {
 				return e
 			}
 			if s.revised(collection) {
-				return s.captureRevision(ctx, tx, collection, rec, "update")
+				if e = s.captureRevision(ctx, tx, collection, rec, "update"); e != nil {
+					return e
+				}
 			}
-			return nil
+			return s.afterWrite(ctx, tx, collection, AfterUpdate, rec)
 		})
 		if err != nil {
 			writeStoreError(w, s.logger, r, err)

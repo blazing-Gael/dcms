@@ -221,7 +221,12 @@ func writeError(w http.ResponseWriter, status int, e apiError) {
 // Internal errors are logged in full but never exposed to the client.
 func writeStoreError(w http.ResponseWriter, logger *slog.Logger, r *http.Request, err error) {
 	var ve *store.ValidationError
+	var he *HookError
 	switch {
+	case errors.As(err, &he):
+		// A hook rejected the write (ADR-0031): render the status it chose (default
+		// 422). This is a business-rule refusal by trusted code, not a server fault.
+		writeError(w, he.status(), he.apiErr())
 	case errors.Is(err, errVersionConflict):
 		// Optimistic concurrency (issue #26): the record moved on since the caller
 		// read it, so the write is refused rather than silently overwriting.

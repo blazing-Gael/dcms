@@ -1,6 +1,6 @@
 # ADR-0031 — Extension hooks: synchronous, in-transaction business logic on generated endpoints
 
-Status: Proposed
+Status: Accepted
 Date: 2026-09-18
 
 ## Context
