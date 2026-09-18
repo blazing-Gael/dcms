@@ -128,6 +128,20 @@ While on **0.x**, minor versions may include breaking changes.
   otherwise. With no `preview` rule, the token gate is unchanged.
 
 ### Added
+- **Public embedding API — run DCMS as a Go library with hooks + custom routes
+  (ADR-0031).** The hook mechanism existed but lived under `internal/`, so it was
+  only reachable by editing the DCMS tree. A new public package,
+  `github.com/blazing-Gael/dcms`, exposes an `App` builder:
+  `dcms.New(Options{SchemaPath, ConfigPath, …})` → `app.On(collection, event, fn)`
+  to register write-lifecycle hooks, `app.Route(method, path, fn)` to add custom
+  endpoints that mount inside the middleware stack (identity, body cap, timeout,
+  rate limit), and `app.Serve(ctx)`. It loads config exactly as the CLI does, so a
+  library user gets the same CORS/rate-limit/media/auth wiring; the `dcms` binary is
+  now a thin consumer of this package, so the two never diverge. Hook types
+  (`HookContext`, `HookStore`, `HookError`, the events, `Record`, `Principal`) are
+  re-exported. A custom-route handler receives a `*dcms.Request` with the verified
+  principal and a store handle. Docs: `docs/EMBEDDING.md`. This makes "add DCMS to
+  your project and write business logic in Go" a first-class, no-fork path.
 - **Extension hooks — in-process business logic on generated endpoints (ADR-0031).**
   DCMS could swap identity (`Authenticator`) and react to writes asynchronously
   (events/webhooks), but there was no way to run *synchronous, in-request* logic —
