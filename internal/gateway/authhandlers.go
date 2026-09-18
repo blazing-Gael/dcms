@@ -39,11 +39,24 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, s.logger, r, err)
 		return
 	}
+	// A per-account failure budget shared with OTP (issue #50): rotating IPs can't
+	// grind a password because too many failures lock the account with backoff. A
+	// locked account gets the same flat 401 — the lock isn't leaked.
+	userID, _ := user["id"].(string)
+	if userID != "" {
+		if locked, _ := s.credFailures.locked(userID); locked {
+			writeError(w, http.StatusUnauthorized, apiError{Code: "UNAUTHORIZED", Message: "invalid email or password"})
+			return
+		}
+	}
 	hash, _ := user[schema.UserPasswordHash].(string)
 	// Fail closed on all of: no such user, no local password (an
 	// externally-authenticated account — e.g. OIDC — must never be reachable via
 	// the local login path), or a wrong password. All are the same flat 401.
 	if user == nil || hash == "" || !checkPassword(hash, req.Password) {
+		if userID != "" {
+			s.credFailures.fail(userID) // count only when the email maps to an account
+		}
 		writeError(w, http.StatusUnauthorized, apiError{Code: "UNAUTHORIZED", Message: "invalid email or password"})
 		return
 	}
@@ -53,8 +66,9 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, apiError{Code: "UNAUTHORIZED", Message: "invalid email or password"})
 		return
 	}
+	s.credFailures.reset(userID) // successful password check clears the budget
 
-	token, expiresAt, err := s.issueSession(r.Context(), user["id"].(string), rolesOf(user))
+	token, expiresAt, err := s.issueSession(r.Context(), userID, rolesOf(user))
 	if err != nil {
 		writeStoreError(w, s.logger, r, err)
 		return

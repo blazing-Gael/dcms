@@ -78,7 +78,13 @@ func (s *Server) handleForgotPassword(w http.ResponseWriter, r *http.Request) {
 	returnTo, _ := data["return_to"].(string)
 	if email != "" {
 		if user, uerr := s.findUserByEmail(r.Context(), email); uerr == nil && user != nil && !userDisabled(user) {
-			s.issueResetToken(r.Context(), user, returnTo)
+			// Only within the shared account-email budget (issue #50): forgot and OTP
+			// draw on one per-recipient/daily/instance budget, so a /auth/forgot loop
+			// can't drain the mail quota (and take down every real reset) or bomb an
+			// inbox. Over budget ⇒ still 200, just no mail.
+			if s.allowAccountMail(canonEmail(email), "password_reset") {
+				s.issueResetToken(r.Context(), user, returnTo)
+			}
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})

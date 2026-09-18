@@ -53,17 +53,14 @@ func (s *Server) handleOTPRequest(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	// Throttle per recipient (on top of the per-IP auth tier) so the endpoint can't
-	// bomb one inbox from many IPs. A throttled request is still a generic 204 — it
-	// reveals nothing — it simply skips minting and sending.
-	if s.otpEmailLimiter != nil {
-		if ok, _ := s.otpEmailLimiter.Allow("otp:" + canonEmail(email)); !ok {
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-	}
+	// A code is minted and mailed only for a real, active account, and only within
+	// the shared account-email budget (issue #50): the same per-recipient/daily caps
+	// as password reset, so the two can't be combined to bomb an inbox or drain the
+	// mail quota. Over budget ⇒ still a generic 204, just no mail.
 	if user, uerr := s.findUserByEmail(r.Context(), email); uerr == nil && user != nil && !userDisabled(user) {
-		s.issueOTPCode(r.Context(), user)
+		if s.allowAccountMail(canonEmail(email), "login_otp") {
+			s.issueOTPCode(r.Context(), user)
+		}
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -136,6 +133,14 @@ func (s *Server) handleOTPVerify(w http.ResponseWriter, r *http.Request) {
 	}
 	userID, _ := user["id"].(string)
 
+	// A per-account failure budget across codes (issue #50): once too many guesses
+	// fail in the window, the account's OTP is locked with backoff, so minting fresh
+	// codes can't reset the count. A locked account is the same generic 401.
+	if locked, _ := s.credFailures.locked(userID); locked {
+		otpUnauthorized(w)
+		return
+	}
+
 	row, err := s.findLoginToken(r.Context(), userID)
 	if err != nil {
 		writeStoreError(w, s.logger, r, err)
@@ -151,13 +156,15 @@ func (s *Server) handleOTPVerify(w http.ResponseWriter, r *http.Request) {
 	// and fail, so a walk of the 10^6 space can't continue past the cap.
 	if intOf(row[schema.AuthTokenAttempts]) >= s.otpMaxAttempts() {
 		_ = s.db.Delete(r.Context(), schema.AuthTokensCollection, tokenID)
+		s.credFailures.fail(userID)
 		otpUnauthorized(w)
 		return
 	}
 
 	stored, _ := row[schema.AuthTokenHash].(string)
 	if subtle.ConstantTimeCompare([]byte(stored), []byte(otpHash(userID, code))) != 1 {
-		// Wrong guess: count it, and burn the code once the cap is reached.
+		// Wrong guess: count it against both the per-code cap and the cross-code
+		// account budget (issue #50), and burn the code once the per-code cap is hit.
 		attempts := intOf(row[schema.AuthTokenAttempts]) + 1
 		if attempts >= s.otpMaxAttempts() {
 			_ = s.db.Delete(r.Context(), schema.AuthTokensCollection, tokenID)
@@ -167,15 +174,18 @@ func (s *Server) handleOTPVerify(w http.ResponseWriter, r *http.Request) {
 		}}); uerr != nil {
 			s.logger.Warn("otp: attempt increment failed", "err", uerr)
 		}
+		s.credFailures.fail(userID)
 		otpUnauthorized(w)
 		return
 	}
 
-	// Correct: single-use, so delete before issuing the session.
+	// Correct: single-use, so delete before issuing the session; clear the account's
+	// failure budget on success.
 	if derr := s.db.Delete(r.Context(), schema.AuthTokensCollection, tokenID); derr != nil {
 		writeStoreError(w, s.logger, r, derr)
 		return
 	}
+	s.credFailures.reset(userID)
 	token, expiresAt, err := s.issueSession(r.Context(), userID, rolesOf(user))
 	if err != nil {
 		writeStoreError(w, s.logger, r, err)
