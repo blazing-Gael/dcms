@@ -87,6 +87,9 @@ type Auth struct {
 	Reset AuthReset `yaml:"reset"`
 	// OTP configures passwordless email-OTP login (issue #11). Off unless enabled.
 	OTP AuthOTP `yaml:"otp"`
+	// Mail caps outbound account email — daily ceilings that protect the mail
+	// provider's quota and cap mailbombing (issue #50).
+	Mail AuthMail `yaml:"mail"`
 	// SMTP configures the mailer for account emails. Host empty ⇒ a dev-log
 	// mailer that prints reset links to the console.
 	SMTP SMTP `yaml:"smtp"`
@@ -133,6 +136,17 @@ type AuthOTP struct {
 	TTLMinutes int `yaml:"ttl_minutes"`
 	// MaxAttempts is the wrong-guess budget for one code; 0 uses the default (5).
 	MaxAttempts int `yaml:"max_attempts"`
+}
+
+// AuthMail caps outbound account email beyond the per-IP auth tier (issue #50).
+type AuthMail struct {
+	// MaxPerDay is an instance-wide daily ceiling on account email, set just under
+	// the provider's quota so a loop degrades to "no new mail" rather than the
+	// provider suspending the account. 0 ⇒ no ceiling.
+	MaxPerDay int `yaml:"max_per_day"`
+	// PerRecipientPerDay caps account email to one address per day (a mailbomb
+	// degrades to this). 0 ⇒ the engine default (10); negative ⇒ no cap.
+	PerRecipientPerDay int `yaml:"per_recipient_per_day"`
 }
 
 // SMTP configures outbound mail. Credentials are env-only (secrets rule).

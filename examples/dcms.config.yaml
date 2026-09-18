@@ -209,6 +209,16 @@ auth:
   #   ttl_minutes: 10   # code validity (default 10)
   #   max_attempts: 5   # wrong guesses before the code is burned (default 5)
   #
+  # Account-email caps (issue #50). Beyond the per-IP auth tier, these bound how
+  # much mail an instance sends so a /auth/forgot or /auth/otp/request loop can't
+  # burn the provider's daily quota (which would fail every real reset) or mailbomb
+  # an inbox. Reset and OTP share one per-recipient budget. Set max_per_day just
+  # under your provider's quota. (A per-account credential-failure lockout across
+  # codes and endpoints is always on and needs no config.)
+  # mail:
+  #   max_per_day: 90            # instance-wide daily ceiling (0 = no ceiling)
+  #   per_recipient_per_day: 10  # per-address daily cap (0 = default 10; -1 = none)
+  #
   # Mailer for account emails. Omit (no host) to use a dev-log mailer that prints
   # the reset link to the console — handy for local testing. SMTP credentials are
   # SECRETS and env-only: DCMS_SMTP_USERNAME / DCMS_SMTP_PASSWORD (host/from may

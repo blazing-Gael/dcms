@@ -9,6 +9,22 @@ While on **0.x**, minor versions may include breaking changes.
 ## [Unreleased]
 
 ### Security
+- **Account-email and per-account credential caps (issue #50).** Account email had
+  only the per-IP auth tier, so an attacker could register throwaways and loop
+  `POST /auth/forgot` to drain a mail provider's daily quota in under two minutes —
+  after which *every real password reset failed* (and on a device-restore-by-reset
+  app, locked paying users out) — or mailbomb a single address; and OTP guessing
+  reset with every new code, so rotating IPs walked the 6-digit space at ~20
+  guesses/min. Now: password reset and OTP share **one per-recipient email budget**
+  (a short burst plus a per-recipient daily cap, default 10/day) instead of one per
+  endpoint; an instance-wide daily ceiling (`auth.mail.max_per_day`, set just under
+  the provider quota) degrades a loop to "no new mail" rather than a suspended mail
+  account; and a **per-account credential-failure budget across codes and
+  endpoints** (shared by OTP verify and password login) locks an account with
+  exponential backoff after too many failures in an hour, so minting fresh codes or
+  rotating IPs can no longer reset the guess count. Over-budget mail still returns
+  the same generic 200/204 and a locked login the same flat 401 — nothing is leaked
+  — and every suppression is logged at WARN (never with the recipient address).
 - **Passwordless email-OTP login — `auth.otp` (issue #11, ADR-0029).** Login was
   email + password only, which is the wrong shape for a consumer audience: a PWA
   where the account is a side effect of a purchase had to mint a password the user

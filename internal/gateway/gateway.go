@@ -147,6 +147,14 @@ type Options struct {
 	// the /auth/otp/* endpoints are not mounted (404).
 	OTPLogin *OTPLoginOptions
 
+	// MailMaxPerDay is an instance-wide daily ceiling on account email (issue #50),
+	// set just under the mail provider's quota so a loop degrades to "no new mail"
+	// instead of the provider suspending the account. 0 ⇒ no ceiling.
+	MailMaxPerDay int
+	// MailPerRecipientPerDay caps account email to one address per day (a mailbomb
+	// degrades to this). 0 ⇒ the engine default (10); negative ⇒ no cap.
+	MailPerRecipientPerDay int
+
 	// Webhooks configures signed webhook delivery of change events (ADR-0021 M-B
 	// phase 2). Nil ⇒ no delivery worker runs; the change feed still works. Only
 	// meaningful for collections that opt into `events:`.
@@ -195,11 +203,6 @@ const (
 	defaultOTPMaxAttempts = 5
 	// otpCodeDigits is the length of the emailed numeric code.
 	otpCodeDigits = 6
-	// otpRequestsPerMinutePerEmail throttles code requests per recipient (on top of
-	// the per-IP auth tier), so the endpoint can't be used to bomb one inbox from
-	// many IPs. Fixed — not a config knob — since it guards a person, not a client.
-	otpRequestsPerMinutePerEmail = 4
-	otpRequestBurstPerEmail      = 2
 )
 
 // IdempotencyOptions configures idempotent-write handling (ADR-0018).
@@ -215,9 +218,13 @@ type Server struct {
 	collections map[string]schema.CollectionDef // by name, for O(1) lookup
 	logger      *slog.Logger
 	opts        Options
-	// otpEmailLimiter throttles email-OTP code requests per recipient (issue #11);
-	// nil when OTP login is disabled. Built once so its buckets persist.
-	otpEmailLimiter RateLimiter
+	// accountMail caps outbound account email — a shared per-recipient budget for
+	// password reset + OTP, a per-recipient daily cap, and an optional instance-wide
+	// ceiling (issue #50). Built once so its counters persist across requests.
+	accountMail *accountMailLimiter
+	// credFailures bounds failed credential attempts per account across codes and
+	// endpoints (OTP + password), locking with backoff (issue #50).
+	credFailures *credFailureBudget
 }
 
 // New constructs a gateway Server. If logger is nil, slog.Default() is used.
@@ -235,9 +242,14 @@ func New(s *schema.SchemaDefinition, db store.Adapter, logger *slog.Logger, opts
 		o = opts[0]
 	}
 	srv := &Server{schema: s, db: db, collections: cols, logger: logger, opts: o}
-	if o.OTPLogin != nil {
-		srv.otpEmailLimiter = newMemoryLimiter(otpRequestsPerMinutePerEmail, otpRequestBurstPerEmail)
+	// Account-email + credential caps are always on (issue #50): password reset
+	// exists regardless of OTP, and the credential-failure budget guards login too.
+	recipDay := o.MailPerRecipientPerDay
+	if recipDay == 0 {
+		recipDay = defaultAccountMailPerRecipientDay // negative in config ⇒ unlimited
 	}
+	srv.accountMail = newAccountMailLimiter(recipDay, o.MailMaxPerDay)
+	srv.credFailures = newCredFailureBudget()
 	return srv
 }
 
