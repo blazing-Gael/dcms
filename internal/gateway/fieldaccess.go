@@ -2,6 +2,8 @@ package gateway
 
 import (
 	"context"
+	"errors"
+	"net/http"
 
 	"github.com/blazing-Gael/dcms/internal/schema"
 	"github.com/blazing-Gael/dcms/internal/store"
@@ -50,13 +52,42 @@ func (s *Server) maskReadFields(ctx context.Context, collection string, rec stor
 // as authenticated (you are about to become the owner). On update, an `owner`
 // write rule needs the record's created_by, so the current row is loaded lazily —
 // once, and only when such a field is actually present in the body.
-func (s *Server) stripUnwritableFields(ctx context.Context, collection, id string, data store.Record, isCreate bool) {
+// A disallowed value-scoped transition (issue #27) is a loud 403 naming the field,
+// not the silent drop used for a plain unwritable field — a submit that quietly
+// didn't happen is worse than an error.
+type fieldForbiddenError struct{ field string }
+
+func (e *fieldForbiddenError) Error() string {
+	return "field " + e.field + ": transition not permitted"
+}
+
+// writeFieldWriteError renders a field-write error, or reports false if err is nil.
+// A forbidden transition (issue #27) is a 403 naming the field; any other error is
+// an internal fault. Callers use it to short-circuit a write.
+func (s *Server) writeFieldWriteError(w http.ResponseWriter, r *http.Request, err error) bool {
+	if err == nil {
+		return false
+	}
+	var fe *fieldForbiddenError
+	if errors.As(err, &fe) {
+		writeError(w, http.StatusForbidden, apiError{
+			Code:    "FORBIDDEN",
+			Message: "you may not set '" + fe.field + "' to that value",
+			Fields:  map[string]string{fe.field: "transition not permitted"},
+		})
+		return true
+	}
+	writeStoreError(w, s.logger, r, err)
+	return true
+}
+
+func (s *Server) stripUnwritableFields(ctx context.Context, collection, id string, data store.Record, isCreate bool) error {
 	if !s.authEnabled() {
-		return
+		return nil
 	}
 	cd, ok := s.collections[collection]
 	if !ok || !cd.HasFieldAccess() {
-		return
+		return nil
 	}
 	p := principalFromContext(ctx)
 
@@ -73,10 +104,34 @@ func (s *Server) stripUnwritableFields(ctx context.Context, collection, id strin
 	}
 
 	for _, f := range cd.Fields {
-		if f.Access == nil || f.Access.Write == nil {
+		if f.Access == nil {
 			continue
 		}
 		if _, present := data[f.Name]; !present {
+			continue
+		}
+
+		// Value-scoped write rules (issue #27): permit / 403 / silent-drop by the
+		// attempted transition, not just by identity.
+		if len(f.Access.WriteTransitions) > 0 {
+			newVal, ok := data[f.Name].(string)
+			if !ok {
+				continue // non-string value; validation will reject it as a 422
+			}
+			cur := loadCurrent() // nil on create → current value ""
+			curVal, _ := cur[f.Name].(string)
+			switch s.evalTransition(f.Access.WriteTransitions, p, cur, curVal, newVal, isCreate) {
+			case transitionAllowed:
+				// keep it
+			case transitionForbidden:
+				return &fieldForbiddenError{field: f.Name}
+			case transitionDropped:
+				delete(data, f.Name)
+			}
+			continue
+		}
+
+		if f.Access.Write == nil {
 			continue
 		}
 		rule := *f.Access.Write
@@ -90,6 +145,57 @@ func (s *Server) stripUnwritableFields(ctx context.Context, collection, id strin
 			delete(data, f.Name)
 		}
 	}
+	return nil
+}
+
+// transitionOutcome is the decision for a value-scoped write.
+type transitionOutcome int
+
+const (
+	transitionAllowed   transitionOutcome = iota // the write proceeds
+	transitionForbidden                          // a rule applies but forbids this transition → 403
+	transitionDropped                            // no rule applies to the caller → drop silently
+)
+
+// evalTransition decides a value-scoped write. A rule "applies" when its `who` is
+// satisfied for the caller; among applying rules the transition is permitted when
+// the current value is in `from` (ignored on create) and the new value in `to` (an
+// empty set means "any"). A no-op (new == current, on update) is always allowed so
+// a round-tripped record never trips.
+func (s *Server) evalTransition(rules []schema.TransitionRule, p principal, current store.Record, curVal, newVal string, isCreate bool) transitionOutcome {
+	if !isCreate && newVal == curVal {
+		return transitionAllowed
+	}
+	applied := false
+	for _, tr := range rules {
+		if !s.fieldWritable(tr.Who, p, current) {
+			continue
+		}
+		applied = true
+		if !inSetOrAny(tr.To, newVal) {
+			continue
+		}
+		if isCreate || inSetOrAny(tr.From, curVal) {
+			return transitionAllowed
+		}
+	}
+	if applied {
+		return transitionForbidden
+	}
+	return transitionDropped
+}
+
+// inSetOrAny reports whether v is in set, or the set is empty ("any value").
+func inSetOrAny(set []string, v string) bool {
+	if len(set) == 0 {
+		return true
+	}
+	for _, s := range set {
+		if s == v {
+			return true
+		}
+	}
+	return false
 }
 
 // fieldPermitted evaluates a field read rule against a specific record.

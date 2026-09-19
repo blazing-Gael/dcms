@@ -9,6 +9,22 @@ While on **0.x**, minor versions may include breaking changes.
 ## [Unreleased]
 
 ### Security
+- **Value-scoped write rules — role-gated enum transitions (issue #27, ADR-0034).**
+  A field's `write` rule was all-or-nothing: a role could set any value of a field or
+  none — so an editorial `review` field had to be either owner-writable (a writer
+  approves their own story) or editor-only (a writer can't even submit). On an `enum`
+  field, `write` now accepts a declarative transition table —
+  `write: { rules: [{ who, from, to }] }` — that gates *which value changes* each role
+  may make (`from`/`to` are declared enum values; an omitted set means "any"). A write
+  is permitted when a rule's `who` is satisfied and the current value is in its `from`
+  and the new value in its `to`; a no-op is always allowed. A caller a rule applies to
+  but whose transition none permit gets a **`403` naming the field** (not the silent
+  drop of a plain unwritable field — a submit that quietly didn't happen is worse); a
+  caller no rule applies to has the field dropped as before. On create `from` is
+  ignored (gated by `who` + `to`). The table serializes into `/__schema` so an admin
+  UI can offer only the legal next states. `who` reuses the full rule engine (`owner`,
+  roles, `any:`); enforcement is an increment to the existing field-access path, no
+  new store surface.
 - **Account-email and per-account credential caps (issue #50).** Account email had
   only the per-IP auth tier, so an attacker could register throwaways and loop
   `POST /auth/forgot` to drain a mail provider's daily quota in under two minutes —

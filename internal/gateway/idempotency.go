@@ -88,7 +88,9 @@ func (s *Server) createWithIdempotency(w http.ResponseWriter, r *http.Request, c
 		return
 	}
 	stripManagedFields(data)
-	s.stripUnwritableFields(r.Context(), collection, "", data, true)
+	if s.writeFieldWriteError(w, r, s.stripUnwritableFields(r.Context(), collection, "", data, true)) {
+		return
+	}
 
 	key := hashIdemKey(principalFromContext(r.Context()).ID, rawKey)
 	fp := fingerprintOf(r.Method, r.URL.Path, raw)
