@@ -30,6 +30,8 @@ const (
 	defaultCredFailureWindow     = time.Hour
 	defaultCredLockBase          = 15 * time.Minute
 	defaultCredLockMax           = 24 * time.Hour
+
+	accountMailMaxRecipients = 20000
 )
 
 // accountMailLimiter caps outbound account email: a short per-recipient burst, a
@@ -37,14 +39,18 @@ const (
 type accountMailLimiter struct {
 	burst *memoryLimiter // short-window per recipient
 
-	mu           sync.Mutex
-	day          string         // current UTC date, for the daily rollover
-	perRecipient map[string]int // recipient → sends today
-	instance     int            // total sends today
-	recipientDay int            // per-recipient daily cap; 0 ⇒ unlimited
-	instanceDay  int            // instance-wide daily cap; 0 ⇒ unlimited
-	now          func() time.Time
+	mu            sync.Mutex
+	day           string         // current UTC date, for the daily rollover
+	perRecipient  map[string]int // recipient → sends today
+	instance      int            // total sends today
+	recipientDay  int            // per-recipient daily cap; 0 ⇒ unlimited
+	instanceDay   int            // instance-wide daily cap; 0 ⇒ unlimited
+	maxRecipients int            // bound on distinct recipients tracked within a day
+	now           func() time.Time
 }
+
+// accountMailMaxRecipients bounds the per-recipient map so an address-spray with no
+// instance ceiling can't grow it without bound before the daily rollover clears it.
 
 // newAccountMailLimiter builds the limiter. recipientDay/instanceDay of 0 mean
 // "no cap" for that dimension (the caller applies the recipient default first).
@@ -56,11 +62,12 @@ func newAccountMailLimiter(recipientDay, instanceDay int) *accountMailLimiter {
 		instanceDay = 0
 	}
 	return &accountMailLimiter{
-		burst:        newMemoryLimiter(defaultAccountMailPerMinute, defaultAccountMailBurst),
-		perRecipient: map[string]int{},
-		recipientDay: recipientDay,
-		instanceDay:  instanceDay,
-		now:          time.Now,
+		burst:         newMemoryLimiter(defaultAccountMailPerMinute, defaultAccountMailBurst),
+		perRecipient:  map[string]int{},
+		recipientDay:  recipientDay,
+		instanceDay:   instanceDay,
+		maxRecipients: accountMailMaxRecipients,
+		now:           time.Now,
 	}
 }
 
@@ -86,6 +93,13 @@ func (m *accountMailLimiter) allow(recipient string) (bool, string) {
 	}
 	if ok, _ := m.burst.Allow(recipient); !ok {
 		return false, "recipient send rate exceeded"
+	}
+	// Bound the map: a new recipient past the cap (only reachable with no instance
+	// ceiling under an address-spray) clears the day's counts wholesale. Coarse — it
+	// drops in-progress per-recipient counts — but it only triggers under abuse, and
+	// the per-send burst limiter (and any instance ceiling) stay in force.
+	if _, seen := m.perRecipient[recipient]; !seen && len(m.perRecipient) >= m.maxRecipients {
+		m.perRecipient = map[string]int{}
 	}
 	m.perRecipient[recipient]++
 	m.instance++

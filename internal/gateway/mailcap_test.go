@@ -98,6 +98,26 @@ func TestAccountMailLimiter_Unlimited(t *testing.T) {
 	}
 }
 
+func TestAccountMailLimiter_RecipientMapBounded(t *testing.T) {
+	clk := &fakeClock{t: time.Date(2026, 1, 1, 8, 0, 0, 0, time.UTC)}
+	m := newAccountMailLimiter(0, 0) // no daily caps: only the map-bound guard applies
+	m.now = clk.now
+	m.burst.now = clk.now
+	m.maxRecipients = 3 // low bound for the test
+
+	// Sending to many distinct recipients (advancing so the burst never bites) must
+	// not grow the map without bound — it stays at or under the guard.
+	for i := range 20 {
+		if ok, reason := m.allow("addr" + string(rune('a'+i)) + "@x.com"); !ok {
+			t.Fatalf("send %d denied unexpectedly: %q", i, reason)
+		}
+		if got := len(m.perRecipient); got > m.maxRecipients {
+			t.Fatalf("recipient map grew to %d, want ≤ %d", got, m.maxRecipients)
+		}
+		clk.add(time.Minute)
+	}
+}
+
 func TestCredFailureBudget_LocksAndBacksOff(t *testing.T) {
 	clk := &fakeClock{t: time.Date(2026, 1, 1, 8, 0, 0, 0, time.UTC)}
 	b := newCredFailureBudget()
