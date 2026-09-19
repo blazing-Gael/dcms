@@ -131,8 +131,11 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	stripManagedFields(data) // _status/_published_at/_deleted_at change only via transitions
 	// Drop fields the caller may not write (ADR-0016 M2). isCreate: `owner` write
-	// rules resolve as authenticated (you become the owner of what you create).
-	s.stripUnwritableFields(r.Context(), collection, "", data, true)
+	// rules resolve as authenticated (you become the owner of what you create). A
+	// forbidden value-scoped transition (issue #27) short-circuits with a 403.
+	if s.writeFieldWriteError(w, r, s.stripUnwritableFields(r.Context(), collection, "", data, true)) {
+		return
+	}
 
 	// Inline related objects → create the whole tree transactionally.
 	if s.hasInlineRelations(collection, data) {
@@ -232,8 +235,11 @@ func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Drop fields the caller may not write (ADR-0016 M2). On update an `owner`
-	// write rule is checked against the stored record's created_by, loaded lazily.
-	s.stripUnwritableFields(r.Context(), collection, chi.URLParam(r, "id"), data, false)
+	// write rule is checked against the stored record's created_by, loaded lazily. A
+	// forbidden value-scoped transition (issue #27) short-circuits with a 403.
+	if s.writeFieldWriteError(w, r, s.stripUnwritableFields(r.Context(), collection, chi.URLParam(r, "id"), data, false)) {
+		return
+	}
 
 	// Inline related objects → resolve + update transactionally.
 	if s.hasInlineRelations(collection, data) {

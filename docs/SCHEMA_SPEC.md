@@ -704,6 +704,39 @@ fields:
 - Only `read`/`write` are valid keys here (the CRUD verbs belong to the collection);
   any other key is a schema-compile error, as is a role not declared in `auth.roles`.
 
+**Value-scoped write rules — enum transitions (issue #27, ADR-0034).** On an `enum`
+field, `write` may instead be a `rules:` list that gates *which value changes* each
+role may make — a declarative state machine for workflows like editorial review:
+
+```yaml
+review:
+  type: enum
+  values: [writing, submitted, changes_requested, approved]
+  access:
+    write:
+      rules:
+        - who: owner
+          from: [writing, changes_requested]   # allowed current values
+          to:   [writing, submitted]           # allowed new values
+        - who: [admin, editor]                  # from/to omitted ⇒ any transition
+```
+
+- `who` uses the same rule grammar as everywhere else; `from`/`to` are declared enum
+  values, and an omitted set means "any value".
+- A write is **permitted** when some rule's `who` is satisfied *and* the current value
+  is in its `from` and the new value in its `to`.
+- A **no-op** (new value == current) is always allowed, so round-tripping a record
+  never trips.
+- If a rule applies to the caller but none permits the attempted change, it is a
+  **`403` naming the field** — not the silent drop above, because a submit that
+  quietly didn't happen is worse than an error. If *no* rule applies, the field is
+  dropped as with a plain write rule.
+- On **create** there is no prior value, so `from` is ignored — a create is gated by
+  `who` + `to` (which initial values a role may set).
+- The transition table is served in `/__schema`, so a client or admin UI can offer
+  only the legal next states for the current user. `write` is either a plain rule or
+  a `rules:` list — never both.
+
 ---
 
 ## Hooks (Phase 2)

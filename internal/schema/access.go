@@ -262,6 +262,24 @@ func (r Rule) mentionsInherit() bool {
 type FieldAccess struct {
 	Read  *Rule `json:"read,omitempty"`
 	Write *Rule `json:"write,omitempty"`
+	// WriteTransitions is the value-scoped form of the write rule (issue #27): a
+	// list of {who, from, to} transitions on an enum field. When set, Write is nil —
+	// they are the two shapes of `write:`. A write is permitted if some rule's `who`
+	// is satisfied AND the current value is in its `from` and the new value in its
+	// `to` (an omitted set means "any"). A caller whose `who` matches but whose
+	// transition none permit is rejected (403); a caller no rule matches has the
+	// field dropped, as with a plain write rule.
+	WriteTransitions []TransitionRule `json:"write_transitions,omitempty"`
+}
+
+// TransitionRule is one value-scoped write rule (issue #27). Who reuses the normal
+// rule engine (owner, roles, any:, …); From/To are declared enum values of the
+// field, and an empty set means "any value". On create there is no prior value, so
+// From is ignored and only Who + To apply.
+type TransitionRule struct {
+	Who  Rule     `json:"who"`
+	From []string `json:"from,omitempty"`
+	To   []string `json:"to,omitempty"`
 }
 
 // ReadRule returns the effective read rule for a field (public when undeclared).
@@ -285,7 +303,7 @@ func (f FieldDef) WriteRule() Rule {
 // The gateway uses this to skip field masking entirely on the common case.
 func (c CollectionDef) HasFieldAccess() bool {
 	for _, f := range c.Fields {
-		if f.Access != nil && (f.Access.Read != nil || f.Access.Write != nil) {
+		if f.Access != nil && (f.Access.Read != nil || f.Access.Write != nil || len(f.Access.WriteTransitions) > 0) {
 			return true
 		}
 	}
@@ -302,20 +320,115 @@ func parseFieldAccess(node *yaml.Node) (*FieldAccess, error) {
 	}
 	fa := &FieldAccess{}
 	for _, e := range entries {
-		rule, err := parseRule(e.Val)
-		if err != nil {
-			return nil, fmt.Errorf("%s: %w", e.Key, err)
-		}
 		switch e.Key {
 		case "read":
+			rule, err := parseRule(e.Val)
+			if err != nil {
+				return nil, fmt.Errorf("read: %w", err)
+			}
 			fa.Read = rule
 		case "write":
-			fa.Write = rule
+			// Two shapes of `write:`: the value-scoped transition form
+			// `{ rules: [...] }` (issue #27), or a plain rule as for `read`.
+			if mappingHasKey(e.Val, "rules") {
+				trs, err := parseWriteTransitions(e.Val)
+				if err != nil {
+					return nil, fmt.Errorf("write: %w", err)
+				}
+				fa.WriteTransitions = trs
+			} else {
+				rule, err := parseRule(e.Val)
+				if err != nil {
+					return nil, fmt.Errorf("write: %w", err)
+				}
+				fa.Write = rule
+			}
 		default:
 			return nil, fmt.Errorf("unknown field access key %q (want read or write)", e.Key)
 		}
 	}
 	return fa, nil
+}
+
+// mappingHasKey reports whether a mapping node has a top-level key.
+func mappingHasKey(node *yaml.Node, key string) bool {
+	if node.Kind != yaml.MappingNode {
+		return false
+	}
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		if node.Content[i].Value == key {
+			return true
+		}
+	}
+	return false
+}
+
+// parseWriteTransitions decodes the value-scoped write form (issue #27):
+//
+//	write:
+//	  rules:
+//	    - who: owner
+//	      from: [writing, changes_requested]
+//	      to:   [writing, submitted]
+//	    - who: [admin, editor]        # from/to omitted ⇒ any transition
+func parseWriteTransitions(node *yaml.Node) ([]TransitionRule, error) {
+	entries, err := mappingEntries(node)
+	if err != nil {
+		return nil, err
+	}
+	var rulesNode *yaml.Node
+	for _, e := range entries {
+		if e.Key != "rules" {
+			return nil, fmt.Errorf("unknown key %q (the value-scoped write form takes only `rules`)", e.Key)
+		}
+		rulesNode = e.Val
+	}
+	if rulesNode == nil || rulesNode.Kind != yaml.SequenceNode {
+		return nil, fmt.Errorf("`rules` must be a list of { who, from, to } transitions")
+	}
+	trs := make([]TransitionRule, 0, len(rulesNode.Content))
+	for i, item := range rulesNode.Content {
+		tr, err := parseTransitionRule(item)
+		if err != nil {
+			return nil, fmt.Errorf("rules[%d]: %w", i, err)
+		}
+		trs = append(trs, tr)
+	}
+	return trs, nil
+}
+
+func parseTransitionRule(node *yaml.Node) (TransitionRule, error) {
+	entries, err := mappingEntries(node)
+	if err != nil {
+		return TransitionRule{}, err
+	}
+	var tr TransitionRule
+	haveWho := false
+	for _, e := range entries {
+		switch e.Key {
+		case "who":
+			rule, err := parseRule(e.Val)
+			if err != nil {
+				return TransitionRule{}, fmt.Errorf("who: %w", err)
+			}
+			tr.Who = *rule
+			haveWho = true
+		case "from":
+			if err := e.Val.Decode(&tr.From); err != nil {
+				return TransitionRule{}, fmt.Errorf("from: %w", err)
+			}
+		case "to":
+			if err := e.Val.Decode(&tr.To); err != nil {
+				return TransitionRule{}, fmt.Errorf("to: %w", err)
+			}
+		default:
+			return TransitionRule{}, fmt.Errorf("unknown key %q (want who, from, to)", e.Key)
+		}
+	}
+	if !haveWho {
+		return TransitionRule{}, fmt.Errorf("a transition rule requires `who`")
+	}
+	return tr, nil
 }
 
 // AuthConfig is the top-level `auth:` block. M1 uses Provider (defaulting to

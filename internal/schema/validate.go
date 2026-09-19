@@ -190,6 +190,41 @@ func (s *SchemaDefinition) Validate() error {
 						add("%s.access.%s: %s", fpath, dir, msg)
 					}
 				}
+				// Value-scoped write rules (issue #27): only on an enum field; each
+				// rule's roles must be declared and its from/to values must be
+				// declared enum values.
+				if len(f.Access.WriteTransitions) > 0 {
+					if f.Type != TypeEnum {
+						add("%s.access.write: value-scoped write rules (from/to) are only valid on an enum field", fpath)
+					}
+					allowed := make(map[string]bool, len(f.Values))
+					for _, v := range f.Values {
+						allowed[v] = true
+					}
+					for i, tr := range f.Access.WriteTransitions {
+						rpath := fmt.Sprintf("%s.access.write.rules[%d]", fpath, i)
+						for _, role := range tr.Who.roleNames() {
+							if !roleSet[role] {
+								add("%s.who: role %q is not declared in auth.roles", rpath, role)
+							}
+						}
+						for _, msg := range validateOwnerFields(tr.Who, col) {
+							add("%s.who: %s", rpath, msg)
+						}
+						if f.Type == TypeEnum {
+							for _, v := range tr.From {
+								if !allowed[v] {
+									add("%s.from: %q is not a declared value of this enum", rpath, v)
+								}
+							}
+							for _, v := range tr.To {
+								if !allowed[v] {
+									add("%s.to: %q is not a declared value of this enum", rpath, v)
+								}
+							}
+						}
+					}
+				}
 			}
 
 			// Field type.
