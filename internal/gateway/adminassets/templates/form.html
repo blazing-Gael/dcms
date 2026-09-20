@@ -1,0 +1,38 @@
+{{define "content"}}
+{{with .Data}}
+<div class="page-head">
+  <h1>{{.Title}}</h1>
+  <a class="btn-link" href="/__admin/c/{{.Collection}}">Back to {{.Collection | title}}</a>
+</div>
+<form class="form card" method="post" action="{{.Action}}">
+  <input type="hidden" name="csrf" value="{{$.CSRF}}">
+  {{range .Fields}}
+  <div class="field">
+    <label for="f_{{.Name}}">{{.Label}}{{if .Required}} <span class="req">*</span>{{end}}</label>
+    {{if eq .Widget "textarea"}}
+      <textarea id="f_{{.Name}}" name="{{.Name}}" rows="5" {{if .Required}}required{{end}}>{{.Value}}</textarea>
+    {{else if eq .Widget "select"}}
+      {{$fv := .Value}}
+      <select id="f_{{.Name}}" name="{{.Name}}">
+        {{if not .Required}}<option value="">—</option>{{end}}
+        {{range .Options}}<option value="{{.}}"{{if eq . $fv}} selected{{end}}>{{.}}</option>{{end}}
+      </select>
+    {{else if eq .Widget "checkbox"}}
+      <input type="checkbox" id="f_{{.Name}}" name="{{.Name}}" value="true"{{if eq .Value "true"}} checked{{end}}>
+    {{else}}
+      <input type="{{.InputType}}" id="f_{{.Name}}" name="{{.Name}}" value="{{.Value}}" {{if .Required}}required{{end}}>
+    {{end}}
+  </div>
+  {{end}}
+  <div class="form-actions">
+    <button class="btn" type="submit">Save</button>
+    <a class="btn-link" href="/__admin/c/{{.Collection}}">Cancel</a>
+  </div>
+</form>
+{{if .Meta}}
+<div class="card meta">
+  {{range .Meta}}<div class="meta-row"><span class="meta-k">{{.K}}</span><span class="meta-v">{{.V}}</span></div>{{end}}
+</div>
+{{end}}
+{{end}}
+{{end}}

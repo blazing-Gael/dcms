@@ -12,6 +12,12 @@
 # Path to the schema that defines your collections.
 schema: ./dcms.schema.yaml
 
+# Built-in admin panel at /__admin (ADR-0035) — a server-rendered UI generated from
+# the schema, for browsing and editing content. On by default; behind a login. Set
+# enabled: false to not mount it (e.g. an API-only deployment).
+# admin:
+#   enabled: true
+
 database:
   # Phase 1 ships the "sqlite" driver. "postgres" and others land later.
   driver: sqlite

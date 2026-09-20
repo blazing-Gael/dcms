@@ -38,6 +38,13 @@ type Config struct {
 	Content  Content  `yaml:"content"`
 	Auth     Auth     `yaml:"auth"`
 	Events   Events   `yaml:"events"`
+	Admin    Admin    `yaml:"admin"`
+}
+
+// Admin configures the built-in admin panel at /__admin (ADR-0035).
+type Admin struct {
+	// Enabled mounts the panel. Nil ⇒ on (the zero-config default); false disables it.
+	Enabled *bool `yaml:"enabled"`
 }
 
 // Events configures the change-events subsystem (ADR-0021, M-B). The change feed

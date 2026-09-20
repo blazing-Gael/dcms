@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>{{.Title}} · DCMS Admin</title>
+  <link rel="stylesheet" href="/__admin/static/admin.css">
+</head>
+<body>
+{{if .User}}
+<div class="app">
+  <aside class="sidebar">
+    <div class="brand"><a href="/__admin/">DCMS</a><span class="brand-tag">admin</span></div>
+    <nav class="nav">
+      <a class="nav-link" href="/__admin/">Overview</a>
+      <div class="nav-section">Collections</div>
+      {{range .Nav}}<a class="nav-link" href="/__admin/c/{{.Name}}">{{.Label | title}}</a>{{end}}
+    </nav>
+    <form class="signout" method="post" action="/__admin/logout">
+      <input type="hidden" name="csrf" value="{{.CSRF}}">
+      <span class="user" title="{{.User}}">{{.User}}</span>
+      <button class="btn-link" type="submit">Sign out</button>
+    </form>
+  </aside>
+  <main class="main">
+    {{if .Flash}}<div class="flash ok">{{.Flash}}</div>{{end}}
+    {{if .Error}}<div class="flash error">{{.Error}}</div>{{end}}
+    {{block "content" .}}{{end}}
+  </main>
+</div>
+{{else}}
+<main class="auth-main">
+  {{if .Error}}<div class="flash error">{{.Error}}</div>{{end}}
+  {{block "content" .}}{{end}}
+</main>
+{{end}}
+</body>
+</html>
