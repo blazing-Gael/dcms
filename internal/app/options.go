@@ -186,6 +186,7 @@ func (s *Server) GatewayOptions(ctx context.Context, hooks *gateway.HookRegistry
 		OTPLogin:               otpLogin,
 		MailMaxPerDay:          cfg.Auth.Mail.MaxPerDay,
 		MailPerRecipientPerDay: cfg.Auth.Mail.PerRecipientPerDay,
+		Admin:                  &gateway.AdminOptions{Enabled: cfg.Admin.Enabled == nil || *cfg.Admin.Enabled},
 		Webhooks:               webhooks,
 		Hooks:                  hooks,
 		Routes:                 routes,

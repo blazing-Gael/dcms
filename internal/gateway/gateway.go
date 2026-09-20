@@ -9,9 +9,11 @@
 package gateway
 
 import (
+	"html/template"
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -168,6 +170,15 @@ type Options struct {
 	// Routes are user-registered custom endpoints (ADR-0031 §5), mounted inside the
 	// API middleware stack (identity, body cap, timeout, rate limit). Empty ⇒ none.
 	Routes []CustomRoute
+
+	// Admin configures the built-in admin panel at /__admin (ADR-0035). Nil ⇒ the
+	// panel is mounted (the zero-config default); set Enabled false to disable it.
+	Admin *AdminOptions
+}
+
+// AdminOptions configures the admin panel (ADR-0035).
+type AdminOptions struct {
+	Enabled bool
 }
 
 // CustomRoute is one user-registered endpoint. Method is an HTTP method, Path a
@@ -218,6 +229,9 @@ type Server struct {
 	collections map[string]schema.CollectionDef // by name, for O(1) lookup
 	logger      *slog.Logger
 	opts        Options
+	// Admin panel templates, parsed once on first render (ADR-0035).
+	adminTmplOnce sync.Once
+	adminTmpl     map[string]*template.Template
 	// accountMail caps outbound account email — a shared per-recipient budget for
 	// password reset + OTP, a per-recipient daily cap, and an optional instance-wide
 	// ceiling (issue #50). Built once so its counters persist across requests.
@@ -401,6 +415,12 @@ func (s *Server) Handler() http.Handler {
 				r.Method(rt.Method, rt.Path, rt.Handler)
 			}
 		})
+	}
+
+	// Built-in admin panel (ADR-0035), served at /__admin. Mounted unless disabled;
+	// its pages are behind a login independent of the public introspection flag.
+	if s.adminEnabled() {
+		s.mountAdmin(r)
 	}
 
 	return r

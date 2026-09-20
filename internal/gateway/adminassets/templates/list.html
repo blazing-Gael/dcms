@@ -1,0 +1,32 @@
+{{define "content"}}
+{{with .Data}}
+<div class="page-head">
+  <h1>{{.Collection | title}}</h1>
+  <a class="btn" href="{{.NewHref}}">New {{.Collection | title}}</a>
+</div>
+<div class="card table-wrap">
+  <table class="table">
+    <thead>
+      <tr>{{range .Columns}}<th>{{. | title}}</th>{{end}}<th class="col-actions"></th></tr>
+    </thead>
+    <tbody>
+      {{range .Rows}}
+      <tr>
+        {{range .Cells}}<td>{{.}}</td>{{end}}
+        <td class="row-actions">
+          <a href="/__admin/c/{{$.Data.Collection}}/{{.ID}}">Edit</a>
+          <form method="post" action="/__admin/c/{{$.Data.Collection}}/{{.ID}}/delete" onsubmit="return confirm('Delete this record? This cannot be undone.');">
+            <input type="hidden" name="csrf" value="{{$.CSRF}}">
+            <button class="btn-link danger" type="submit">Delete</button>
+          </form>
+        </td>
+      </tr>
+      {{else}}
+      <tr><td class="empty" colspan="99">No records yet.</td></tr>
+      {{end}}
+    </tbody>
+  </table>
+</div>
+{{if .Note}}<p class="muted">{{.Note}}</p>{{end}}
+{{end}}
+{{end}}

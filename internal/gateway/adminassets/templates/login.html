@@ -1,0 +1,17 @@
+{{define "content"}}
+<div class="auth-card card">
+  <div class="auth-brand">DCMS <span>admin</span></div>
+  <form method="post" action="/__admin/login">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <label class="field">
+      <span>Email</span>
+      <input type="email" name="email" autocomplete="username" required autofocus>
+    </label>
+    <label class="field">
+      <span>Password</span>
+      <input type="password" name="password" autocomplete="current-password" required>
+    </label>
+    <button class="btn btn-block" type="submit">Sign in</button>
+  </form>
+</div>
+{{end}}

@@ -160,6 +160,21 @@ While on **0.x**, minor versions may include breaking changes.
   otherwise. With no `preview` rule, the token gate is unchanged.
 
 ### Added
+- **Built-in admin panel at `/__admin` (ADR-0035, phase 1).** DCMS was API-only, so
+  content editors and non-technical operators had no way to see or edit what an
+  instance holds. There's now an embedded, server-rendered admin panel — plain Go
+  `html/template` + one CSS file, no SPA, no build step, served straight from the
+  binary — generated from the schema. Phase 1 covers a server-rendered login (reusing
+  the session auth), a system overview with per-collection row counts, and a
+  per-collection browser with create/edit/delete forms whose widgets derive from the
+  field types (text, textarea, number, checkbox, enum select, date). It is a
+  **privileged client, not a backdoor**: every write runs through the same authorized
+  pipeline as the API — field rules, #27 transitions, hooks, revisions, events — as
+  the logged-in principal, and reads honor the access rules (owner-scoped where the
+  rule is). Mutating forms are CSRF-protected (double-submit cookie). On by default;
+  disable with `admin: { enabled: false }`. The schema is read-only here (ADR-0035);
+  relations, media, lifecycle, `object_list`, system views, and dashboards are the
+  next phases.
 - **Public embedding API — run DCMS as a Go library with hooks + custom routes
   (ADR-0031).** The hook mechanism existed but lived under `internal/`, so it was
   only reachable by editing the DCMS tree. A new public package,

@@ -1,0 +1,118 @@
+/* DCMS admin — a small, self-contained design system (ADR-0035). No framework. */
+:root {
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --surface-2: #f0f2f5;
+  --border: #e3e6ea;
+  --text: #1a1d21;
+  --muted: #6b7280;
+  --accent: #2563eb;
+  --accent-ink: #ffffff;
+  --danger: #dc2626;
+  --ok-bg: #ecfdf5; --ok-ink: #065f46; --ok-border: #a7f3d0;
+  --err-bg: #fef2f2; --err-ink: #991b1b; --err-border: #fecaca;
+  --radius: 10px;
+  --shadow: 0 1px 2px rgba(16,24,40,.06), 0 1px 3px rgba(16,24,40,.04);
+  --sidebar-w: 240px;
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0e1116; --surface: #161a20; --surface-2: #1d222b; --border: #262c36;
+    --text: #e6e9ee; --muted: #9aa4b2; --accent: #3b82f6; --accent-ink: #fff;
+    --ok-bg: #052e23; --ok-ink: #6ee7b7; --ok-border: #114b3a;
+    --err-bg: #3a1113; --err-ink: #fca5a5; --err-border: #5b1a1d;
+    --shadow: 0 1px 2px rgba(0,0,0,.4);
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { font-family: var(--font); color: var(--text); background: var(--bg); font-size: 14px; line-height: 1.5; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+h1 { font-size: 20px; margin: 0; font-weight: 650; }
+.muted { color: var(--muted); }
+
+/* layout */
+.app { display: grid; grid-template-columns: var(--sidebar-w) 1fr; min-height: 100vh; }
+.sidebar {
+  background: var(--surface); border-right: 1px solid var(--border);
+  display: flex; flex-direction: column; padding: 16px 12px; position: sticky; top: 0; height: 100vh;
+}
+.brand { font-weight: 750; font-size: 18px; padding: 6px 8px 16px; display: flex; align-items: baseline; gap: 6px; }
+.brand a { color: var(--text); }
+.brand-tag { font-size: 11px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
+.nav { display: flex; flex-direction: column; gap: 2px; flex: 1; overflow-y: auto; }
+.nav-section { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); padding: 14px 8px 4px; font-weight: 600; }
+.nav-link { color: var(--text); padding: 7px 10px; border-radius: 7px; }
+.nav-link:hover { background: var(--surface-2); text-decoration: none; }
+.signout { border-top: 1px solid var(--border); padding-top: 12px; margin-top: 8px; display: flex; flex-direction: column; gap: 4px; }
+.user { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.main { padding: 28px 32px; max-width: 1100px; width: 100%; }
+.page-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; gap: 16px; }
+
+/* cards & grid */
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 14px; }
+.stat { padding: 18px; display: block; color: var(--text); }
+.stat:hover { text-decoration: none; border-color: var(--accent); }
+.stat-num { font-size: 28px; font-weight: 700; }
+.stat-label { color: var(--muted); margin-top: 2px; }
+
+/* table */
+.table-wrap { overflow-x: auto; }
+.table { width: 100%; border-collapse: collapse; }
+.table th, .table td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--border); vertical-align: top; }
+.table th { font-size: 12px; text-transform: uppercase; letter-spacing: .03em; color: var(--muted); font-weight: 600; }
+.table tr:last-child td { border-bottom: none; }
+.table td { font-variant-numeric: tabular-nums; }
+.row-actions { white-space: nowrap; display: flex; gap: 12px; align-items: center; }
+.col-actions { width: 1px; }
+.empty { color: var(--muted); text-align: center; padding: 28px; }
+
+/* forms */
+.form { padding: 22px; max-width: 640px; display: flex; flex-direction: column; gap: 16px; }
+.field { display: flex; flex-direction: column; gap: 6px; }
+.field > label, .field > span { font-weight: 600; font-size: 13px; }
+.req { color: var(--danger); }
+input, select, textarea {
+  font: inherit; color: var(--text); background: var(--surface); border: 1px solid var(--border);
+  border-radius: 8px; padding: 9px 11px; width: 100%;
+}
+input[type=checkbox] { width: auto; }
+input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
+textarea { resize: vertical; font-family: inherit; }
+.form-actions { display: flex; gap: 12px; align-items: center; padding-top: 4px; }
+.meta { margin-top: 18px; padding: 14px 18px; max-width: 640px; }
+.meta-row { display: flex; justify-content: space-between; padding: 4px 0; font-size: 13px; }
+.meta-k { color: var(--muted); }
+.meta-v { font-family: var(--mono); }
+
+/* buttons */
+.btn { background: var(--accent); color: var(--accent-ink); border: none; border-radius: 8px; padding: 9px 16px; font: inherit; font-weight: 600; cursor: pointer; }
+.btn:hover { text-decoration: none; filter: brightness(1.05); }
+.btn-block { width: 100%; }
+.btn-link { background: none; border: none; color: var(--accent); cursor: pointer; padding: 0; font: inherit; }
+.btn-link.danger { color: var(--danger); }
+.row-actions form { display: inline; }
+
+/* flash */
+.flash { padding: 10px 14px; border-radius: 8px; margin-bottom: 18px; border: 1px solid; }
+.flash.ok { background: var(--ok-bg); color: var(--ok-ink); border-color: var(--ok-border); }
+.flash.error { background: var(--err-bg); color: var(--err-ink); border-color: var(--err-border); }
+
+/* auth */
+.auth-main { min-height: 100vh; display: grid; place-items: center; padding: 24px; }
+.auth-card { padding: 30px; width: 100%; max-width: 360px; display: flex; flex-direction: column; gap: 16px; }
+.auth-brand { font-size: 22px; font-weight: 750; text-align: center; }
+.auth-brand span { color: var(--muted); font-size: 14px; font-weight: 600; }
+.auth-card .field { gap: 6px; }
+
+@media (max-width: 720px) {
+  .app { grid-template-columns: 1fr; }
+  .sidebar { position: static; height: auto; flex-direction: row; flex-wrap: wrap; align-items: center; }
+  .nav { flex-direction: row; flex-wrap: wrap; }
+  .nav-section { display: none; }
+  .main { padding: 20px 16px; }
+}
