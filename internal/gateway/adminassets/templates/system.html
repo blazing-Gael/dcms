@@ -1,0 +1,37 @@
+{{define "content"}}
+{{with .Data}}
+<div class="page-head"><h1>{{.Title}}</h1></div>
+<div class="card table-wrap">
+  <table class="table">
+    <thead>
+      <tr>{{range .Columns}}<th>{{. | title}}</th>{{end}}{{if .Action}}<th class="col-actions"></th>{{end}}</tr>
+    </thead>
+    <tbody>
+      {{range .Rows}}
+      <tr>
+        {{range .Cells}}<td>{{.}}</td>{{end}}
+        {{if $.Data.Action}}
+        <td class="row-actions">
+          {{if eq $.Data.Action "revoke"}}
+          <form method="post" action="/__admin/system/sessions/{{.ID}}/revoke" onsubmit="return confirm('Revoke this session?');">
+            <input type="hidden" name="csrf" value="{{$.CSRF}}">
+            <button class="btn-link danger" type="submit">Revoke</button>
+          </form>
+          {{else if eq $.Data.Action "retry"}}
+          <form method="post" action="/__admin/system/webhooks/{{.ID}}/retry">
+            <input type="hidden" name="csrf" value="{{$.CSRF}}">
+            <button class="btn-link" type="submit">Retry</button>
+          </form>
+          {{end}}
+        </td>
+        {{end}}
+      </tr>
+      {{else}}
+      <tr><td class="empty" colspan="99">Nothing here.</td></tr>
+      {{end}}
+    </tbody>
+  </table>
+</div>
+{{if .Note}}<p class="muted">{{.Note}}</p>{{end}}
+{{end}}
+{{end}}

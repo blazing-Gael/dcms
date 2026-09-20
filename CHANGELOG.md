@@ -172,9 +172,19 @@ While on **0.x**, minor versions may include breaking changes.
   pipeline as the API — field rules, #27 transitions, hooks, revisions, events — as
   the logged-in principal, and reads honor the access rules (owner-scoped where the
   rule is). Mutating forms are CSRF-protected (double-submit cookie). On by default;
-  disable with `admin: { enabled: false }`. The schema is read-only here (ADR-0035);
-  relations, media, lifecycle, `object_list`, system views, and dashboards are the
-  next phases.
+  disable with `admin: { enabled: false }`. The schema is read-only here (ADR-0035).
+  It also has an admin-role-gated **System** section: full **user management**
+  (create/edit, role assignment, active/disabled status, password reset, sign-out-
+  everywhere, delete — reusing the API's guarded primitives, including the
+  last-active-admin guard so the panel can't lock the instance out of itself); an
+  **access map** (a read-only, schema-derived matrix of who may read/create/update/
+  delete/preview/publish per collection, and read/write per field); **read-only
+  system views** over the engine-managed collections the API hides (the change feed,
+  live sessions, webhook deliveries, scheduled publishes, the notification outbox —
+  secrets like hashes, reset links, and OTP codes are never shown) with two safe
+  recovery actions (revoke a session, retry a dead-lettered webhook); and a read-only
+  **data-model** view. Relations, media upload, lifecycle actions, `object_list`, and
+  dashboards are the next phases.
 - **Public embedding API — run DCMS as a Go library with hooks + custom routes
   (ADR-0031).** The hook mechanism existed but lived under `internal/`, so it was
   only reachable by editing the DCMS tree. A new public package,
