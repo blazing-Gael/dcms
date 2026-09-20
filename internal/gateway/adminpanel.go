@@ -44,7 +44,7 @@ func (s *Server) adminTemplate(page string) *template.Template {
 				return strings.ToUpper(x[:1]) + strings.ReplaceAll(x[1:], "_", " ")
 			},
 		}
-		for _, p := range []string{"overview", "login", "list", "form", "system", "schema"} {
+		for _, p := range []string{"overview", "login", "list", "form", "system", "schema", "users", "user_form", "access"} {
 			t, err := template.New("").Funcs(funcs).ParseFS(adminAssets,
 				"adminassets/templates/layout.html", "adminassets/templates/"+p+".html")
 			if err != nil {
@@ -82,9 +82,20 @@ func (s *Server) mountAdmin(r chi.Router) {
 			r.Post("/c/{collection}/{id}", s.adminUpdate)
 			r.Post("/c/{collection}/{id}/delete", s.adminDelete)
 
-			// System views + data model (ADR-0035 phase 2A) — admin-role only.
+			// System section (ADR-0035 phase 2) — admin-role only.
 			r.Group(func(r chi.Router) {
 				r.Use(s.adminRequireAdminRole)
+				// User management.
+				r.Get("/users", s.adminUsersList)
+				r.Get("/users/new", s.adminUserNewForm)
+				r.Post("/users", s.adminUserCreate)
+				r.Get("/users/{id}", s.adminUserEditForm)
+				r.Post("/users/{id}", s.adminUserUpdate)
+				r.Post("/users/{id}/password", s.adminUserResetPassword)
+				r.Post("/users/{id}/logout-all", s.adminUserLogoutAll)
+				r.Post("/users/{id}/delete", s.adminUserDelete)
+				// Access map + data model + read-only system views.
+				r.Get("/access", s.adminAccessMap)
 				r.Get("/schema", s.adminSchema)
 				r.Get("/system/{view}", s.adminSystemList)
 				r.Post("/system/sessions/{id}/revoke", s.adminRevokeSession)

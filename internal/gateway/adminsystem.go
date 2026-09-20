@@ -31,8 +31,6 @@ func adminSystemViews() []adminSystemView {
 	return []adminSystemView{
 		{Key: "events", Title: "Change events", Coll: schema.EventsCollection, Sort: "-created_at",
 			Columns: []string{schema.EventCollection, schema.EventRecordID, schema.EventType, schema.EventFromStatus, schema.EventToStatus, "created_at", "created_by"}},
-		{Key: "users", Title: "Users", Coll: schema.UsersCollection, Sort: "-created_at",
-			Columns: []string{schema.UserEmail, schema.UserName, schema.UserRoles, schema.UserStatus, "created_at"}},
 		{Key: "sessions", Title: "Sessions", Coll: schema.SessionsCollection, Sort: "-created_at",
 			Columns: []string{schema.SessionUserID, schema.SessionExpiresAt, "created_at"}, Action: "revoke"},
 		{Key: "webhooks", Title: "Webhook deliveries", Coll: schema.WebhookDeliveriesCollection, Sort: "-created_at",

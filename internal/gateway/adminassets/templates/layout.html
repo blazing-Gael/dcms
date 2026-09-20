@@ -18,8 +18,10 @@
       {{range .Nav}}<a class="nav-link" href="/__admin/c/{{.Name}}">{{.Label | title}}</a>{{end}}
       {{if .IsAdmin}}
       <div class="nav-section">System</div>
-      <a class="nav-link" href="/__admin/schema">Data model</a>
+      <a class="nav-link" href="/__admin/users">Users</a>
+      <a class="nav-link" href="/__admin/access">Access map</a>
       {{range .System}}<a class="nav-link" href="/__admin/system/{{.Name}}">{{.Label}}</a>{{end}}
+      <a class="nav-link" href="/__admin/schema">Data model</a>
       {{end}}
     </nav>
     <form class="signout" method="post" action="/__admin/logout">

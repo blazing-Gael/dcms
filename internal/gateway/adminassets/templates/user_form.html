@@ -1,0 +1,57 @@
+{{define "content"}}
+{{with .Data}}
+<div class="page-head">
+  <h1>{{.Title}}</h1>
+  <a class="btn-link" href="/__admin/users">Back to users</a>
+</div>
+<form class="form card" method="post" action="{{.Action}}">
+  <input type="hidden" name="csrf" value="{{$.CSRF}}">
+  <div class="field">
+    <label>Email{{if .IsNew}} <span class="req">*</span>{{end}}</label>
+    {{if .IsNew}}<input type="email" name="email" value="{{.Email}}" required autofocus>
+    {{else}}<input type="email" value="{{.Email}}" disabled>{{end}}
+  </div>
+  {{if .IsNew}}
+  <div class="field"><label>Password <span class="req">*</span></label><input type="password" name="password" required></div>
+  {{end}}
+  <div class="field"><label>Name</label><input type="text" name="name" value="{{.Name}}"></div>
+  <div class="field">
+    <label>Status</label>
+    <select name="status">
+      <option value="active"{{if eq .Status "active"}} selected{{end}}>active</option>
+      <option value="disabled"{{if eq .Status "disabled"}} selected{{end}}>disabled</option>
+    </select>
+  </div>
+  <div class="field">
+    <label>Roles</label>
+    <div class="checks">
+      {{range .Roles}}
+      <label class="check"><input type="checkbox" name="roles" value="{{.Name}}"{{if .Checked}} checked{{end}}> {{.Label}}</label>
+      {{else}}
+      <span class="muted">No roles declared in the schema.</span>
+      {{end}}
+    </div>
+  </div>
+  <div class="form-actions"><button class="btn" type="submit">Save</button></div>
+</form>
+
+{{if not .IsNew}}
+<div class="card user-actions">
+  <h3>Account actions</h3>
+  <form method="post" action="/__admin/users/{{.ID}}/password" class="inline-form">
+    <input type="hidden" name="csrf" value="{{$.CSRF}}">
+    <input type="password" name="password" placeholder="New password">
+    <button class="btn-link" type="submit">Reset password</button>
+  </form>
+  <form method="post" action="/__admin/users/{{.ID}}/logout-all" class="inline-form">
+    <input type="hidden" name="csrf" value="{{$.CSRF}}">
+    <button class="btn-link" type="submit">Sign out everywhere</button>
+  </form>
+  <form method="post" action="/__admin/users/{{.ID}}/delete" class="inline-form" onsubmit="return confirm('Delete this user? This cannot be undone.');">
+    <input type="hidden" name="csrf" value="{{$.CSRF}}">
+    <button class="btn-link danger" type="submit">Delete user</button>
+  </form>
+</div>
+{{end}}
+{{end}}
+{{end}}

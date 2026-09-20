@@ -1,0 +1,24 @@
+{{define "content"}}
+<div class="page-head"><h1>Access map</h1></div>
+<p class="muted">Who may do what, per collection — derived from your schema and read-only here.</p>
+{{range .Data}}
+<div class="card schema-coll">
+  <div class="schema-coll-head"><h2>{{.Collection | title}}</h2></div>
+  <table class="table">
+    <thead><tr><th>Read</th><th>Create</th><th>Update</th><th>Delete</th>{{if .Publish}}<th>Preview</th><th>Publish</th>{{end}}</tr></thead>
+    <tbody><tr>
+      <td>{{.Read}}</td><td>{{.Create}}</td><td>{{.Update}}</td><td>{{.Delete}}</td>
+      {{if .Publish}}<td>{{.Preview}}</td><td>{{.Publish}}</td>{{end}}
+    </tr></tbody>
+  </table>
+  {{if .Fields}}
+  <table class="table">
+    <thead><tr><th>Field</th><th>Read</th><th>Write</th></tr></thead>
+    <tbody>
+      {{range .Fields}}<tr><td><code>{{.Name}}</code></td><td>{{.Read}}</td><td>{{.Write}}</td></tr>{{end}}
+    </tbody>
+  </table>
+  {{end}}
+</div>
+{{end}}
+{{end}}
