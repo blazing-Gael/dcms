@@ -44,7 +44,7 @@ func (s *Server) adminTemplate(page string) *template.Template {
 				return strings.ToUpper(x[:1]) + strings.ReplaceAll(x[1:], "_", " ")
 			},
 		}
-		for _, p := range []string{"overview", "login", "list", "form"} {
+		for _, p := range []string{"overview", "login", "list", "form", "system", "schema"} {
 			t, err := template.New("").Funcs(funcs).ParseFS(adminAssets,
 				"adminassets/templates/layout.html", "adminassets/templates/"+p+".html")
 			if err != nil {
@@ -81,6 +81,15 @@ func (s *Server) mountAdmin(r chi.Router) {
 			r.Get("/c/{collection}/{id}", s.adminEditForm)
 			r.Post("/c/{collection}/{id}", s.adminUpdate)
 			r.Post("/c/{collection}/{id}/delete", s.adminDelete)
+
+			// System views + data model (ADR-0035 phase 2A) — admin-role only.
+			r.Group(func(r chi.Router) {
+				r.Use(s.adminRequireAdminRole)
+				r.Get("/schema", s.adminSchema)
+				r.Get("/system/{view}", s.adminSystemList)
+				r.Post("/system/sessions/{id}/revoke", s.adminRevokeSession)
+				r.Post("/system/webhooks/{id}/retry", s.adminRetryWebhook)
+			})
 		})
 	})
 }
@@ -130,13 +139,15 @@ func (s *Server) adminCSRFValid(r *http.Request) bool {
 // adminPage is the common template data: the shell (nav, signed-in user, CSRF,
 // flash) plus the page-specific Data.
 type adminPage struct {
-	Title string
-	User  string
-	Nav   []adminNavItem
-	CSRF  string
-	Flash string
-	Error string
-	Data  any
+	Title   string
+	User    string
+	Nav     []adminNavItem
+	System  []adminNavItem // system views (admin only)
+	IsAdmin bool
+	CSRF    string
+	Flash   string
+	Error   string
+	Data    any
 }
 
 type adminNavItem struct{ Name, Label string }
@@ -160,6 +171,10 @@ func (s *Server) renderAdmin(w http.ResponseWriter, r *http.Request, page string
 	data.Nav = s.adminNav()
 	if p := principalFromContext(r.Context()); p.Authenticated {
 		data.User = s.adminUserLabel(r, p.ID)
+		if s.isAdmin(p) {
+			data.IsAdmin = true
+			data.System = s.adminSystemNav()
+		}
 	}
 	t := s.adminTemplate(page)
 	if t == nil {

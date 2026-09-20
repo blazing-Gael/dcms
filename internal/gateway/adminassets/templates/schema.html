@@ -1,0 +1,24 @@
+{{define "content"}}
+<div class="page-head"><h1>Data model</h1></div>
+<p class="muted">The schema is defined in your <code>dcms.schema.yaml</code> and is read-only here.</p>
+{{range .Data.Collections}}
+<div class="card schema-coll">
+  <div class="schema-coll-head">
+    <h2>{{.Name | title}}</h2>
+    {{if .Flags}}<span class="badge">{{.Flags}}</span>{{end}}
+  </div>
+  <table class="table">
+    <thead><tr><th>Field</th><th>Type</th><th>Attributes</th></tr></thead>
+    <tbody>
+      {{range .Fields}}
+      <tr>
+        <td><code>{{.Name}}</code></td>
+        <td>{{.Type}}</td>
+        <td class="muted">{{.Attrs}}</td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+</div>
+{{end}}
+{{end}}

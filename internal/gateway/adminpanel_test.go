@@ -19,9 +19,11 @@ const adminPanelSchema = `
 version: "1"
 auth:
   roles:
-    admin: { label: Admin }
+    admin:  { label: Admin }
+    editor: { label: Editor }
 collections:
   posts:
+    events: true
     access:
       read:   authenticated
       create: authenticated
@@ -152,6 +154,62 @@ func TestAdminPanel_LoginAndCRUD(t *testing.T) {
 	}
 	if st, body := getBody(t, c, base+"/__admin/c/posts"); st != http.StatusOK || !strings.Contains(body, "Hello Admin") {
 		t.Fatalf("list should show the new post, got %d", st)
+	}
+}
+
+// login is a small helper that authenticates the jar client as email/password.
+func adminLogin(t *testing.T, c *http.Client, base, email, password string) {
+	t.Helper()
+	getBody(t, c, base+"/__admin/login")
+	tok := csrfToken(t, c, base)
+	resp, err := c.PostForm(base+"/__admin/login", url.Values{"email": {email}, "password": {password}, "csrf": {tok}})
+	if err != nil {
+		t.Fatalf("login: %v", err)
+	}
+	resp.Body.Close()
+}
+
+func TestAdminPanel_SystemViewsAndSchema(t *testing.T) {
+	base, db := newAdminPanelServer(t)
+	seedUser(t, db, "admin@x.com", "correcthorse", "admin")
+	c := jarClient(t)
+	adminLogin(t, c, base, "admin@x.com", "correcthorse")
+
+	// The admin sees the System nav (users/events) and can open the views.
+	st, body := getBody(t, c, base+"/__admin/")
+	if !strings.Contains(body, "System") || !strings.Contains(body, "Data model") {
+		t.Fatalf("admin overview should show the System nav (got status %d)", st)
+	}
+	for _, v := range []string{"events", "users", "sessions", "notifications", "webhooks"} {
+		if st, _ := getBody(t, c, base+"/__admin/system/"+v); st != http.StatusOK {
+			t.Fatalf("system view %s should be 200, got %d", v, st)
+		}
+	}
+	// Users view lists the admin's own account.
+	if st, body := getBody(t, c, base+"/__admin/system/users"); st != http.StatusOK || !strings.Contains(body, "admin@x.com") {
+		t.Fatalf("users view should list admin@x.com, got %d", st)
+	}
+	// Data model page renders the posts collection.
+	if st, body := getBody(t, c, base+"/__admin/schema"); st != http.StatusOK || !strings.Contains(strings.ToLower(body), "posts") {
+		t.Fatalf("schema page should show posts, got %d", st)
+	}
+}
+
+func TestAdminPanel_SystemViewsAdminOnly(t *testing.T) {
+	base, db := newAdminPanelServer(t)
+	seedUser(t, db, "ed@x.com", "correcthorse", "editor") // not admin
+	c := jarClient(t)
+	adminLogin(t, c, base, "ed@x.com", "correcthorse")
+
+	// A non-admin does not see the System nav and is forbidden from its views.
+	if _, body := getBody(t, c, base+"/__admin/"); strings.Contains(body, "/__admin/system/") {
+		t.Fatal("non-admin should not see the System nav")
+	}
+	if st, _ := getBody(t, c, base+"/__admin/system/users"); st != http.StatusForbidden {
+		t.Fatalf("non-admin system view should be 403, got %d", st)
+	}
+	if st, _ := getBody(t, c, base+"/__admin/schema"); st != http.StatusForbidden {
+		t.Fatalf("non-admin schema page should be 403, got %d", st)
 	}
 }
 

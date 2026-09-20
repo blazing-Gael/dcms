@@ -102,6 +102,14 @@ textarea { resize: vertical; font-family: inherit; }
 .flash.ok { background: var(--ok-bg); color: var(--ok-ink); border-color: var(--ok-border); }
 .flash.error { background: var(--err-bg); color: var(--err-ink); border-color: var(--err-border); }
 
+/* schema / badges */
+.schema-coll { margin-bottom: 18px; padding: 0; overflow: hidden; }
+.schema-coll-head { display: flex; align-items: center; gap: 10px; padding: 14px 18px; border-bottom: 1px solid var(--border); }
+.schema-coll-head h2 { font-size: 15px; margin: 0; }
+.schema-coll .table th, .schema-coll .table td { padding: 8px 18px; }
+.badge { font-size: 11px; color: var(--muted); background: var(--surface-2); border: 1px solid var(--border); border-radius: 999px; padding: 2px 9px; font-weight: 600; }
+code { font-family: var(--mono); font-size: 12.5px; background: var(--surface-2); padding: 1px 5px; border-radius: 4px; }
+
 /* auth */
 .auth-main { min-height: 100vh; display: grid; place-items: center; padding: 24px; }
 .auth-card { padding: 30px; width: 100%; max-width: 360px; display: flex; flex-direction: column; gap: 16px; }
