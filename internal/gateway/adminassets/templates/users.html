@@ -1,0 +1,24 @@
+{{define "content"}}
+<div class="page-head">
+  <h1>Users</h1>
+  <a class="btn" href="/__admin/users/new">New user</a>
+</div>
+<div class="card table-wrap">
+  <table class="table">
+    <thead><tr><th>Email</th><th>Name</th><th>Roles</th><th>Status</th><th class="col-actions"></th></tr></thead>
+    <tbody>
+      {{range .Data}}
+      <tr>
+        <td>{{.Email}}</td>
+        <td>{{.Name}}</td>
+        <td class="muted">{{.Roles}}</td>
+        <td>{{.Status}}</td>
+        <td class="row-actions"><a href="/__admin/users/{{.ID}}">Edit</a></td>
+      </tr>
+      {{else}}
+      <tr><td class="empty" colspan="99">No users.</td></tr>
+      {{end}}
+    </tbody>
+  </table>
+</div>
+{{end}}

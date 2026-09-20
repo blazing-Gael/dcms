@@ -19,9 +19,11 @@ const adminPanelSchema = `
 version: "1"
 auth:
   roles:
-    admin: { label: Admin }
+    admin:  { label: Admin }
+    editor: { label: Editor }
 collections:
   posts:
+    events: true
     access:
       read:   authenticated
       create: authenticated
@@ -153,6 +155,147 @@ func TestAdminPanel_LoginAndCRUD(t *testing.T) {
 	if st, body := getBody(t, c, base+"/__admin/c/posts"); st != http.StatusOK || !strings.Contains(body, "Hello Admin") {
 		t.Fatalf("list should show the new post, got %d", st)
 	}
+}
+
+// login is a small helper that authenticates the jar client as email/password.
+func adminLogin(t *testing.T, c *http.Client, base, email, password string) {
+	t.Helper()
+	getBody(t, c, base+"/__admin/login")
+	tok := csrfToken(t, c, base)
+	resp, err := c.PostForm(base+"/__admin/login", url.Values{"email": {email}, "password": {password}, "csrf": {tok}})
+	if err != nil {
+		t.Fatalf("login: %v", err)
+	}
+	resp.Body.Close()
+}
+
+func TestAdminPanel_SystemViewsAndSchema(t *testing.T) {
+	base, db := newAdminPanelServer(t)
+	seedUser(t, db, "admin@x.com", "correcthorse", "admin")
+	c := jarClient(t)
+	adminLogin(t, c, base, "admin@x.com", "correcthorse")
+
+	// The admin sees the System nav (users/events) and can open the views.
+	st, body := getBody(t, c, base+"/__admin/")
+	if !strings.Contains(body, "System") || !strings.Contains(body, "Data model") {
+		t.Fatalf("admin overview should show the System nav (got status %d)", st)
+	}
+	for _, v := range []string{"events", "sessions", "notifications", "webhooks"} {
+		if st, _ := getBody(t, c, base+"/__admin/system/"+v); st != http.StatusOK {
+			t.Fatalf("system view %s should be 200, got %d", v, st)
+		}
+	}
+	// User management page lists the admin's own account.
+	if st, body := getBody(t, c, base+"/__admin/users"); st != http.StatusOK || !strings.Contains(body, "admin@x.com") {
+		t.Fatalf("users page should list admin@x.com, got %d", st)
+	}
+	// Access map renders.
+	if st, body := getBody(t, c, base+"/__admin/access"); st != http.StatusOK || !strings.Contains(strings.ToLower(body), "posts") {
+		t.Fatalf("access map should show posts, got %d", st)
+	}
+	// Data model page renders the posts collection.
+	if st, body := getBody(t, c, base+"/__admin/schema"); st != http.StatusOK || !strings.Contains(strings.ToLower(body), "posts") {
+		t.Fatalf("schema page should show posts, got %d", st)
+	}
+}
+
+func TestAdminPanel_SystemViewsAdminOnly(t *testing.T) {
+	base, db := newAdminPanelServer(t)
+	seedUser(t, db, "ed@x.com", "correcthorse", "editor") // not admin
+	c := jarClient(t)
+	adminLogin(t, c, base, "ed@x.com", "correcthorse")
+
+	// A non-admin does not see the System nav and is forbidden from its views.
+	if _, body := getBody(t, c, base+"/__admin/"); strings.Contains(body, "/__admin/system/") {
+		t.Fatal("non-admin should not see the System nav")
+	}
+	if st, _ := getBody(t, c, base+"/__admin/users"); st != http.StatusForbidden {
+		t.Fatalf("non-admin users page should be 403, got %d", st)
+	}
+	if st, _ := getBody(t, c, base+"/__admin/schema"); st != http.StatusForbidden {
+		t.Fatalf("non-admin schema page should be 403, got %d", st)
+	}
+}
+
+func TestAdminPanel_UserManagement(t *testing.T) {
+	base, db := newAdminPanelServer(t)
+	seedUser(t, db, "admin@x.com", "correcthorse", "admin")
+	c := jarClient(t)
+	adminLogin(t, c, base, "admin@x.com", "correcthorse")
+
+	// Create a user with the editor role.
+	tok := csrfToken(t, c, base)
+	resp, err := c.PostForm(base+"/__admin/users", url.Values{
+		"email": {"jo@x.com"}, "password": {"correcthorse"}, "name": {"Jo"}, "roles": {"editor"}, "csrf": {tok},
+	})
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	resp.Body.Close()
+	u, _ := s0FindUser(t, db, "jo@x.com")
+	if u == nil || rolesContains(t, u, "editor") == false {
+		t.Fatalf("user not created with editor role: %#v", u)
+	}
+
+	// The new user can log in with that password (proves create + hash worked).
+	c2 := jarClient(t)
+	adminLogin(t, c2, base, "jo@x.com", "correcthorse")
+	if st, _ := getBody(t, c2, base+"/__admin/"); st != http.StatusOK {
+		t.Fatalf("new user should be able to sign in, got %d", st)
+	}
+
+	// Last-admin guard: the sole admin cannot strip its own admin role.
+	adminID, _ := s0FindUser(t, db, "admin@x.com")
+	id, _ := adminID["id"].(string)
+	tok = csrfToken(t, c, base)
+	resp, _ = c.PostForm(base+"/__admin/users/"+id, url.Values{
+		"name": {"Admin"}, "status": {"active"}, "roles": {"editor"}, "csrf": {tok}, // drops admin
+	})
+	body := readAll(resp)
+	if !strings.Contains(strings.ToLower(body), "last active admin") {
+		t.Fatalf("last-admin guard should block removing the final admin; body=%s", body[:min(200, len(body))])
+	}
+	// And the admin still has the admin role.
+	adminID, _ = s0FindUser(t, db, "admin@x.com")
+	if !rolesContains(t, adminID, "admin") {
+		t.Fatal("the last admin should keep its admin role after a blocked edit")
+	}
+}
+
+func s0FindUser(t *testing.T, db store.Adapter, email string) (store.Record, bool) {
+	t.Helper()
+	page, err := db.Find(context.Background(), store.Query{
+		Collection: schema.UsersCollection,
+		Filters:    []store.Filter{{Field: schema.UserEmail, Operator: store.Eq, Value: email}},
+		SkipCount:  true,
+	})
+	if err != nil || len(page.Data) == 0 {
+		return nil, false
+	}
+	return page.Data[0], true
+}
+
+func rolesContains(t *testing.T, u store.Record, role string) bool {
+	t.Helper()
+	rs, _ := u[schema.UserRoles].(string)
+	return strings.Contains(rs, `"`+role+`"`)
+}
+
+func readAll(resp *http.Response) string {
+	if resp == nil {
+		return ""
+	}
+	defer resp.Body.Close()
+	var b strings.Builder
+	buf := make([]byte, 4096)
+	for {
+		n, err := resp.Body.Read(buf)
+		b.Write(buf[:n])
+		if err != nil {
+			break
+		}
+	}
+	return b.String()
 }
 
 func TestAdminPanel_CSRFRequired(t *testing.T) {
