@@ -44,7 +44,7 @@ func (s *Server) adminTemplate(page string) *template.Template {
 				return strings.ToUpper(x[:1]) + strings.ReplaceAll(x[1:], "_", " ")
 			},
 		}
-		for _, p := range []string{"overview", "login", "list", "form", "system", "schema", "users", "user_form", "access"} {
+		for _, p := range []string{"overview", "login", "list", "form", "system", "schema", "users", "user_form", "access", "revisions"} {
 			t, err := template.New("").Funcs(funcs).ParseFS(adminAssets,
 				"adminassets/templates/layout.html", "adminassets/templates/"+p+".html")
 			if err != nil {
@@ -81,6 +81,15 @@ func (s *Server) mountAdmin(r chi.Router) {
 			r.Get("/c/{collection}/{id}", s.adminEditForm)
 			r.Post("/c/{collection}/{id}", s.adminUpdate)
 			r.Post("/c/{collection}/{id}/delete", s.adminDelete)
+			// Lifecycle transitions (2B) — reuse the authorized transition pipeline.
+			r.Post("/c/{collection}/{id}/publish", s.adminPublish)
+			r.Post("/c/{collection}/{id}/unpublish", s.adminUnpublish)
+			r.Post("/c/{collection}/{id}/archive", s.adminArchive)
+			r.Post("/c/{collection}/{id}/trash", s.adminTrash)
+			r.Post("/c/{collection}/{id}/restore", s.adminRestore)
+			// Revision history (2B).
+			r.Get("/c/{collection}/{id}/history", s.adminRevisions)
+			r.Post("/c/{collection}/{id}/history/{version}/restore", s.adminRevisionRestore)
 
 			// System section (ADR-0035 phase 2) — admin-role only.
 			r.Group(func(r chi.Router) {

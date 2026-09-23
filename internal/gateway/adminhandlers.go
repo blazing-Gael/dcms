@@ -124,11 +124,14 @@ type adminListData struct {
 	Columns    []string
 	Rows       []adminRow
 	Note       string
+	Lifecycle  bool // collection has a publishing/soft-delete state → show a Status column
+	SoftDelete bool // primary row action is Trash (reversible), not hard Delete
 }
 
 type adminRow struct {
-	ID    string
-	Cells []string
+	ID     string
+	Cells  []string
+	Status adminBadge
 }
 
 func (s *Server) adminList(w http.ResponseWriter, r *http.Request) {
@@ -149,6 +152,7 @@ func (s *Server) adminList(w http.ResponseWriter, r *http.Request) {
 		s.adminError(w, r, "Could not load records.")
 		return
 	}
+	hasLifecycle := cd.Publishing || cd.SoftDelete
 	rows := make([]adminRow, 0, len(page.Data))
 	for _, rec := range page.Data {
 		cd.CoerceResponse(rec)
@@ -157,7 +161,11 @@ func (s *Server) adminList(w http.ResponseWriter, r *http.Request) {
 		for i, col := range cols {
 			cells[i] = adminDisplay(rec[col])
 		}
-		rows = append(rows, adminRow{ID: id, Cells: cells})
+		row := adminRow{ID: id, Cells: cells}
+		if hasLifecycle {
+			row.Status = adminRowStatus(cd, rec)
+		}
+		rows = append(rows, row)
 	}
 	note := ""
 	if page.Total > adminListLimit {
@@ -165,22 +173,28 @@ func (s *Server) adminList(w http.ResponseWriter, r *http.Request) {
 	}
 	s.renderAdmin(w, r, "list", &adminPage{
 		Title: cd.Name, Flash: r.URL.Query().Get("flash"),
-		Data: adminListData{Collection: cd.Name, NewHref: adminBasePath + "/c/" + cd.Name + "/new", Columns: cols, Rows: rows, Note: note},
+		Data: adminListData{
+			Collection: cd.Name, NewHref: adminBasePath + "/c/" + cd.Name + "/new",
+			Columns: cols, Rows: rows, Note: note,
+			Lifecycle: hasLifecycle, SoftDelete: cd.SoftDelete,
+		},
 	})
 }
 
 // ── forms ─────────────────────────────────────────────────────────────────────
 
 type adminField struct {
-	Name, Label, Widget, InputType, Value string
-	Options                               []string
-	Required                              bool
+	Name, Label, Widget, InputType, Value, Help string
+	Options                                     []adminOption
+	Required                                    bool
 }
 
 type adminFormData struct {
-	Collection, Title, Action string
-	Fields                    []adminField
-	Meta                      []adminKV
+	Collection, Title, Action, RecordID string
+	Fields                              []adminField
+	Meta                                []adminKV
+	Lifecycle                           *adminLifecycle
+	Revised                             bool
 }
 
 type adminKV struct{ K, V string }
@@ -192,7 +206,7 @@ func (s *Server) adminNewForm(w http.ResponseWriter, r *http.Request) {
 	}
 	s.renderAdmin(w, r, "form", &adminPage{Title: "New " + cd.Name, Data: adminFormData{
 		Collection: cd.Name, Title: "New " + cd.Name, Action: adminBasePath + "/c/" + cd.Name,
-		Fields: s.adminFields(cd, nil, nil),
+		Fields: s.adminFields(r, cd, nil, nil, true),
 	}})
 }
 
@@ -208,9 +222,10 @@ func (s *Server) adminEditForm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cd.CoerceResponse(rec)
-	s.renderAdmin(w, r, "form", &adminPage{Title: "Edit " + cd.Name, Data: adminFormData{
+	s.renderAdmin(w, r, "form", &adminPage{Title: "Edit " + cd.Name, Flash: r.URL.Query().Get("flash"), Data: adminFormData{
 		Collection: cd.Name, Title: "Edit " + cd.Name, Action: adminBasePath + "/c/" + cd.Name + "/" + id,
-		Fields: s.adminFields(cd, rec, nil), Meta: adminMeta(rec),
+		RecordID: id, Fields: s.adminFields(r, cd, rec, nil, false), Meta: adminMeta(rec),
+		Lifecycle: s.adminLifecycleFor(r, cd, rec), Revised: s.revised(cd.Name),
 	}})
 }
 
@@ -321,65 +336,142 @@ func (s *Server) adminWrite(r *http.Request, cd schema.CollectionDef, id string,
 
 func (s *Server) adminReRenderForm(w http.ResponseWriter, r *http.Request, cd schema.CollectionDef, id string, submitted store.Record, errMsg string) {
 	title, action := "New "+cd.Name, adminBasePath+"/c/"+cd.Name
-	if id != "" {
+	isCreate := id == ""
+	var stored store.Record
+	if !isCreate {
 		title, action = "Edit "+cd.Name, adminBasePath+"/c/"+cd.Name+"/"+id
+		// Reload the stored row so #27 transition options are computed from the real
+		// current value, not the rejected submission.
+		if rec, err := s.db.FindOne(r.Context(), cd.Name, id); err == nil {
+			cd.CoerceResponse(rec)
+			stored = rec
+		}
 	}
 	s.renderAdmin(w, r, "form", &adminPage{Title: title, Error: errMsg, Data: adminFormData{
-		Collection: cd.Name, Title: title, Action: action, Fields: s.adminFields(cd, nil, submitted),
+		Collection: cd.Name, Title: title, Action: action, RecordID: id,
+		Fields: s.adminFields(r, cd, stored, submitted, isCreate),
 	}})
 }
 
 // ── field / value helpers ─────────────────────────────────────────────────────
 
-// adminEditable reports whether a field is edited via a phase-1 form widget.
+// adminEditable reports whether a field is edited via a supported form widget.
+// Relations (belongs-to selects and m2m checklists) are handled in 2B; file,
+// richtext, object_list and json editors are deferred to 2C.
 func adminEditable(f schema.FieldDef) bool {
 	switch f.Type {
 	case schema.TypeString, schema.TypeText, schema.TypeNumber, schema.TypeInteger,
 		schema.TypeDecimal, schema.TypeBoolean, schema.TypeDate, schema.TypeDateTime,
 		schema.TypeEnum, schema.TypeRelation:
-		return f.Type != schema.TypeRelation || !f.Many // belongs-to only (id text); m2m is phase 2
+		return true
 	default:
-		return false // file, richtext, object_list, json → phase 2
+		return false // file, richtext, object_list, json → phase 2C
 	}
 }
 
-// adminFields builds the form widgets. `rec` supplies values on edit; `submitted`
-// (a re-render after an error) takes precedence so the user doesn't lose input.
-func (s *Server) adminFields(cd schema.CollectionDef, rec, submitted store.Record) []adminField {
+// adminFields builds the form widgets. `rec` is the stored record (nil on create),
+// used for current values, m2m selection, and #27 transition gating; `submitted`
+// (a re-render after an error) supplies the values the user just typed so nothing
+// is lost. Enum transition options are always computed from the stored value.
+func (s *Server) adminFields(r *http.Request, cd schema.CollectionDef, rec, submitted store.Record, isCreate bool) []adminField {
+	p := principalFromContext(r.Context())
+	recID, _ := rec["id"].(string)
+	shownVal := func(name string) string {
+		if submitted != nil {
+			return adminRawString(submitted[name])
+		}
+		return adminDisplay(rec[name])
+	}
 	var out []adminField
 	for _, f := range cd.Fields {
 		if !adminEditable(f) {
 			continue
 		}
-		val := ""
-		if submitted != nil {
-			val = adminRawString(submitted[f.Name])
-		} else if rec != nil {
-			val = adminDisplay(rec[f.Name])
-		}
-		af := adminField{Name: f.Name, Label: adminLabel(f), Value: val, Required: f.Required, Widget: "input", InputType: "text"}
+		af := adminField{Name: f.Name, Label: adminLabel(f), Value: shownVal(f.Name), Required: f.Required, Widget: "input", InputType: "text"}
 		switch f.Type {
 		case schema.TypeText:
 			af.Widget = "textarea"
 		case schema.TypeBoolean:
 			af.Widget = "checkbox"
 		case schema.TypeEnum:
-			af.Widget, af.Options = "select", f.Values
+			af.Widget = "select"
+			af.Options = markSelected(s.adminEnumOptions(f, p, rec, isCreate), shownVal(f.Name))
 		case schema.TypeNumber, schema.TypeInteger:
 			af.InputType = "number"
 		case schema.TypeDate:
 			af.InputType = "date"
+		case schema.TypeRelation:
+			if f.Many {
+				// m2m checklist: current selection from the resubmitted form, else the join table.
+				sel := adminSelectedFromSubmitted(submitted, f.Name)
+				if submitted == nil {
+					sel = s.adminM2MSelected(r, cd.Name, f.Name, recID)
+				}
+				af.Widget, af.Value = "multiselect", ""
+				af.Options = s.adminRelationOptions(r, f.Target, sel)
+				af.Help = "Pick any that apply"
+			} else {
+				// belongs-to: a select of human labels, not a raw id.
+				sel := map[string]bool{}
+				if v := strings.TrimSpace(shownVal(f.Name)); v != "" {
+					sel[v] = true
+				}
+				af.Widget, af.Value = "select", ""
+				af.Options = s.adminRelationOptions(r, f.Target, sel)
+			}
 		}
 		out = append(out, af)
 	}
 	return out
 }
 
+// markSelected re-points an option list's selection at `val` (the value the user
+// just submitted), so an error re-render preselects their choice, not the stored one.
+func markSelected(opts []adminOption, val string) []adminOption {
+	if val == "" {
+		return opts
+	}
+	for i := range opts {
+		opts[i].Selected = opts[i].Value == val
+	}
+	return opts
+}
+
+// adminSelectedFromSubmitted reads a resubmitted m2m field ([]any of ids) back into
+// a selected-set, so a validation error doesn't lose the user's picks.
+func adminSelectedFromSubmitted(submitted store.Record, name string) map[string]bool {
+	out := map[string]bool{}
+	if submitted == nil {
+		return out
+	}
+	if arr, ok := submitted[name].([]any); ok {
+		for _, e := range arr {
+			if id, ok := e.(string); ok && id != "" {
+				out[id] = true
+			}
+		}
+	}
+	return out
+}
+
 // adminParseForm reads the submitted editable fields into a typed record.
 func (s *Server) adminParseForm(cd schema.CollectionDef, r *http.Request, isCreate bool) store.Record {
+	_ = r.ParseForm() // populate r.Form so multi-valued m2m checklists are readable
 	data := store.Record{}
 	for _, f := range cd.Fields {
 		if !adminEditable(f) {
+			continue
+		}
+		// A many-to-many field arrives as repeated values; always include it (even
+		// empty) so unchecking every box clears the links.
+		if f.Type == schema.TypeRelation && f.Many {
+			ids := make([]any, 0, len(r.Form[f.Name]))
+			for _, v := range r.Form[f.Name] {
+				if v = strings.TrimSpace(v); v != "" {
+					ids = append(ids, v)
+				}
+			}
+			data[f.Name] = ids
 			continue
 		}
 		raw := strings.TrimSpace(r.FormValue(f.Name))
@@ -488,11 +580,18 @@ func (s *Server) adminCan(r *http.Request, collection string, action schema.Acce
 }
 
 func (s *Server) adminCanRecord(r *http.Request, collection, id string, action schema.AccessAction) bool {
+	return s.adminCanRule(r, collection, id, s.collections[collection].AccessRule(action))
+}
+
+// adminCanRule authorizes a record write against an explicit rule (an update/delete
+// default, or the collection's `publish` rule for a lifecycle transition), without
+// writing any HTTP response — the admin renders HTML on its own paths.
+func (s *Server) adminCanRule(r *http.Request, collection, id string, rule schema.Rule) bool {
 	if !s.authEnabled() {
 		return true
 	}
 	p := principalFromContext(r.Context())
-	switch d, field := evalRule(s.collections[collection].AccessRule(action), p); d {
+	switch d, field := evalRule(rule, p); d {
 	case allow:
 		return true
 	case ownerScope:

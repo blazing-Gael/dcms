@@ -4,6 +4,26 @@
   <h1>{{.Title}}</h1>
   <a class="btn-link" href="/__admin/c/{{.Collection}}">Back to {{.Collection | title}}</a>
 </div>
+
+{{if .Lifecycle}}
+<div class="card lifecycle">
+  <div class="lifecycle-status">
+    {{if .Lifecycle.Status.Label}}<span class="badge badge-{{.Lifecycle.Status.CSS}}">{{.Lifecycle.Status.Label}}</span>{{end}}
+    <span class="lifecycle-help">{{.Lifecycle.Help}}</span>
+  </div>
+  {{if .Lifecycle.Actions}}
+  <div class="lifecycle-actions">
+    {{range .Lifecycle.Actions}}
+    <form method="post" action="/__admin/c/{{$.Data.Collection}}/{{$.Data.RecordID}}/{{.Verb}}"{{if .Confirm}} onsubmit="return confirm('{{.Confirm}}');"{{end}}>
+      <input type="hidden" name="csrf" value="{{$.CSRF}}">
+      <button class="btn{{if eq .Style "primary"}}{{else if eq .Style "danger"}} btn-link danger{{else}} btn-secondary{{end}}" type="submit">{{.Label}}</button>
+    </form>
+    {{end}}
+  </div>
+  {{end}}
+</div>
+{{end}}
+
 <form class="form card" method="post" action="{{.Action}}">
   <input type="hidden" name="csrf" value="{{$.CSRF}}">
   {{range .Fields}}
@@ -12,26 +32,50 @@
     {{if eq .Widget "textarea"}}
       <textarea id="f_{{.Name}}" name="{{.Name}}" rows="5" {{if .Required}}required{{end}}>{{.Value}}</textarea>
     {{else if eq .Widget "select"}}
-      {{$fv := .Value}}
       <select id="f_{{.Name}}" name="{{.Name}}">
         {{if not .Required}}<option value="">—</option>{{end}}
-        {{range .Options}}<option value="{{.}}"{{if eq . $fv}} selected{{end}}>{{.}}</option>{{end}}
+        {{range .Options}}<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}
       </select>
+    {{else if eq .Widget "multiselect"}}
+      {{$fname := .Name}}
+      <div class="checklist">
+        {{range .Options}}
+        <label class="check"><input type="checkbox" name="{{$fname}}" value="{{.Value}}"{{if .Selected}} checked{{end}}> {{.Label}}</label>
+        {{else}}
+        <span class="muted">Nothing to link yet.</span>
+        {{end}}
+      </div>
     {{else if eq .Widget "checkbox"}}
       <input type="checkbox" id="f_{{.Name}}" name="{{.Name}}" value="true"{{if eq .Value "true"}} checked{{end}}>
     {{else}}
       <input type="{{.InputType}}" id="f_{{.Name}}" name="{{.Name}}" value="{{.Value}}" {{if .Required}}required{{end}}>
     {{end}}
+    {{if .Help}}<span class="field-help">{{.Help}}</span>{{end}}
   </div>
   {{end}}
   <div class="form-actions">
     <button class="btn" type="submit">Save</button>
     <a class="btn-link" href="/__admin/c/{{.Collection}}">Cancel</a>
+    {{if .Revised}}<a class="btn-link" href="/__admin/c/{{.Collection}}/{{.RecordID}}/history">History</a>{{end}}
   </div>
 </form>
+
 {{if .Meta}}
 <div class="card meta">
   {{range .Meta}}<div class="meta-row"><span class="meta-k">{{.K}}</span><span class="meta-v">{{.V}}</span></div>{{end}}
+</div>
+{{end}}
+
+{{if and .Lifecycle .Lifecycle.HardDelete}}
+<div class="card danger-zone">
+  <div>
+    <strong>Delete permanently</strong>
+    <p class="muted">This removes the record for good and cannot be undone.</p>
+  </div>
+  <form method="post" action="/__admin/c/{{.Collection}}/{{.RecordID}}/delete" onsubmit="return confirm('Permanently delete this record? This cannot be undone.');">
+    <input type="hidden" name="csrf" value="{{$.CSRF}}">
+    <button class="btn-link danger" type="submit">Delete permanently</button>
+  </form>
 </div>
 {{end}}
 {{end}}

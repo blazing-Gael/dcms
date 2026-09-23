@@ -119,6 +119,34 @@ code { font-family: var(--mono); font-size: 12.5px; background: var(--surface-2)
 .inline-form { display: inline-flex; align-items: center; gap: 8px; margin-right: 18px; margin-bottom: 8px; }
 .inline-form input { width: auto; }
 
+/* status badges (semantic, translucent so one rule works in both themes) */
+.badge-draft     { color: #92600a; background: rgba(217,164,6,.14);  border-color: rgba(217,164,6,.35); }
+.badge-published { color: #0a7d4b; background: rgba(16,163,95,.14);  border-color: rgba(16,163,95,.35); }
+.badge-scheduled { color: #2563eb; background: rgba(37,99,235,.14);  border-color: rgba(37,99,235,.35); }
+.badge-archived  { color: var(--muted); }
+.badge-trashed   { color: #b42318; background: rgba(220,38,38,.12);  border-color: rgba(220,38,38,.32); }
+@media (prefers-color-scheme: dark) {
+  .badge-draft { color: #f5c451; } .badge-published { color: #5fd6a0; }
+  .badge-scheduled { color: #7ea8ff; } .badge-trashed { color: #f3a29a; }
+}
+
+/* lifecycle panel (edit page) */
+.lifecycle { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; padding: 14px 18px; margin-bottom: 18px; }
+.lifecycle-status { display: flex; align-items: center; gap: 10px; }
+.lifecycle-help { color: var(--muted); font-size: 13px; }
+.lifecycle-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.lifecycle-actions form { display: inline; }
+.btn-secondary { background: var(--surface-2); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 9px 16px; font: inherit; font-weight: 600; cursor: pointer; }
+.btn-secondary:hover { filter: brightness(0.98); }
+
+.field-help { font-weight: 400; font-size: 12px; color: var(--muted); }
+.checklist { display: flex; flex-direction: column; gap: 6px; max-height: 220px; overflow: auto; padding: 4px 0; }
+.checklist .check input { width: auto; }
+
+/* danger zone */
+.danger-zone { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; padding: 16px 18px; margin-top: 18px; border-color: var(--err-border); }
+.danger-zone p { margin: 4px 0 0; font-size: 13px; }
+
 /* auth */
 .auth-main { min-height: 100vh; display: grid; place-items: center; padding: 24px; }
 .auth-card { padding: 30px; width: 100%; max-width: 360px; display: flex; flex-direction: column; gap: 16px; }

@@ -1,0 +1,35 @@
+{{define "content"}}
+{{with .Data}}
+<div class="page-head">
+  <h1>History</h1>
+  <a class="btn-link" href="/__admin/c/{{.Collection}}/{{.RecordID}}">Back to record</a>
+</div>
+<div class="card table-wrap">
+  <table class="table">
+    <thead>
+      <tr><th>Version</th><th>Change</th><th>When</th><th>By</th><th class="col-actions"></th></tr>
+    </thead>
+    <tbody>
+      {{$coll := .Collection}}{{$rec := .RecordID}}
+      {{range .Rows}}
+      <tr>
+        <td>{{.Version}}</td>
+        <td>{{.Operation | title}}</td>
+        <td>{{.When}}</td>
+        <td>{{.By}}</td>
+        <td class="row-actions">
+          <form method="post" action="/__admin/c/{{$coll}}/{{$rec}}/history/{{.Version}}/restore" onsubmit="return confirm('Restore this version? The current content is saved to history first.');">
+            <input type="hidden" name="csrf" value="{{$.CSRF}}">
+            <button class="btn-link" type="submit">Restore</button>
+          </form>
+        </td>
+      </tr>
+      {{else}}
+      <tr><td class="empty" colspan="99">No history yet.</td></tr>
+      {{end}}
+    </tbody>
+  </table>
+</div>
+<p class="muted">Restoring brings back a version's content. Its status and publish state are left as they are now.</p>
+{{end}}
+{{end}}
