@@ -7,18 +7,34 @@
 <div class="card table-wrap">
   <table class="table">
     <thead>
-      <tr>{{range .Columns}}<th>{{. | title}}</th>{{end}}<th class="col-actions"></th></tr>
+      <tr>{{range .Columns}}<th>{{. | title}}</th>{{end}}{{if .Lifecycle}}<th>Status</th>{{end}}<th class="col-actions"></th></tr>
     </thead>
     <tbody>
+      {{$coll := .Collection}}{{$soft := .SoftDelete}}
       {{range .Rows}}
       <tr>
         {{range .Cells}}<td>{{.}}</td>{{end}}
+        {{if $.Data.Lifecycle}}<td>{{if .Status.Label}}<span class="badge badge-{{.Status.CSS}}">{{.Status.Label}}</span>{{end}}</td>{{end}}
         <td class="row-actions">
-          <a href="/__admin/c/{{$.Data.Collection}}/{{.ID}}">Edit</a>
-          <form method="post" action="/__admin/c/{{$.Data.Collection}}/{{.ID}}/delete" onsubmit="return confirm('Delete this record? This cannot be undone.');">
-            <input type="hidden" name="csrf" value="{{$.CSRF}}">
-            <button class="btn-link danger" type="submit">Delete</button>
-          </form>
+          <a href="/__admin/c/{{$coll}}/{{.ID}}">Edit</a>
+          {{if $soft}}
+            {{if eq .Status.CSS "trashed"}}
+            <form method="post" action="/__admin/c/{{$coll}}/{{.ID}}/restore">
+              <input type="hidden" name="csrf" value="{{$.CSRF}}">
+              <button class="btn-link" type="submit">Restore</button>
+            </form>
+            {{else}}
+            <form method="post" action="/__admin/c/{{$coll}}/{{.ID}}/trash">
+              <input type="hidden" name="csrf" value="{{$.CSRF}}">
+              <button class="btn-link" type="submit">Trash</button>
+            </form>
+            {{end}}
+          {{else}}
+            <form method="post" action="/__admin/c/{{$coll}}/{{.ID}}/delete" onsubmit="return confirm('Delete this record? This cannot be undone.');">
+              <input type="hidden" name="csrf" value="{{$.CSRF}}">
+              <button class="btn-link danger" type="submit">Delete</button>
+            </form>
+          {{end}}
         </td>
       </tr>
       {{else}}

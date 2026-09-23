@@ -183,8 +183,22 @@ While on **0.x**, minor versions may include breaking changes.
   live sessions, webhook deliveries, scheduled publishes, the notification outbox —
   secrets like hashes, reset links, and OTP codes are never shown) with two safe
   recovery actions (revoke a session, retry a dead-lettered webhook); and a read-only
-  **data-model** view. Relations, media upload, lifecycle actions, `object_list`, and
-  dashboards are the next phases.
+  **data-model** view. **Phase 2B** adds the editing widgets that make the panel
+  usable by a non-technical client handed a finished site: **relation pickers** —
+  belongs-to fields are a dropdown of human labels (inferred from the schema, no
+  config: `title→name→label→slug→first text field→id`) instead of raw UUIDs, and
+  many-to-many fields a checklist, both scoped to what the caller may read;
+  **lifecycle clarity** — every record wears a plain-language status badge
+  (Draft/Published/Scheduled/Archived/Trashed) and going live is one **Publish**
+  button with a "not visible on your site yet" explanation, reusing the authorized
+  transition pipeline (publish/unpublish/archive, `publish`-rule gated per #23);
+  **safe deletes** — soft-delete collections show **Trash**/**Restore** as the
+  primary action and quarantine permanent deletion behind a confirm in an edit-page
+  danger zone; **#27 transition-aware selects** — an enum with role-gated transitions
+  offers only the next states the caller may actually set, so the panel never leads
+  someone into a 403; and **revision history** — view a record's versions and restore
+  one (content-only, preview-gated like the API). Media upload, `object_list`, rich
+  text, and dashboards are the next phases.
 - **Public embedding API — run DCMS as a Go library with hooks + custom routes
   (ADR-0031).** The hook mechanism existed but lived under `internal/`, so it was
   only reachable by editing the DCMS tree. A new public package,
