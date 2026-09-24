@@ -8,6 +8,8 @@ While on **0.x**, minor versions may include breaking changes.
 
 ## [Unreleased]
 
+## [0.1.0-beta.4] - 2026-09-24
+
 ### Security
 - **Value-scoped write rules — role-gated enum transitions (issue #27, ADR-0034).**
   A field's `write` rule was all-or-nothing: a role could set any value of a field or
@@ -869,6 +871,8 @@ language and API may still change before 1.0.
   module) so the binary, HTTP API, and SDKs are the only public surface; the Go
   package API stays unstable until a facade is deliberately promoted out.
 
-[Unreleased]: https://github.com/blazing-Gael/dcms/compare/v0.1.0-beta.2...HEAD
+[Unreleased]: https://github.com/blazing-Gael/dcms/compare/v0.1.0-beta.4...HEAD
+[0.1.0-beta.4]: https://github.com/blazing-Gael/dcms/releases/tag/v0.1.0-beta.4
+[0.1.0-beta.3]: https://github.com/blazing-Gael/dcms/releases/tag/v0.1.0-beta.3
 [0.1.0-beta.2]: https://github.com/blazing-Gael/dcms/releases/tag/v0.1.0-beta.2
 [0.1.0-beta.1]: https://github.com/blazing-Gael/dcms/releases/tag/v0.1.0-beta.1
