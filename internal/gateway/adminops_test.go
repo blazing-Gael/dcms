@@ -112,6 +112,70 @@ func TestAdminPanel_RoleAllowlist(t *testing.T) {
 	}
 }
 
+const adminNavScopeSchema = `
+version: "1"
+auth:
+  roles:
+    admin:  { label: Admin }
+    editor: { label: Editor }
+collections:
+  articles:
+    access: { read: authenticated, create: authenticated, update: authenticated, delete: authenticated }
+    fields:
+      title: { type: string, required: true }
+  secrets:
+    access: { read: [admin], create: [admin], update: [admin], delete: [admin] }
+    fields:
+      value: { type: string }
+`
+
+func TestAdminPanel_NavHonorsAccessRules(t *testing.T) {
+	def, err := schema.Parse([]byte(adminNavScopeSchema))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	db, err := sqlite.New(sqlite.Config{Path: ":memory:"})
+	if err != nil {
+		t.Fatalf("sqlite.New: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	ctx := context.Background()
+	for _, meta := range def.CollectionMetas() {
+		plan, _ := db.Diff(ctx, meta)
+		if err := db.Migrate(ctx, plan); err != nil {
+			t.Fatalf("Migrate: %v", err)
+		}
+	}
+	srv := httptest.NewServer(gateway.New(def, db, nil, gateway.Options{Authenticator: gateway.NewSessionAuthenticator(db)}).Handler())
+	t.Cleanup(srv.Close)
+	base := srv.URL
+	seedUser(t, db, "admin@x.com", "correcthorse", "admin")
+	seedUser(t, db, "ed@x.com", "correcthorse", "editor")
+
+	// The editor can read articles but not secrets → the sidebar shows Articles only.
+	ce := jarClient(t)
+	adminLogin(t, ce, base, "ed@x.com", "correcthorse")
+	_, body := getBody(t, ce, base+"/__admin/")
+	if !strings.Contains(body, "/__admin/c/articles") {
+		t.Fatal("editor should see the articles nav link")
+	}
+	if strings.Contains(body, "/__admin/c/secrets") {
+		t.Fatal("editor must NOT see the secrets nav link (no read access)")
+	}
+	// And is refused if they navigate to it directly (rules still enforced).
+	if st, _ := getBody(t, ce, base+"/__admin/c/secrets"); st != http.StatusForbidden {
+		t.Fatalf("editor hitting secrets should be 403, got %d", st)
+	}
+
+	// The admin sees both.
+	ca := jarClient(t)
+	adminLogin(t, ca, base, "admin@x.com", "correcthorse")
+	_, adminBody := getBody(t, ca, base+"/__admin/")
+	if !strings.Contains(adminBody, "/__admin/c/articles") || !strings.Contains(adminBody, "/__admin/c/secrets") {
+		t.Fatal("admin should see both collections in the nav")
+	}
+}
+
 func TestAdminPanel_IfMatchGuardsConcurrentEdit(t *testing.T) {
 	base, db := newAdminOpsServer(t, nil)
 	seedUser(t, db, "admin@x.com", "correcthorse", "admin")

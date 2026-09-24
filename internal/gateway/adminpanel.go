@@ -222,14 +222,21 @@ type adminPage struct {
 
 type adminNavItem struct{ Name, Label string }
 
-// adminNav lists the collections shown in the sidebar — routable (non-system)
-// collections for now (ADR-0035 phase 1).
-func (s *Server) adminNav() []adminNavItem {
+// adminNav lists the collections shown in the sidebar: routable (non-system)
+// collections the caller may actually read. Hiding the ones their role can't read —
+// the same access rules the API enforces — is how per-role panel scoping works
+// (ADR-0035): an editor with read access only to `articles` sees only Articles, with
+// no separate nav config to drift from the rules. Matches the overview's filter.
+func (s *Server) adminNav(r *http.Request) []adminNavItem {
 	var items []adminNavItem
 	for _, c := range s.schema.Collections {
-		if s.routableCollection(c.Name) {
-			items = append(items, adminNavItem{Name: c.Name, Label: c.Name})
+		if !s.routableCollection(c.Name) {
+			continue
 		}
+		if _, ok := s.adminReadFilters(r, c.Name); !ok {
+			continue // caller can't read this collection at all → hide it
+		}
+		items = append(items, adminNavItem{Name: c.Name, Label: c.Name})
 	}
 	return items
 }
@@ -238,7 +245,7 @@ func (s *Server) adminNav() []adminNavItem {
 // emits a half-written page. It fills the shell fields (CSRF cookie, user, nav).
 func (s *Server) renderAdmin(w http.ResponseWriter, r *http.Request, page string, data *adminPage) {
 	data.CSRF = s.adminCSRF(w, r)
-	data.Nav = s.adminNav()
+	data.Nav = s.adminNav(r)
 	if p := principalFromContext(r.Context()); p.Authenticated {
 		data.User = s.adminUserLabel(r, p.ID)
 		if s.isAdmin(p) {
