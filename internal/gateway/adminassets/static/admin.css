@@ -159,6 +159,14 @@ code { font-family: var(--mono); font-size: 12.5px; background: var(--surface-2)
 .readonly-body pre { background: var(--surface-2); padding: 12px; border-radius: 8px; overflow: auto; font-family: var(--mono); font-size: 12.5px; }
 .admin-media { max-width: 100%; height: auto; border-radius: 8px; margin: 6px 0; }
 
+/* object_list editor */
+.ol > label { margin-bottom: 4px; }
+.ol-rows { display: flex; flex-direction: column; gap: 12px; }
+.ol-row { position: relative; padding: 14px; padding-right: 84px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2); display: flex; flex-direction: column; gap: 10px; }
+.ol-row .field { gap: 4px; }
+.ol-remove { position: absolute; top: 12px; right: 12px; }
+.ol-add { align-self: flex-start; margin-top: 10px; }
+
 /* file widget */
 .file-current { margin-bottom: 8px; }
 .file-current .admin-media { max-height: 160px; width: auto; }

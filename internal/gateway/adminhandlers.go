@@ -203,6 +203,7 @@ type adminFormData struct {
 	Collection, Title, Action, RecordID string
 	Version                             string // current _version, for the If-Match hidden field
 	Fields                              []adminField
+	ObjectLists                         []adminObjectListData
 	ReadOnly                            []adminReadField
 	Meta                                []adminKV
 	Lifecycle                           *adminLifecycle
@@ -230,7 +231,8 @@ func (s *Server) adminNewForm(w http.ResponseWriter, r *http.Request) {
 	}
 	s.renderAdmin(w, r, "form", &adminPage{Title: "New " + cd.Name, Data: adminFormData{
 		Collection: cd.Name, Title: "New " + cd.Name, Action: adminBasePath + "/c/" + cd.Name,
-		Fields: s.adminFields(r, cd, nil, nil, true), Multipart: s.adminHasFileWidget(cd),
+		Fields: s.adminFields(r, cd, nil, nil, true), ObjectLists: s.adminObjectLists(r, cd, nil, nil),
+		Multipart: s.adminHasFileWidget(cd),
 	}})
 }
 
@@ -255,8 +257,9 @@ func (s *Server) renderAdminEdit(w http.ResponseWriter, r *http.Request, cd sche
 	cd.CoerceResponse(rec)
 	data := adminFormData{
 		Collection: cd.Name, Title: "Edit " + cd.Name, Action: adminBasePath + "/c/" + cd.Name + "/" + id,
-		RecordID: id, Fields: s.adminFields(r, cd, rec, nil, false), ReadOnly: s.adminReadOnlyFields(r, cd, rec),
-		Meta: adminMeta(rec), Lifecycle: s.adminLifecycleFor(r, cd, rec), Revised: s.revised(cd.Name),
+		RecordID: id, Fields: s.adminFields(r, cd, rec, nil, false), ObjectLists: s.adminObjectLists(r, cd, rec, nil),
+		ReadOnly: s.adminReadOnlyFields(r, cd, rec),
+		Meta:     adminMeta(rec), Lifecycle: s.adminLifecycleFor(r, cd, rec), Revised: s.revised(cd.Name),
 		Multipart: s.adminHasFileWidget(cd),
 	}
 	if s.versioned(cd.Name) {
@@ -426,7 +429,9 @@ func (s *Server) adminReRenderForm(w http.ResponseWriter, r *http.Request, cd sc
 	}
 	data := adminFormData{
 		Collection: cd.Name, Title: title, Action: action, RecordID: id,
-		Fields: s.adminFields(r, cd, stored, submitted, isCreate), Multipart: s.adminHasFileWidget(cd),
+		Fields:      s.adminFields(r, cd, stored, submitted, isCreate),
+		ObjectLists: s.adminObjectLists(r, cd, stored, submitted),
+		Multipart:   s.adminHasFileWidget(cd),
 	}
 	if !isCreate && s.versioned(cd.Name) {
 		// Preserve the version the form was loaded at, so the resubmit still carries a
@@ -595,6 +600,7 @@ func (s *Server) adminParseForm(cd schema.CollectionDef, r *http.Request, isCrea
 			data[f.Name] = raw
 		}
 	}
+	s.adminParseObjectLists(cd, r, data)
 	return data
 }
 

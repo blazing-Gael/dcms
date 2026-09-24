@@ -1,3 +1,50 @@
+{{define "adminfield"}}
+  {{if eq .Widget "textarea"}}
+    <textarea id="f_{{.Name}}" name="{{.Name}}" rows="5" {{if .Required}}required{{end}}>{{.Value}}</textarea>
+  {{else if eq .Widget "select"}}
+    <select id="f_{{.Name}}" name="{{.Name}}">
+      {{if not .Required}}<option value="">—</option>{{end}}
+      {{range .Options}}<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}
+    </select>
+  {{else if eq .Widget "multiselect"}}
+    {{$fname := .Name}}
+    <div class="checklist">
+      {{range .Options}}
+      <label class="check"><input type="checkbox" name="{{$fname}}" value="{{.Value}}"{{if .Selected}} checked{{end}}> {{.Label}}</label>
+      {{else}}
+      <span class="muted">Nothing to link yet.</span>
+      {{end}}
+    </div>
+  {{else if eq .Widget "checkbox"}}
+    <input type="checkbox" id="f_{{.Name}}" name="{{.Name}}" value="true"{{if eq .Value "true"}} checked{{end}}>
+  {{else if eq .Widget "file"}}
+    {{$fname := .Name}}
+    {{if .Preview}}<div class="file-current">{{.Preview}}</div>{{end}}
+    <input type="file" name="__file_{{.Name}}">
+    {{if .Options}}
+    <select name="{{.Name}}" aria-label="Choose from library">
+      <option value="">— none —</option>
+      {{range .Options}}<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}
+    </select>
+    {{end}}
+    {{if not .Required}}<label class="check file-clear"><input type="checkbox" name="__clear_{{$fname}}" value="1"> Remove</label>{{end}}
+  {{else}}
+    <input type="{{.InputType}}" id="f_{{.Name}}" name="{{.Name}}" value="{{.Value}}" {{if .Required}}required{{end}}>
+  {{end}}
+{{end}}
+
+{{define "objectrow"}}
+<div class="ol-row" data-ol-row>
+  {{range .}}
+  <div class="field">
+    <label for="f_{{.Name}}">{{.Label}}{{if .Required}} <span class="req">*</span>{{end}}</label>
+    {{template "adminfield" .}}
+  </div>
+  {{end}}
+  <button type="button" class="btn-link danger ol-remove" data-ol-remove>Remove</button>
+</div>
+{{end}}
+
 {{define "content"}}
 {{with .Data}}
 <div class="page-head">
@@ -30,41 +77,23 @@
   {{range .Fields}}
   <div class="field">
     <label for="f_{{.Name}}">{{.Label}}{{if .Required}} <span class="req">*</span>{{end}}</label>
-    {{if eq .Widget "textarea"}}
-      <textarea id="f_{{.Name}}" name="{{.Name}}" rows="5" {{if .Required}}required{{end}}>{{.Value}}</textarea>
-    {{else if eq .Widget "select"}}
-      <select id="f_{{.Name}}" name="{{.Name}}">
-        {{if not .Required}}<option value="">—</option>{{end}}
-        {{range .Options}}<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}
-      </select>
-    {{else if eq .Widget "multiselect"}}
-      {{$fname := .Name}}
-      <div class="checklist">
-        {{range .Options}}
-        <label class="check"><input type="checkbox" name="{{$fname}}" value="{{.Value}}"{{if .Selected}} checked{{end}}> {{.Label}}</label>
-        {{else}}
-        <span class="muted">Nothing to link yet.</span>
-        {{end}}
-      </div>
-    {{else if eq .Widget "checkbox"}}
-      <input type="checkbox" id="f_{{.Name}}" name="{{.Name}}" value="true"{{if eq .Value "true"}} checked{{end}}>
-    {{else if eq .Widget "file"}}
-      {{$fname := .Name}}
-      {{if .Preview}}<div class="file-current">{{.Preview}}</div>{{end}}
-      <input type="file" name="__file_{{.Name}}">
-      {{if .Options}}
-      <select name="{{.Name}}" aria-label="Choose from library">
-        <option value="">— none —</option>
-        {{range .Options}}<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}
-      </select>
-      {{end}}
-      {{if not .Required}}<label class="check file-clear"><input type="checkbox" name="__clear_{{$fname}}" value="1"> Remove</label>{{end}}
-    {{else}}
-      <input type="{{.InputType}}" id="f_{{.Name}}" name="{{.Name}}" value="{{.Value}}" {{if .Required}}required{{end}}>
-    {{end}}
+    {{template "adminfield" .}}
     {{if .Help}}<span class="field-help">{{.Help}}</span>{{end}}
   </div>
   {{end}}
+
+  {{range .ObjectLists}}
+  <div class="field ol" data-ol data-ol-count="{{.Count}}">
+    <label>{{.Label}}{{if .Help}} <span class="field-help">({{.Help}})</span>{{end}}</label>
+    <input type="hidden" name="__ol_{{.Name}}" value="1">
+    <div class="ol-rows" data-ol-rows>
+      {{range .Rows}}{{template "objectrow" .}}{{end}}
+    </div>
+    <template data-ol-template>{{template "objectrow" .Template}}</template>
+    <button type="button" class="btn-secondary ol-add" data-ol-add>Add {{.Label}}</button>
+  </div>
+  {{end}}
+
   <div class="form-actions">
     <button class="btn" type="submit">Save</button>
     <a class="btn-link" href="/__admin/c/{{.Collection}}">Cancel</a>
