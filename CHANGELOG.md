@@ -228,7 +228,11 @@ While on **0.x**, minor versions may include breaking changes.
   it), and the array is reconstructed from indexed field names on submit and validated
   by the normal pipeline. Rich-text editing and dashboards are the next phases; for
   now richtext stays read-only in the panel (authors write it from the app), which
-  suits a site whose writers compose on the front end.
+  suits a site whose writers compose on the front end. The **sidebar now honors the
+  access rules**: a collection a role can't read is hidden from the nav (matching the
+  overview), so per-role panel scoping is expressed entirely through the schema's
+  `access` rules — an editor with read access to only some collections sees only
+  those, with no separate nav config to drift from the rules.
 - **Public embedding API — run DCMS as a Go library with hooks + custom routes
   (ADR-0031).** The hook mechanism existed but lived under `internal/`, so it was
   only reachable by editing the DCMS tree. A new public package,
