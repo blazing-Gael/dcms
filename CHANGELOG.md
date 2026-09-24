@@ -221,8 +221,14 @@ While on **0.x**, minor versions may include breaking changes.
   and the media access rule still apply; single-valued file fields only (many-file
   stays a picker), and file fields are read-only when no blob backend is configured.
   The authed panel's body cap moves to the media-upload limit for these forms (login
-  keeps the small cap). `object_list` editing, rich-text editing, and dashboards are
-  the next phases.
+  keeps the small cap). 2C also adds an **`object_list` editor**: a repeatable group of
+  fields edited as rows, each rendering the inner field widgets; a small self-hosted
+  script (`object_list.js`) clones a hidden template row to add and drops a row to
+  remove (existing rows still render and submit with JS off — only add/remove needs
+  it), and the array is reconstructed from indexed field names on submit and validated
+  by the normal pipeline. Rich-text editing and dashboards are the next phases; for
+  now richtext stays read-only in the panel (authors write it from the app), which
+  suits a site whose writers compose on the front end.
 - **Public embedding API — run DCMS as a Go library with hooks + custom routes
   (ADR-0031).** The hook mechanism existed but lived under `internal/`, so it was
   only reachable by editing the DCMS tree. A new public package,
