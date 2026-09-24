@@ -159,6 +159,12 @@ code { font-family: var(--mono); font-size: 12.5px; background: var(--surface-2)
 .readonly-body pre { background: var(--surface-2); padding: 12px; border-radius: 8px; overflow: auto; font-family: var(--mono); font-size: 12.5px; }
 .admin-media { max-width: 100%; height: auto; border-radius: 8px; margin: 6px 0; }
 
+/* file widget */
+.file-current { margin-bottom: 8px; }
+.file-current .admin-media { max-height: 160px; width: auto; }
+.file-clear { margin-top: 6px; font-weight: 500; }
+.file-clear input { width: auto; }
+
 /* auth */
 .auth-main { min-height: 100vh; display: grid; place-items: center; padding: 24px; }
 .auth-card { padding: 30px; width: 100%; max-width: 360px; display: flex; flex-direction: column; gap: 16px; }

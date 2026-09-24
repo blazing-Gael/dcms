@@ -43,6 +43,18 @@ func (s *Server) limitBody(next http.Handler) http.Handler {
 	})
 }
 
+// limitAdminBody caps the authed admin panel's request bodies at the media-upload
+// limit rather than the small JSON limit, since panel create/update forms carry
+// inline file uploads (ADR-0035 2C). The panel is authenticated, CSRF-protected and
+// role-gated, so the larger bound is acceptable there.
+func (s *Server) limitAdminBody(next http.Handler) http.Handler {
+	limit := s.maxUpload()
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.Body = http.MaxBytesReader(w, r.Body, limit)
+		next.ServeHTTP(w, r)
+	})
+}
+
 // withTimeout gives each request a deadline (defaultRequestTimeout when unset;
 // disabled when the configured timeout is negative). It is cooperative: the store
 // honors ctx cancellation at query boundaries, so an over-budget request's DB

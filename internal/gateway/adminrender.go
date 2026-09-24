@@ -33,8 +33,8 @@ func (s *Server) adminReadOnlyFields(r *http.Request, cd schema.CollectionDef, r
 	}
 	var out []adminReadField
 	for _, f := range cd.Fields {
-		if adminEditable(f) {
-			continue
+		if adminEditable(f) || s.adminMediaEditable(f) {
+			continue // handled by a form widget
 		}
 		v, ok := rec[f.Name]
 		if !ok || v == nil {

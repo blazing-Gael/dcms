@@ -213,8 +213,16 @@ While on **0.x**, minor versions may include breaking changes.
   since a tripped cap otherwise stops password resets silently; and every panel page
   now carries a **strict Content-Security-Policy** (`default-src 'none'`; self-hosted
   script/style only — inline handlers moved to a served `confirm.js`), plus
-  `nosniff`, `X-Frame-Options: DENY`, and `noindex`. Media upload, `object_list`
-  editing, rich-text editing, and dashboards are the next phases.
+  `nosniff`, `X-Frame-Options: DENY`, and `noindex`. **Phase 2C** adds **inline
+  media editing**: a file field renders a widget with the current image preview, a
+  file upload, a library picker of existing media, and a clear checkbox — one Save,
+  working on create too. Uploads reuse the `/__media` blob pipeline (create row → put
+  bytes → stamp size/checksum), owned by the acting admin, so per-principal quotas
+  and the media access rule still apply; single-valued file fields only (many-file
+  stays a picker), and file fields are read-only when no blob backend is configured.
+  The authed panel's body cap moves to the media-upload limit for these forms (login
+  keeps the small cap). `object_list` editing, rich-text editing, and dashboards are
+  the next phases.
 - **Public embedding API — run DCMS as a Go library with hooks + custom routes
   (ADR-0031).** The hook mechanism existed but lived under `internal/`, so it was
   only reachable by editing the DCMS tree. A new public package,
