@@ -147,6 +147,18 @@ code { font-family: var(--mono); font-size: 12.5px; background: var(--surface-2)
 .danger-zone { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; padding: 16px 18px; margin-top: 18px; border-color: var(--err-border); }
 .danger-zone p { margin: 4px 0 0; font-size: 13px; }
 
+/* read-only content (richtext / media / json) */
+.readonly { margin-top: 18px; padding: 16px 18px; }
+.readonly > h3 { margin: 0 0 12px; font-size: 14px; }
+.readonly-field { padding: 10px 0; border-top: 1px solid var(--border); }
+.readonly-label { font-size: 12px; font-weight: 600; color: var(--muted); margin-bottom: 6px; }
+.readonly-body { line-height: 1.55; overflow-wrap: anywhere; }
+.readonly-body p { margin: 0 0 10px; }
+.readonly-body h1, .readonly-body h2, .readonly-body h3, .readonly-body h4 { margin: 12px 0 6px; }
+.readonly-body blockquote { margin: 8px 0; padding-left: 12px; border-left: 3px solid var(--border); color: var(--muted); }
+.readonly-body pre { background: var(--surface-2); padding: 12px; border-radius: 8px; overflow: auto; font-family: var(--mono); font-size: 12.5px; }
+.admin-media { max-width: 100%; height: auto; border-radius: 8px; margin: 6px 0; }
+
 /* auth */
 .auth-main { min-height: 100vh; display: grid; place-items: center; padding: 24px; }
 .auth-card { padding: 30px; width: 100%; max-width: 360px; display: flex; flex-direction: column; gap: 16px; }

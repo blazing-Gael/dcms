@@ -102,6 +102,7 @@ func (s *Server) mountAdmin(r chi.Router) {
 				r.Post("/users/{id}", s.adminUserUpdate)
 				r.Post("/users/{id}/password", s.adminUserResetPassword)
 				r.Post("/users/{id}/logout-all", s.adminUserLogoutAll)
+				r.Post("/users/{id}/unlock", s.adminUserUnlock)
 				r.Post("/users/{id}/delete", s.adminUserDelete)
 				// Access map + data model + read-only system views.
 				r.Get("/access", s.adminAccessMap)
@@ -114,15 +115,58 @@ func (s *Server) mountAdmin(r chi.Router) {
 	})
 }
 
-// adminRequireAuth redirects an unauthenticated visitor to the login page.
+// adminRequireAuth redirects an unauthenticated visitor to the login page, and
+// refuses an authenticated one whose role isn't on the admin.roles allowlist — so
+// with open registration a self-registered writer can't wander into the ops panel.
 func (s *Server) adminRequireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !principalFromContext(r.Context()).Authenticated {
+		p := principalFromContext(r.Context())
+		if !p.Authenticated {
 			http.Redirect(w, r, adminBasePath+"/login", http.StatusSeeOther)
+			return
+		}
+		if !s.adminPanelAllowed(p) {
+			w.WriteHeader(http.StatusForbidden)
+			s.renderAdmin(w, r, "login", &adminPage{Title: "Sign in",
+				Error: "This account isn't permitted to use the admin panel."})
 			return
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// adminPanelAllowed reports whether a principal may open the panel at all. With no
+// admin.roles allowlist configured, any authenticated user may (the back-compatible
+// default); with one, the caller must hold one of the listed roles.
+func (s *Server) adminPanelAllowed(p principal) bool {
+	if !s.authEnabled() {
+		return true
+	}
+	if !p.Authenticated {
+		return false
+	}
+	return s.panelRolesAllowed(p.Roles)
+}
+
+// panelRolesAllowed checks a role set against the admin.roles allowlist (empty
+// allowlist ⇒ allowed). Used both for a live principal and, at login, for a user's
+// roles before a session is issued.
+func (s *Server) panelRolesAllowed(roles []string) bool {
+	if s.opts.Admin == nil {
+		return true
+	}
+	allow := s.opts.Admin.Roles
+	if len(allow) == 0 {
+		return true
+	}
+	for _, have := range roles {
+		for _, want := range allow {
+			if have == want {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // ── CSRF (double-submit cookie) ───────────────────────────────────────────────
@@ -207,8 +251,25 @@ func (s *Server) renderAdmin(w http.ResponseWriter, r *http.Request, page string
 		http.Error(w, "render error", http.StatusInternalServerError)
 		return
 	}
+	s.setAdminSecurityHeaders(w)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_, _ = buf.WriteTo(w)
+}
+
+// setAdminSecurityHeaders locks down every panel page: a strict CSP (no inline
+// script/style — the panel's only script is the self-hosted confirm.js, its only
+// styles the self-hosted stylesheet), no framing, no sniffing, and no indexing. The
+// login/CSRF/session cookies are already HttpOnly + SameSite=Lax + Secure-behind-
+// -trust_proxy where they're set.
+func (s *Server) setAdminSecurityHeaders(w http.ResponseWriter) {
+	h := w.Header()
+	h.Set("Content-Security-Policy",
+		"default-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'; "+
+			"img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self'")
+	h.Set("X-Content-Type-Options", "nosniff")
+	h.Set("X-Frame-Options", "DENY")
+	h.Set("Referrer-Policy", "same-origin")
+	h.Set("X-Robots-Tag", "noindex, nofollow")
 }
 
 // adminUserLabel returns the signed-in user's email for the header, falling back to

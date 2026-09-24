@@ -1,13 +1,19 @@
 {{define "content"}}
+{{with .Data}}
 <div class="page-head">
   <h1>Users</h1>
   <a class="btn" href="/__admin/users/new">New user</a>
 </div>
+{{if .MailCap}}
+<p class="muted">Account email today: {{.MailUsed}} / {{.MailCap}} (instance daily cap). Password resets and login codes stop silently once this is reached.</p>
+{{else}}
+<p class="muted">Account email today: {{.MailUsed}} sent (no instance daily cap configured).</p>
+{{end}}
 <div class="card table-wrap">
   <table class="table">
     <thead><tr><th>Email</th><th>Name</th><th>Roles</th><th>Status</th><th class="col-actions"></th></tr></thead>
     <tbody>
-      {{range .Data}}
+      {{range .Rows}}
       <tr>
         <td>{{.Email}}</td>
         <td>{{.Name}}</td>
@@ -21,4 +27,5 @@
     </tbody>
   </table>
 </div>
+{{end}}
 {{end}}

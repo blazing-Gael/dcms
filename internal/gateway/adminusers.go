@@ -3,6 +3,7 @@ package gateway
 import (
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -18,6 +19,15 @@ import (
 
 type adminUserRow struct{ ID, Email, Name, Roles, Status string }
 
+// adminUsersData is the users page: the account rows plus an ops readout of today's
+// account-mail usage against the instance ceiling (#50), since the mail cap is what
+// silently stops password resets when it trips.
+type adminUsersData struct {
+	Rows     []adminUserRow
+	MailUsed int
+	MailCap  int // 0 ⇒ no instance ceiling configured
+}
+
 type adminRoleChoice struct {
 	Name, Label string
 	Checked     bool
@@ -27,6 +37,8 @@ type adminUserFormData struct {
 	ID, Email, Name, Status, Title, Action string
 	IsNew                                  bool
 	Roles                                  []adminRoleChoice
+	Locked                                 bool   // credential lockout active (#50)
+	LockedFor                              string // human duration remaining, when locked
 }
 
 func (s *Server) adminUsersList(w http.ResponseWriter, r *http.Request) {
@@ -46,7 +58,12 @@ func (s *Server) adminUsersList(w http.ResponseWriter, r *http.Request) {
 		}
 		rows = append(rows, adminUserRow{ID: id, Email: email, Name: name, Roles: joinComma(rolesOf(u)), Status: status})
 	}
-	s.renderAdmin(w, r, "users", &adminPage{Title: "Users", Flash: r.URL.Query().Get("flash"), Data: rows})
+	data := adminUsersData{Rows: rows}
+	if s.accountMail != nil {
+		ms := s.accountMail.stats()
+		data.MailUsed, data.MailCap = ms.SentToday, ms.InstanceCap
+	}
+	s.renderAdmin(w, r, "users", &adminPage{Title: "Users", Flash: r.URL.Query().Get("flash"), Data: data})
 }
 
 func (s *Server) adminUserNewForm(w http.ResponseWriter, r *http.Request) {
@@ -99,9 +116,11 @@ func (s *Server) adminUserEditForm(w http.ResponseWriter, r *http.Request) {
 	if status == "" {
 		status = schema.UserStatusActive
 	}
+	locked, lockedFor := s.adminUserLock(id)
 	s.renderAdmin(w, r, "user_form", &adminPage{Title: "Edit user", Flash: r.URL.Query().Get("flash"), Data: adminUserFormData{
 		ID: id, Email: email, Name: name, Status: status, Title: "Edit " + email,
 		Action: adminBasePath + "/users/" + id, Roles: s.adminRoleChoices(rolesOf(u)),
+		Locked: locked, LockedFor: lockedFor,
 	}})
 }
 
@@ -231,4 +250,32 @@ func (s *Server) adminUserFormError(emailOK bool, password string, roles []strin
 
 func (s *Server) adminUserFormRerender(w http.ResponseWriter, r *http.Request, data adminUserFormData, errMsg string) {
 	s.renderAdmin(w, r, "user_form", &adminPage{Title: data.Title, Error: errMsg, Data: data})
+}
+
+// adminUserUnlock clears a #50 credential lockout for one account, so an admin can
+// rescue a locked-out editor (who has no other recourse — a locked account also
+// can't reset its password). Keyed by user id, matching the login failure path.
+func (s *Server) adminUserUnlock(w http.ResponseWriter, r *http.Request) {
+	if !s.adminCSRFValid(r) {
+		s.adminForbidden(w, r)
+		return
+	}
+	id := chi.URLParam(r, "id")
+	if s.credFailures != nil {
+		s.credFailures.reset(id)
+	}
+	http.Redirect(w, r, adminBasePath+"/users/"+id+"?flash=Sign-in+unlocked", http.StatusSeeOther)
+}
+
+// adminUserLock reports whether an account is currently locked out by the #50
+// credential-failure budget, and a short human duration remaining.
+func (s *Server) adminUserLock(id string) (bool, string) {
+	if s.credFailures == nil {
+		return false, ""
+	}
+	locked, d := s.credFailures.locked(id)
+	if !locked {
+		return false, ""
+	}
+	return true, d.Round(time.Minute).String()
 }

@@ -18,7 +18,7 @@
         <td>{{.When}}</td>
         <td>{{.By}}</td>
         <td class="row-actions">
-          <form method="post" action="/__admin/c/{{$coll}}/{{$rec}}/history/{{.Version}}/restore" onsubmit="return confirm('Restore this version? The current content is saved to history first.');">
+          <form method="post" action="/__admin/c/{{$coll}}/{{$rec}}/history/{{.Version}}/restore" data-confirm="Restore this version? The current content is saved to history first.">
             <input type="hidden" name="csrf" value="{{$.CSRF}}">
             <button class="btn-link" type="submit">Restore</button>
           </form>

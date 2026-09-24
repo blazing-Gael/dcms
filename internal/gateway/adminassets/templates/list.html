@@ -30,7 +30,7 @@
             </form>
             {{end}}
           {{else}}
-            <form method="post" action="/__admin/c/{{$coll}}/{{.ID}}/delete" onsubmit="return confirm('Delete this record? This cannot be undone.');">
+            <form method="post" action="/__admin/c/{{$coll}}/{{.ID}}/delete" data-confirm="Delete this record? This cannot be undone.">
               <input type="hidden" name="csrf" value="{{$.CSRF}}">
               <button class="btn-link danger" type="submit">Delete</button>
             </form>

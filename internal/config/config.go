@@ -45,6 +45,11 @@ type Config struct {
 type Admin struct {
 	// Enabled mounts the panel. Nil ⇒ on (the zero-config default); false disables it.
 	Enabled *bool `yaml:"enabled"`
+	// Roles is an allowlist of roles permitted to open the panel at all. Empty ⇒ any
+	// authenticated user may (the zero-config default). With open registration this
+	// should be set (e.g. [admin, editor]) so self-registered users can't reach the
+	// ops panel — everyone else is refused at login.
+	Roles []string `yaml:"roles"`
 }
 
 // Events configures the change-events subsystem (ADR-0021, M-B). The change feed

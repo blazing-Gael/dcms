@@ -13,7 +13,7 @@
         {{if $.Data.Action}}
         <td class="row-actions">
           {{if eq $.Data.Action "revoke"}}
-          <form method="post" action="/__admin/system/sessions/{{.ID}}/revoke" onsubmit="return confirm('Revoke this session?');">
+          <form method="post" action="/__admin/system/sessions/{{.ID}}/revoke" data-confirm="Revoke this session?">
             <input type="hidden" name="csrf" value="{{$.CSRF}}">
             <button class="btn-link danger" type="submit">Revoke</button>
           </form>
