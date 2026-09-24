@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"html/template"
 	"net/http"
 	"strconv"
 	"strings"
@@ -195,6 +196,7 @@ type adminField struct {
 	Name, Label, Widget, InputType, Value, Help string
 	Options                                     []adminOption
 	Required                                    bool
+	Preview                                     template.HTML // current media, for the file widget
 }
 
 type adminFormData struct {
@@ -205,6 +207,18 @@ type adminFormData struct {
 	Meta                                []adminKV
 	Lifecycle                           *adminLifecycle
 	Revised                             bool
+	Multipart                           bool // form has a file widget → multipart enctype
+}
+
+// adminHasFileWidget reports whether a collection renders an inline file widget, so
+// the form is submitted as multipart/form-data.
+func (s *Server) adminHasFileWidget(cd schema.CollectionDef) bool {
+	for _, f := range cd.Fields {
+		if s.adminMediaEditable(f) {
+			return true
+		}
+	}
+	return false
 }
 
 type adminKV struct{ K, V string }
@@ -216,7 +230,7 @@ func (s *Server) adminNewForm(w http.ResponseWriter, r *http.Request) {
 	}
 	s.renderAdmin(w, r, "form", &adminPage{Title: "New " + cd.Name, Data: adminFormData{
 		Collection: cd.Name, Title: "New " + cd.Name, Action: adminBasePath + "/c/" + cd.Name,
-		Fields: s.adminFields(r, cd, nil, nil, true),
+		Fields: s.adminFields(r, cd, nil, nil, true), Multipart: s.adminHasFileWidget(cd),
 	}})
 }
 
@@ -243,6 +257,7 @@ func (s *Server) renderAdminEdit(w http.ResponseWriter, r *http.Request, cd sche
 		Collection: cd.Name, Title: "Edit " + cd.Name, Action: adminBasePath + "/c/" + cd.Name + "/" + id,
 		RecordID: id, Fields: s.adminFields(r, cd, rec, nil, false), ReadOnly: s.adminReadOnlyFields(r, cd, rec),
 		Meta: adminMeta(rec), Lifecycle: s.adminLifecycleFor(r, cd, rec), Revised: s.revised(cd.Name),
+		Multipart: s.adminHasFileWidget(cd),
 	}
 	if s.versioned(cd.Name) {
 		data.Version = strconv.FormatInt(recordVersion(rec), 10)
@@ -264,6 +279,10 @@ func (s *Server) adminCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	data := s.adminParseForm(cd, r, true)
+	if msg := s.adminApplyFiles(r, cd, data); msg != "" {
+		s.adminReRenderForm(w, r, cd, "", data, msg)
+		return
+	}
 	if errMsg, _ := s.adminWrite(r, cd, "", data, true, nil); errMsg != "" {
 		s.adminReRenderForm(w, r, cd, "", data, errMsg)
 		return
@@ -287,6 +306,10 @@ func (s *Server) adminUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	data := s.adminParseForm(cd, r, false)
 	data["id"] = id
+	if msg := s.adminApplyFiles(r, cd, data); msg != "" {
+		s.renderAdminEdit(w, r, cd, id, "", msg)
+		return
+	}
 	expect := s.adminExpectedVersion(cd, r)
 	errMsg, conflict := s.adminWrite(r, cd, id, data, false, expect)
 	if conflict {
@@ -403,7 +426,7 @@ func (s *Server) adminReRenderForm(w http.ResponseWriter, r *http.Request, cd sc
 	}
 	data := adminFormData{
 		Collection: cd.Name, Title: title, Action: action, RecordID: id,
-		Fields: s.adminFields(r, cd, stored, submitted, isCreate),
+		Fields: s.adminFields(r, cd, stored, submitted, isCreate), Multipart: s.adminHasFileWidget(cd),
 	}
 	if !isCreate && s.versioned(cd.Name) {
 		// Preserve the version the form was loaded at, so the resubmit still carries a
@@ -445,10 +468,21 @@ func (s *Server) adminFields(r *http.Request, cd schema.CollectionDef, rec, subm
 	}
 	var out []adminField
 	for _, f := range cd.Fields {
-		if !adminEditable(f) {
+		if !adminEditable(f) && !s.adminMediaEditable(f) {
 			continue
 		}
 		af := adminField{Name: f.Name, Label: adminLabel(f), Value: shownVal(f.Name), Required: f.Required, Widget: "input", InputType: "text"}
+		if s.adminMediaEditable(f) {
+			// File widget: current media preview + upload + library picker + clear.
+			cur := shownVal(f.Name)
+			af.Widget = "file"
+			if cur != "" {
+				af.Preview = s.renderMediaField(r, cur)
+			}
+			af.Options = s.adminMediaLibrary(r, cur)
+			out = append(out, af)
+			continue
+		}
 		switch f.Type {
 		case schema.TypeText:
 			af.Widget = "textarea"
@@ -515,9 +549,15 @@ func adminSelectedFromSubmitted(submitted store.Record, name string) map[string]
 	return out
 }
 
-// adminParseForm reads the submitted editable fields into a typed record.
+// adminParseForm reads the submitted editable fields into a typed record. File
+// fields are left for adminApplyFiles (which can surface upload errors); a multipart
+// submission is parsed here so both its text fields and its file parts are available.
 func (s *Server) adminParseForm(cd schema.CollectionDef, r *http.Request, isCreate bool) store.Record {
-	_ = r.ParseForm() // populate r.Form so multi-valued m2m checklists are readable
+	if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
+		_ = r.ParseMultipartForm(16 << 20) // in-memory threshold; larger parts spill to temp files
+	} else {
+		_ = r.ParseForm() // populate r.Form so multi-valued m2m checklists are readable
+	}
 	data := store.Record{}
 	for _, f := range cd.Fields {
 		if !adminEditable(f) {

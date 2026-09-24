@@ -24,7 +24,7 @@
 </div>
 {{end}}
 
-<form class="form card" method="post" action="{{.Action}}">
+<form class="form card" method="post" action="{{.Action}}"{{if .Multipart}} enctype="multipart/form-data"{{end}}>
   <input type="hidden" name="csrf" value="{{$.CSRF}}">
   {{if .Version}}<input type="hidden" name="_version" value="{{.Version}}">{{end}}
   {{range .Fields}}
@@ -48,6 +48,17 @@
       </div>
     {{else if eq .Widget "checkbox"}}
       <input type="checkbox" id="f_{{.Name}}" name="{{.Name}}" value="true"{{if eq .Value "true"}} checked{{end}}>
+    {{else if eq .Widget "file"}}
+      {{$fname := .Name}}
+      {{if .Preview}}<div class="file-current">{{.Preview}}</div>{{end}}
+      <input type="file" name="__file_{{.Name}}">
+      {{if .Options}}
+      <select name="{{.Name}}" aria-label="Choose from library">
+        <option value="">— none —</option>
+        {{range .Options}}<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}
+      </select>
+      {{end}}
+      {{if not .Required}}<label class="check file-clear"><input type="checkbox" name="__clear_{{$fname}}" value="1"> Remove</label>{{end}}
     {{else}}
       <input type="{{.InputType}}" id="f_{{.Name}}" name="{{.Name}}" value="{{.Value}}" {{if .Required}}required{{end}}>
     {{end}}

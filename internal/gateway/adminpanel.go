@@ -66,13 +66,19 @@ func (s *Server) mountAdmin(r chi.Router) {
 		http.FileServer(http.FS(static))))
 
 	r.Route(adminBasePath, func(r chi.Router) {
-		r.Use(s.limitBody)
-		// Login is reachable without a session; everything else requires one.
-		r.Get("/login", s.adminLoginForm)
-		r.Post("/login", s.adminLogin)
-		r.Post("/logout", s.adminLogout)
+		// Login is reachable without a session; keep it under the small body cap (it
+		// carries no uploads, and a pre-auth endpoint shouldn't accept a large body).
+		r.Group(func(r chi.Router) {
+			r.Use(s.limitBody)
+			r.Get("/login", s.adminLoginForm)
+			r.Post("/login", s.adminLogin)
+			r.Post("/logout", s.adminLogout)
+		})
 
 		r.Group(func(r chi.Router) {
+			// Authed panel routes allow the media-upload body cap, since create/update
+			// forms carry inline file uploads (2C). Safe: authed + CSRF'd + role-gated.
+			r.Use(s.limitAdminBody)
 			r.Use(s.adminRequireAuth)
 			r.Get("/", s.adminOverview)
 			r.Get("/c/{collection}", s.adminList)
