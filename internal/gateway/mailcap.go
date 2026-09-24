@@ -106,6 +106,26 @@ func (m *accountMailLimiter) allow(recipient string) (bool, string) {
 	return true, ""
 }
 
+// mailStats is a point-in-time snapshot of the instance-wide daily mail counter,
+// for the admin panel's "mail sent today vs. the cap" readout.
+type mailStats struct {
+	SentToday   int
+	InstanceCap int // 0 ⇒ no instance ceiling configured
+}
+
+// stats reports today's instance-wide send count against the ceiling, rolling the
+// day first so a stale count from yesterday never shows.
+func (m *accountMailLimiter) stats() mailStats {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if today := m.now().UTC().Format("2006-01-02"); today != m.day {
+		m.day = today
+		m.perRecipient = map[string]int{}
+		m.instance = 0
+	}
+	return mailStats{SentToday: m.instance, InstanceCap: m.instanceDay}
+}
+
 // credFailureBudget bounds failed OTP/password attempts per account across codes
 // and endpoints. The per-code OTP cap resets with each new code; this does not — it
 // counts failures per account in a rolling window and, past the threshold, locks

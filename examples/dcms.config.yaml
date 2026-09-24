@@ -14,9 +14,12 @@ schema: ./dcms.schema.yaml
 
 # Built-in admin panel at /__admin (ADR-0035) — a server-rendered UI generated from
 # the schema, for browsing and editing content. On by default; behind a login. Set
-# enabled: false to not mount it (e.g. an API-only deployment).
+# enabled: false to not mount it (e.g. an API-only deployment). With open
+# registration, set `roles` to an allowlist so only those roles can open the panel
+# at all — everyone else is refused at login (otherwise any authenticated user may).
 # admin:
 #   enabled: true
+#   roles: [admin, editor]
 
 database:
   # Phase 1 ships the "sqlite" driver. "postgres" and others land later.

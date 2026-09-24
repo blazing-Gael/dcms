@@ -197,8 +197,24 @@ While on **0.x**, minor versions may include breaking changes.
   danger zone; **#27 transition-aware selects** — an enum with role-gated transitions
   offers only the next states the caller may actually set, so the panel never leads
   someone into a 403; and **revision history** — view a record's versions and restore
-  one (content-only, preview-gated like the API). Media upload, `object_list`, rich
-  text, and dashboards are the next phases.
+  one (content-only, preview-gated like the API). It is also hardened for a
+  public-registration deployment where only staff should reach it: an **`admin.roles`
+  allowlist** (config/`AdminOptions.Roles`) refuses anyone without a listed role at
+  login and on every panel route — with open registration this keeps self-registered
+  writers out of the ops panel (empty ⇒ any authenticated user, as before); panel
+  updates now send the **optimistic-concurrency precondition** (a hidden `_version`
+  → `If-Match`), so an admin editing a record another client has since changed gets a
+  "someone else changed this" notice and the latest content instead of silently
+  overwriting it (#26); non-editable fields (**richtext, media, object_list, json**)
+  render **read-only** on the edit page — a moderator can read a story and see its
+  images (escaped, behind a strict CSP) without the full editor; an admin can
+  **unlock an account** locked by the credential-failure budget (#50, keyed by user)
+  and see **today's account-mail count against the instance cap** on the Users page,
+  since a tripped cap otherwise stops password resets silently; and every panel page
+  now carries a **strict Content-Security-Policy** (`default-src 'none'`; self-hosted
+  script/style only — inline handlers moved to a served `confirm.js`), plus
+  `nosniff`, `X-Frame-Options: DENY`, and `noindex`. Media upload, `object_list`
+  editing, rich-text editing, and dashboards are the next phases.
 - **Public embedding API — run DCMS as a Go library with hooks + custom routes
   (ADR-0031).** The hook mechanism existed but lived under `internal/`, so it was
   only reachable by editing the DCMS tree. A new public package,

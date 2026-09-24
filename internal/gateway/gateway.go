@@ -179,6 +179,10 @@ type Options struct {
 // AdminOptions configures the admin panel (ADR-0035).
 type AdminOptions struct {
 	Enabled bool
+	// Roles allowlists which roles may open the panel. Empty ⇒ any authenticated
+	// user (back-compatible default); non-empty ⇒ a caller must hold one of these
+	// roles or is refused at login and on every panel route.
+	Roles []string
 }
 
 // CustomRoute is one user-registered endpoint. Method is an HTTP method, Path a

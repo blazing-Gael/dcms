@@ -14,7 +14,7 @@
   {{if .Lifecycle.Actions}}
   <div class="lifecycle-actions">
     {{range .Lifecycle.Actions}}
-    <form method="post" action="/__admin/c/{{$.Data.Collection}}/{{$.Data.RecordID}}/{{.Verb}}"{{if .Confirm}} onsubmit="return confirm('{{.Confirm}}');"{{end}}>
+    <form method="post" action="/__admin/c/{{$.Data.Collection}}/{{$.Data.RecordID}}/{{.Verb}}"{{if .Confirm}} data-confirm="{{.Confirm}}"{{end}}>
       <input type="hidden" name="csrf" value="{{$.CSRF}}">
       <button class="btn{{if eq .Style "primary"}}{{else if eq .Style "danger"}} btn-link danger{{else}} btn-secondary{{end}}" type="submit">{{.Label}}</button>
     </form>
@@ -26,6 +26,7 @@
 
 <form class="form card" method="post" action="{{.Action}}">
   <input type="hidden" name="csrf" value="{{$.CSRF}}">
+  {{if .Version}}<input type="hidden" name="_version" value="{{.Version}}">{{end}}
   {{range .Fields}}
   <div class="field">
     <label for="f_{{.Name}}">{{.Label}}{{if .Required}} <span class="req">*</span>{{end}}</label>
@@ -60,6 +61,18 @@
   </div>
 </form>
 
+{{if .ReadOnly}}
+<div class="card readonly">
+  <h3>Content <span class="muted">(read-only)</span></h3>
+  {{range .ReadOnly}}
+  <div class="readonly-field">
+    <div class="readonly-label">{{.Label}}</div>
+    <div class="readonly-body">{{.HTML}}</div>
+  </div>
+  {{end}}
+</div>
+{{end}}
+
 {{if .Meta}}
 <div class="card meta">
   {{range .Meta}}<div class="meta-row"><span class="meta-k">{{.K}}</span><span class="meta-v">{{.V}}</span></div>{{end}}
@@ -72,7 +85,7 @@
     <strong>Delete permanently</strong>
     <p class="muted">This removes the record for good and cannot be undone.</p>
   </div>
-  <form method="post" action="/__admin/c/{{.Collection}}/{{.RecordID}}/delete" onsubmit="return confirm('Permanently delete this record? This cannot be undone.');">
+  <form method="post" action="/__admin/c/{{.Collection}}/{{.RecordID}}/delete" data-confirm="Permanently delete this record? This cannot be undone.">
     <input type="hidden" name="csrf" value="{{$.CSRF}}">
     <button class="btn-link danger" type="submit">Delete permanently</button>
   </form>

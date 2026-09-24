@@ -47,7 +47,12 @@
     <input type="hidden" name="csrf" value="{{$.CSRF}}">
     <button class="btn-link" type="submit">Sign out everywhere</button>
   </form>
-  <form method="post" action="/__admin/users/{{.ID}}/delete" class="inline-form" onsubmit="return confirm('Delete this user? This cannot be undone.');">
+  <form method="post" action="/__admin/users/{{.ID}}/unlock" class="inline-form">
+    <input type="hidden" name="csrf" value="{{$.CSRF}}">
+    <button class="btn-link" type="submit">Unlock sign-in</button>
+    {{if .Locked}}<span class="badge badge-trashed">locked{{if .LockedFor}} · {{.LockedFor}} left{{end}}</span>{{end}}
+  </form>
+  <form method="post" action="/__admin/users/{{.ID}}/delete" class="inline-form" data-confirm="Delete this user? This cannot be undone.">
     <input type="hidden" name="csrf" value="{{$.CSRF}}">
     <button class="btn-link danger" type="submit">Delete user</button>
   </form>

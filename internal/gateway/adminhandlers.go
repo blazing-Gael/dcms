@@ -62,6 +62,14 @@ func (s *Server) adminLogin(w http.ResponseWriter, r *http.Request) {
 		s.renderAdmin(w, r, "login", &adminPage{Title: "Sign in", Error: "Invalid email or password."})
 		return
 	}
+	// Refuse at login when an admin.roles allowlist is set and this account isn't on
+	// it — a self-registered writer never gets a panel session (they keep their app
+	// session elsewhere; this only declines the panel login).
+	if !s.panelRolesAllowed(rolesOf(user)) {
+		s.credFailures.reset(userID)
+		s.renderAdmin(w, r, "login", &adminPage{Title: "Sign in", Error: "This account isn't permitted to use the admin panel."})
+		return
+	}
 	s.credFailures.reset(userID)
 	token, expiresAt, err := s.issueSession(r.Context(), userID, rolesOf(user))
 	if err != nil {
@@ -191,7 +199,9 @@ type adminField struct {
 
 type adminFormData struct {
 	Collection, Title, Action, RecordID string
+	Version                             string // current _version, for the If-Match hidden field
 	Fields                              []adminField
+	ReadOnly                            []adminReadField
 	Meta                                []adminKV
 	Lifecycle                           *adminLifecycle
 	Revised                             bool
@@ -216,17 +226,28 @@ func (s *Server) adminEditForm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := chi.URLParam(r, "id")
+	s.renderAdminEdit(w, r, cd, id, r.URL.Query().Get("flash"), "")
+}
+
+// renderAdminEdit renders the edit page for a record, loading it fresh. `flash` and
+// `errMsg` are optional banners (errMsg is used for the optimistic-concurrency
+// conflict re-render, which must show the *current* stored values).
+func (s *Server) renderAdminEdit(w http.ResponseWriter, r *http.Request, cd schema.CollectionDef, id, flash, errMsg string) {
 	rec, err := s.db.FindOne(r.Context(), cd.Name, id)
 	if err != nil {
 		s.adminError(w, r, "Record not found.")
 		return
 	}
 	cd.CoerceResponse(rec)
-	s.renderAdmin(w, r, "form", &adminPage{Title: "Edit " + cd.Name, Flash: r.URL.Query().Get("flash"), Data: adminFormData{
+	data := adminFormData{
 		Collection: cd.Name, Title: "Edit " + cd.Name, Action: adminBasePath + "/c/" + cd.Name + "/" + id,
-		RecordID: id, Fields: s.adminFields(r, cd, rec, nil, false), Meta: adminMeta(rec),
-		Lifecycle: s.adminLifecycleFor(r, cd, rec), Revised: s.revised(cd.Name),
-	}})
+		RecordID: id, Fields: s.adminFields(r, cd, rec, nil, false), ReadOnly: s.adminReadOnlyFields(r, cd, rec),
+		Meta: adminMeta(rec), Lifecycle: s.adminLifecycleFor(r, cd, rec), Revised: s.revised(cd.Name),
+	}
+	if s.versioned(cd.Name) {
+		data.Version = strconv.FormatInt(recordVersion(rec), 10)
+	}
+	s.renderAdmin(w, r, "form", &adminPage{Title: "Edit " + cd.Name, Flash: flash, Error: errMsg, Data: data})
 }
 
 func (s *Server) adminCreate(w http.ResponseWriter, r *http.Request) {
@@ -243,7 +264,7 @@ func (s *Server) adminCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	data := s.adminParseForm(cd, r, true)
-	if errMsg := s.adminWrite(r, cd, "", data, true); errMsg != "" {
+	if errMsg, _ := s.adminWrite(r, cd, "", data, true, nil); errMsg != "" {
 		s.adminReRenderForm(w, r, cd, "", data, errMsg)
 		return
 	}
@@ -266,7 +287,15 @@ func (s *Server) adminUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	data := s.adminParseForm(cd, r, false)
 	data["id"] = id
-	if errMsg := s.adminWrite(r, cd, id, data, false); errMsg != "" {
+	expect := s.adminExpectedVersion(cd, r)
+	errMsg, conflict := s.adminWrite(r, cd, id, data, false, expect)
+	if conflict {
+		// Someone saved a newer version between load and submit — show the current
+		// record so the admin can reapply, never silently overwrite (#26).
+		s.renderAdminEdit(w, r, cd, id, "", "Someone else changed this record while you were editing. Here's the latest — please reapply your change.")
+		return
+	}
+	if errMsg != "" {
 		s.adminReRenderForm(w, r, cd, id, data, errMsg)
 		return
 	}
@@ -296,14 +325,17 @@ func (s *Server) adminDelete(w http.ResponseWriter, r *http.Request) {
 
 // adminWrite runs the shared authorized write pipeline (field rules + #27
 // transitions, validation, decimals, reference checks, then the write with hooks +
-// revisions + events). It returns a human message on failure, "" on success.
-func (s *Server) adminWrite(r *http.Request, cd schema.CollectionDef, id string, data store.Record, isCreate bool) string {
+// revisions + events). On a versioned collection it honors the optimistic-
+// concurrency precondition (expect, from the form's _version) so a stale save is
+// refused rather than clobbering a newer edit (#26). Returns a human message on
+// failure ("" on success) and whether the failure was a version conflict.
+func (s *Server) adminWrite(r *http.Request, cd schema.CollectionDef, id string, data store.Record, isCreate bool, expect *int64) (string, bool) {
 	if err := s.stripUnwritableFields(r.Context(), cd.Name, id, data, isCreate); err != nil {
 		var fe *fieldForbiddenError
 		if errors.As(err, &fe) {
-			return "You may not set '" + fe.field + "' to that value."
+			return "You may not set '" + fe.field + "' to that value.", false
 		}
-		return "Write was rejected."
+		return "Write was rejected.", false
 	}
 	var errs schema.FieldErrors
 	if isCreate {
@@ -312,11 +344,11 @@ func (s *Server) adminWrite(r *http.Request, cd schema.CollectionDef, id string,
 		errs = cd.ValidateUpdate(data)
 	}
 	if errs != nil {
-		return "Please fix: " + adminErrsSummary(errs)
+		return "Please fix: " + adminErrsSummary(errs), false
 	}
 	cd.EncodeDecimals(data)
 	if err := s.checkReferences(r.Context(), s.db, cd.Name, data); err != nil {
-		return "Invalid reference: " + err.Error()
+		return "Invalid reference: " + err.Error(), false
 	}
 	op := "update"
 	if isCreate {
@@ -326,12 +358,34 @@ func (s *Server) adminWrite(r *http.Request, cd schema.CollectionDef, id string,
 		if isCreate {
 			return db.Create(ctx, store.WriteInput{Collection: cd.Name, Data: base})
 		}
+		if e := s.applyVersion(ctx, db, cd.Name, base, expect); e != nil {
+			return nil, e
+		}
 		return db.Update(ctx, store.WriteInput{Collection: cd.Name, Data: base})
 	})
-	if err != nil {
-		return "Could not save the record."
+	if errors.Is(err, errVersionConflict) {
+		return "This record was changed by someone else.", true
 	}
-	return ""
+	if err != nil {
+		return "Could not save the record.", false
+	}
+	return "", false
+}
+
+// adminExpectedVersion reads the If-Match precondition the edit form carried back in
+// its hidden _version field. Nil for a non-versioned collection or an absent value.
+func (s *Server) adminExpectedVersion(cd schema.CollectionDef, r *http.Request) *int64 {
+	if !s.versioned(cd.Name) {
+		return nil
+	}
+	raw := strings.TrimSpace(r.FormValue(schema.ConcurrencyVersion))
+	if raw == "" {
+		return nil
+	}
+	if v, err := strconv.ParseInt(raw, 10, 64); err == nil {
+		return &v
+	}
+	return nil
 }
 
 func (s *Server) adminReRenderForm(w http.ResponseWriter, r *http.Request, cd schema.CollectionDef, id string, submitted store.Record, errMsg string) {
@@ -347,10 +401,17 @@ func (s *Server) adminReRenderForm(w http.ResponseWriter, r *http.Request, cd sc
 			stored = rec
 		}
 	}
-	s.renderAdmin(w, r, "form", &adminPage{Title: title, Error: errMsg, Data: adminFormData{
+	data := adminFormData{
 		Collection: cd.Name, Title: title, Action: action, RecordID: id,
 		Fields: s.adminFields(r, cd, stored, submitted, isCreate),
-	}})
+	}
+	if !isCreate && s.versioned(cd.Name) {
+		// Preserve the version the form was loaded at, so the resubmit still carries a
+		// precondition rather than silently dropping it.
+		data.Version = strings.TrimSpace(r.FormValue(schema.ConcurrencyVersion))
+		data.ReadOnly = s.adminReadOnlyFields(r, cd, stored)
+	}
+	s.renderAdmin(w, r, "form", &adminPage{Title: title, Error: errMsg, Data: data})
 }
 
 // ── field / value helpers ─────────────────────────────────────────────────────
