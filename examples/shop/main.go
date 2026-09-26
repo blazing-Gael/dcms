@@ -1,27 +1,33 @@
 // Command shop is the DCMS ecommerce demo: the generated backend from schema.yaml
 // plus one business-logic hook — checkout — written against the public dcms package.
 //
-// Run it from this directory:
+// Run it from this directory. Put the secret admin credentials (and the webhook
+// secret) in a .env file — `cp .env.example .env` and edit — then:
 //
-//	export DCMS_ADMIN_EMAIL=you@shop.test DCMS_ADMIN_PASSWORD=shoppass
-//	export DCMS_WEBHOOK_ORDER_SECRET=devsecret
 //	go run .
 //
-// See README.md for the full walkthrough (seed data, storefront calls, the admin
-// panel, and the webhook listener).
+// (Or export them in the shell instead; a real environment variable always wins over
+// the .env file.) See README.md for the full walkthrough.
 package main
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"log"
 	"os"
 	"os/signal"
+	"strings"
 
 	dcms "github.com/blazing-Gael/dcms"
 )
 
 func main() {
+	// DCMS reads its secrets from the environment, not from a config file. This loads
+	// a local .env for convenience so `go run .` works without exporting anything;
+	// real env vars still take precedence.
+	loadDotEnv(".env")
+
 	app, err := dcms.New(dcms.Options{
 		SchemaPath:     "schema.yaml",
 		ConfigPath:     "config.yaml",
@@ -100,6 +106,34 @@ func checkout(ctx context.Context, hc dcms.HookContext, order dcms.Record) (dcms
 	order["total"] = total   // exact; the API renders it as a decimal string
 	order["status"] = "paid" // payment succeeded above
 	return order, nil
+}
+
+// loadDotEnv reads KEY=VALUE lines from a .env file into the process environment,
+// skipping blanks and # comments and stripping surrounding quotes. A variable
+// already set in the real environment is left untouched (env wins over the file). A
+// missing file is not an error. Deliberately dependency-free — it's example code.
+func loadDotEnv(path string) {
+	f, err := os.Open(path)
+	if err != nil {
+		return // no .env is fine; the shell may have exported the vars instead
+	}
+	defer f.Close()
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		key, val, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		key = strings.TrimSpace(key)
+		val = strings.Trim(strings.TrimSpace(val), `"'`)
+		if _, exists := os.LookupEnv(key); !exists {
+			_ = os.Setenv(key, val)
+		}
+	}
 }
 
 // asInt coerces a stored numeric (int64 from SQLite, or float64 from a JSON column)
