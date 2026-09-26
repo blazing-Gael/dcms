@@ -30,11 +30,21 @@ In a second terminal, seed a catalog and print ready-to-paste demo commands:
 bash seed.sh you@shop.test shoppass
 ```
 
+The one binary now serves three things on http://localhost:8080 :
+- **/** — the customer storefront (browse, cart, sign up, checkout)
+- **/__admin** — the admin panel (catalog, orders, media, users)
+- **/api/v1** — the REST API (what both of the above, and the curls below, call)
+
 Reset any time: stop the server and `rm -f shop.db && rm -rf shop-media`.
 
 ## The demo, shot by shot
 
 Run these live. The `seed.sh` output has the same commands with real IDs filled in.
+
+**0 — The storefront.** Open **http://localhost:8080/** — browse products, add to
+cart, sign up, and check out. It's a plain vanilla-JS SPA (`storefront/`, ~1 file
+each of HTML/CSS/JS) hitting the same API; the order you place runs through the
+`checkout` hook. Everything below is that same store, from the API and admin side.
 
 **1 — The contract.** Open `schema.yaml`. "Four collections and their rules. No SQL,
 no endpoints, no admin code." Open `main.go`. "The only code this store needs: what

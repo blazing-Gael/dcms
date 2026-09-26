@@ -45,6 +45,9 @@ func main() {
 	// means. Everything else — CRUD, auth, media, the admin panel — is generated.
 	app.On("orders", dcms.BeforeCreate, checkout)
 
+	// Serve the demo storefront (a static SPA) from this same binary at "/".
+	serveStorefront(app)
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 	if err := app.Serve(ctx); err != nil {
