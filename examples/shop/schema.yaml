@@ -1,0 +1,81 @@
+version: "1"
+
+meta:
+  name: shop
+  description: "End-to-end ecommerce example for the DCMS demo (see README.md)."
+
+auth:
+  roles:
+    admin: { label: Administrator }
+    staff: { label: Store staff }
+
+collections:
+  # Product categories — public to read (storefront), staff-managed.
+  categories:
+    access: { read: public, create: [admin, staff], update: [admin, staff], delete: [admin] }
+    fields:
+      name: { type: string, required: true }
+      slug: { type: string, unique: true }
+
+  # Catalog. Published products are public; drafts are staff-only. `concurrency`
+  # gives stock an optimistic-lock version so a manual adjustment can't clobber a
+  # concurrent one. Exact money via `decimal` (int64 minor units under the hood).
+  products:
+    publishing:  true
+    concurrency: true    # stock carries a _version → If-Match stops a lost update
+    revisions:   true    # price/description edits are versioned (audit + restore)
+    access:
+      read:    public
+      create:  [admin, staff]
+      update:  [admin, staff]
+      delete:  [admin]
+    fields:
+      name:        { type: string, required: true }
+      slug:        { type: string, unique: true }
+      description: { type: text }
+      price:       { type: decimal, required: true, min: 0 }
+      # Supplier cost is commercially sensitive: admins can read/write it, staff and
+      # the public storefront never even see it (field-level read mask, ADR-0016).
+      cost:        { type: decimal, min: 0, access: { read: [admin], write: [admin] } }
+      stock:       { type: integer, default: 0 }
+      image:       { type: file }
+      category:    { type: relation, target: categories }
+
+  # Shoppers can self-register (guest checkout); staff can see the list.
+  customers:
+    access: { read: [admin, staff], create: public, update: [admin, staff], delete: [admin] }
+    fields:
+      name:  { type: string, required: true }
+      email: { type: string, required: true, unique: true }
+
+  # Orders. `create: public` = a storefront can place one. `events: true` emits a
+  # change event on every write, which the configured webhook delivers (signed,
+  # retried). The `total` and `status` are set by the checkout hook, not the client.
+  orders:
+    events: true
+    access:
+      read:   [admin, staff]
+      create: public
+      update: [admin, staff]
+      delete: [admin]
+    fields:
+      customer:  { type: relation, target: customers }
+      pay_token: { type: string }   # stub payment token; "declined" simulates a decline
+      # Value-scoped write rules (#27): who may make which status change. Staff can
+      # ship a paid order; only an admin can cancel one. Enforced on the API and
+      # reflected in the admin panel's status dropdown (it only offers legal moves).
+      status:
+        type: enum
+        values: [pending, paid, shipped, cancelled]
+        default: pending
+        access:
+          write:
+            rules:
+              - { who: [staff, admin], from: [paid], to: [shipped] }
+              - { who: [admin], from: [paid, shipped], to: [cancelled] }
+      total: { type: decimal, min: 0 }   # computed server-side by the hook
+      items:
+        type: object_list
+        of:
+          product: { type: relation, target: products, required: true }
+          qty:     { type: integer, required: true, min: 1 }
