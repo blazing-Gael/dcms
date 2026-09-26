@@ -8,6 +8,17 @@ While on **0.x**, minor versions may include breaking changes.
 
 ## [Unreleased]
 
+### Added
+- **Public store types for hooks + a full ecommerce example.** The `dcms` embedding
+  package now re-exports the store types a hook or custom route needs to *write* —
+  `WriteInput`, `Query`, `Page`, `Filter`, `Op` and the filter-operator consts —
+  which previously lived only under `internal/`, so a hook that decrements stock or
+  reads related rows can be written from an external module using public types alone.
+  A new `examples/shop/` shows it end to end: a schema-generated storefront + admin
+  panel plus one `checkout` hook (payment, atomic inventory, exact totals), with a
+  runbook covering money, idempotency, concurrency, field-level access, role-scoped
+  transitions, revisions, webhooks and the typed SDK.
+
 ## [0.1.0-beta.4] - 2026-09-24
 
 ### Security

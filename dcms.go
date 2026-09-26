@@ -43,6 +43,32 @@ type (
 	Principal = auth.Principal
 	// Record is a single stored record (a field map).
 	Record = store.Record
+	// WriteInput is a create/update payload for HookStore.Create / .Update.
+	WriteInput = store.WriteInput
+	// Query is a list query for HookStore.Find.
+	Query = store.Query
+	// Page is a HookStore.Find result.
+	Page = store.Page
+	// Filter is one field-level condition on a Query.
+	Filter = store.Filter
+	// Op is a Filter operator (see the Eq/Gt/… consts).
+	Op = store.Op
+)
+
+// Filter operators, for building a Query in a hook or custom route.
+const (
+	Eq         = store.Eq
+	Ne         = store.Ne
+	Gt         = store.Gt
+	Gte        = store.Gte
+	Lt         = store.Lt
+	Lte        = store.Lte
+	Contains   = store.Contains
+	StartsWith = store.StartsWith
+	In         = store.In
+	NotIn      = store.NotIn
+	IsNull     = store.IsNull
+	NotNull    = store.NotNull
 )
 
 // Write-lifecycle events. Delete events fire for both hard and soft deletes.

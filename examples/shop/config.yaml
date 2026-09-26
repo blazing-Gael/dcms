@@ -1,0 +1,28 @@
+schema: ./schema.yaml
+
+database:
+  driver: sqlite
+  path: ./shop.db
+
+media:
+  driver: local
+  dir: ./shop-media
+
+# Built-in admin panel at /__admin — only admin/staff may open it.
+admin:
+  enabled: true
+  roles: [admin, staff]
+
+server:
+  port: 8080
+
+# Signed webhooks: every order write emits a change event that gets POSTed to your
+# endpoint (HMAC-signed, retried on failure). The secret is env-only — set
+# DCMS_WEBHOOK_ORDER_SECRET before starting. See README for a one-line listener.
+events:
+  webhook_poll_seconds: 2
+  webhooks:
+    - name: order-notify
+      url: http://localhost:9000/hook
+      secret_env: DCMS_WEBHOOK_ORDER_SECRET
+      collections: [orders]
