@@ -16,14 +16,13 @@ Requires Go 1.24+. From this directory:
 
 ```bash
 cd examples/shop
-
-# The admin the server bootstraps on first start, and the webhook signing secret.
-export DCMS_ADMIN_EMAIL=you@shop.test
-export DCMS_ADMIN_PASSWORD=shoppass
-export DCMS_WEBHOOK_ORDER_SECRET=devsecret
-
-go run .          # migrates, seeds the admin, serves on http://localhost:8080
+cp .env.example .env      # the admin credentials + webhook secret (gitignored)
+go run .                  # migrates, seeds the admin, serves on http://localhost:8080
 ```
+
+`main.go` loads `.env` on start, so nothing needs exporting. (A real environment
+variable still wins over the file — the secrets are read from the environment, never
+from `config.yaml`. To use the shell instead of a file: `set -a; source .env; set +a`.)
 
 In a second terminal, seed a catalog and print ready-to-paste demo commands:
 

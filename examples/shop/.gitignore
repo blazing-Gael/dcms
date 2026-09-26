@@ -1,3 +1,6 @@
 /shop.db
 /shop.db-*
 /shop-media/
+/.env
+/types/
+!.env.example
