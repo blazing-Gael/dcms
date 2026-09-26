@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Beans &amp; Leaves — DCMS demo store</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="#/">Beans&nbsp;&amp;&nbsp;Leaves</a>
+    <nav class="nav">
+      <a href="#/">Shop</a>
+      <a href="#/cart">Cart <span id="cart-count" class="pill" hidden>0</span></a>
+      <a id="nav-account" href="#/signup">Sign in</a>
+    </nav>
+  </header>
+
+  <main id="app" class="app"><!-- rendered by app.js --></main>
+
+  <div id="toast" class="toast" hidden></div>
+
+  <footer class="footer">
+    <span>Storefront + admin + API — one DCMS binary. The only custom code is the
+    <code>checkout</code> hook.</span>
+  </footer>
+
+  <script src="/app.js"></script>
+</body>
+</html>
