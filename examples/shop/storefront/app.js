@@ -83,37 +83,42 @@ function toast(msg) {
 // ── views ──────────────────────────────────────────────────────────────────────
 const app = () => $("#app");
 
-let home = { items: [], cursor: "", done: false, loading: false };
-async function viewHome(reset = true) {
-  if (reset) {
-    home = { items: [], cursor: "", done: false, loading: false };
-    app().innerHTML = `<div class="page-head"><div><h1>Our coffee &amp; tea</h1>
-      <p class="muted">Fresh roasts and loose-leaf, shipped worldwide.</p></div></div>
-      <div class="grid" id="grid"></div>
-      <div class="load-more" id="more"></div>`;
-  }
-  await loadMore();
+// One live home state at a time. Each visit to the home view creates a fresh state;
+// an in-flight loadMore from a previous visit checks `state === home` after its await
+// and bails, so quick navigation can't double-render or blank the grid.
+let home = null;
+function viewHome() {
+  app().innerHTML = `<div class="page-head"><div><h1>Our coffee &amp; tea</h1>
+    <p class="muted">Fresh roasts and loose-leaf, shipped worldwide.</p></div></div>
+    <div class="grid" id="grid"></div>
+    <div class="load-more" id="more"></div>`;
+  home = { cursor: "", count: 0, done: false, loading: false };
+  loadMore();
 }
 async function loadMore() {
-  if (home.loading || home.done) return;
-  home.loading = true;
+  const state = home;
+  if (!state || state.loading || state.done) return;
+  state.loading = true;
   const more = $("#more"); if (more) more.innerHTML = `<span class="muted">Loading…</span>`;
   try {
     const q = new URLSearchParams({ expand: "image", limit: PAGE });
-    if (home.cursor) q.set("cursor", home.cursor);
+    if (state.cursor) q.set("cursor", state.cursor);
     const { data, meta } = await api(`/products?${q}`);
-    home.items.push(...data);
-    home.cursor = (meta && meta.next_cursor) || "";
-    home.done = !home.cursor;
-    const grid = $("#grid");
+    if (state !== home) return; // a newer home view superseded this fetch — drop it
+    const grid = $("#grid"); if (!grid) return;
     data.forEach((p) => grid.appendChild(productCard(p)));
-    $("#more").innerHTML = home.done
-      ? (home.items.length ? `<span class="muted">That's everything (${home.items.length} products).</span>` : "")
+    state.count += data.length;
+    state.cursor = (meta && meta.next_cursor) || "";
+    state.done = !state.cursor;
+    $("#more").innerHTML = state.done
+      ? (state.count ? `<span class="muted">That's everything (${state.count} products).</span>` : `<span class="muted">No products yet.</span>`)
       : `<button class="btn btn-ghost" id="more-btn">Load more</button>`;
     const btn = $("#more-btn"); if (btn) btn.onclick = loadMore;
   } catch (e) {
-    $("#more").innerHTML = `<span class="muted">Couldn't load products: ${esc(e.message)}</span>`;
-  } finally { home.loading = false; }
+    if (state === home && $("#more")) $("#more").innerHTML = `<span class="muted">Couldn't load products: ${esc(e.message)}</span>`;
+  } finally {
+    if (state === home) state.loading = false;
+  }
 }
 function productCard(p) {
   const out = p.stock <= 0;
@@ -299,7 +304,7 @@ function route() {
   if (h.startsWith("#/checkout")) return viewCheckout();
   if (h.startsWith("#/signup")) return viewSignup();
   if (h.startsWith("#/profile")) return viewProfile();
-  return viewHome(true);
+  return viewHome();
 }
 window.addEventListener("hashchange", route);
 window.addEventListener("DOMContentLoaded", () => { renderCartCount(); renderAccount(); route(); });
