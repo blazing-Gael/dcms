@@ -5,6 +5,15 @@
 Define your data model in YAML. Get a production backend, typed SDKs, admin UI,
 semantic search, and one-click deploy — without writing a line of Go.
 
+> **What it is:** DCMS is an AI-native **backend runtime** in Go. Describe a backend
+> as a schema — by hand or with an agent — and it assembles a correct, running
+> system: database, REST API + OpenAPI, auth and permissions, a typed SDK, docs, and
+> an auto-generated admin panel. The parts that are dangerous to get wrong — money,
+> concurrency, migrations, idempotency — are owned by the runtime, not the generated
+> code, so what an agent assembles is correct *by construction*: it declares intent,
+> the engine guarantees it. Business logic unique to your app is a small typed Go
+> hook. Storage is a swappable adapter (SQLite today, Postgres next).
+
 ---
 
 ## The problem
