@@ -7,6 +7,13 @@ Every storage adapter (SQLite, PostgreSQL, Couchbase) implements it.
 Do not add or remove methods without a major version bump.
 Do not add adapter-specific methods to this interface — extend via separate interfaces.
 
+> **ADR-0036 amendment (pre-public, additive).** While there is a single adapter and
+> a single consumer, the *value* vocabulary of a filter may still grow additively —
+> no method or signature changes. The `And`/`Or` boolean nodes and the `Subquery`
+> semi-join value were added this way. Any adapter must pass the semi-join / boolean
+> conformance suite (`internal/store/sqlite/semijoin_test.go`) before it is complete.
+> The interface is fully frozen before the store goes public.
+
 ---
 
 ## Core types
@@ -24,7 +31,9 @@ import (
 //   string, float64, int64, bool, time.Time, []byte (JSON), nil
 type Record map[string]any
 
-// Filter represents a single field-level filter condition.
+// Filter represents a single field-level filter condition. A leaf is a column
+// comparison (Field + Operator + Value); an And/Or node groups sub-filters (Value is
+// a []Filter); an In/NotIn whose Value is a Subquery is a semi-join. See ADR-0036.
 type Filter struct {
     Field    string
     Operator Op
@@ -45,7 +54,24 @@ const (
     StartsWith Op = "starts_with"
     In         Op = "in"
     NotIn      Op = "nin"
+    IsNull     Op = "is_null"
+    NotNull    Op = "not_null"
+    And        Op = "and" // Value is []Filter, all must hold (ADR-0036)
+    Or         Op = "or"  // Value is []Filter, any must hold (ADR-0036)
 )
+
+// Subquery is the value of an In/NotIn filter, compiling to
+// `col IN (SELECT Select FROM Collection WHERE Filters…)` — a semi-join (ADR-0036).
+//
+// INVARIANT — UNCORRELATED: Filters hold only literal values, never an outer column.
+// This keeps it a single hash semi-join on every backend (and an uncorrelated
+// `IN (SELECT …)` on Couchbase N1QL within one scope). An adapter that does not
+// implement Subquery MUST reject it with ErrInvalidInput, never ignore it.
+type Subquery struct {
+    Collection string   // the collection to look in
+    Select     string   // the column to project (the match column)
+    Filters    []Filter // literal-only conditions (uncorrelated)
+}
 
 // Query holds all parameters for a list operation.
 type Query struct {

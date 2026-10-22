@@ -9,6 +9,41 @@ While on **0.x**, minor versions may include breaking changes.
 ## [Unreleased]
 
 ### Added
+- **Media signed URLs + multi-file assets — issue #65, ADR-0037.** A `_media` asset
+  was one object reachable only through `/raw` with the caller's credentials, so
+  private media couldn't be used in a cross-origin `<img>`/`<video>`, an email link, or
+  a CDN, and a per-segment video check didn't scale. Assets can now hold **derived
+  files** under their id (`PUT/GET /__media/{id}/files/…` — an HLS ladder, image
+  renditions; `blob.Store` gains prefix list/delete, and deleting an asset removes
+  them). A gated library's response `url` fields become **signed URLs**
+  (`/__media/{id}/s/{token}/{path}`) verified by HMAC + expiry with no session or DB —
+  cheap enough per video segment and cacheable by a CDN. Signing is auto-applied at the
+  single serialization choke point; `POST /__media/{id}/sign` mints one explicitly for
+  a player (a `scope` prefix covers a whole ladder). Tokens are shareable within their
+  TTL (expiry bucketed for caching) with optional principal binding; secret rotation
+  revokes outstanding URLs. A new stdlib-only public package **`pkg/sign`** owns the
+  token wire contract (with conformance tests), and a `URLSigner` seam lets a host swap
+  in CDN token-auth or S3/R2 presign later (HMAC default ships now). Composes with
+  membership (ADR-0036): the record read that mints a URL is gated by the referencing
+  rule. Config: `media.sign` + `DCMS_MEDIA_SIGN_SECRET[_PREVIOUS]` (env-only).
+- **Cross-collection membership rules (`exists`) + boolean rule composition
+  (`all`/`any`) — issue #64, ADR-0036.** An access rule could match the caller
+  against the record (`owner`, `owner_field`) but not against a row in *another*
+  collection, so "readable if the caller has an active enrollment for this record's
+  course" had no declarative form — every such case became a custom route, invisible
+  to OpenAPI and the admin panel. A new `exists:` rule matches the caller against a
+  membership collection (`in` + `match` + `principal` + optional `where`), compiling
+  to **one indexed semi-join** per request (no N+1); the supporting index on the
+  membership collection is declared automatically. Rule composition is now a full
+  nestable boolean algebra: `any:` (OR) as before, plus `all:` (AND) for the common
+  "coarse role gate **and** fine membership gate". The old "at most one owner scope
+  per rule" limit is lifted, so `owner OR shared`, `author OR editor`, and
+  `role AND membership` are all expressible. `_media.access.read: inherit` follows
+  membership automatically. Works in every rule slot (read/create/update/delete/
+  preview/publish, field rules, transition `who`). Store: a `Subquery` semi-join
+  value and recursive `And`/`Or` filter nodes — additive, no new interface method, a
+  cross-adapter conformance suite guards them (the `store` contract stays frozen
+  before it goes public).
 - **Public store types for hooks + a full ecommerce example.** The `dcms` embedding
   package now re-exports the store types a hook or custom route needs to *write* —
   `WriteInput`, `Query`, `Page`, `Filter`, `Op` and the filter-operator consts —

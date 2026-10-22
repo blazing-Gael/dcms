@@ -159,70 +159,134 @@ func scanRows(rows *sql.Rows) ([]store.Record, error) {
 	return out, rows.Err()
 }
 
+// joinConds builds each filter with buildCond and joins the conditions with sep,
+// accumulating their args in order. It is the shared core of the top-level WHERE and
+// of an And/Or group (ADR-0036); callers add the leading "WHERE" or the parentheses.
+func joinConds(filters []store.Filter, sep string) (string, []any, error) {
+	conds := make([]string, 0, len(filters))
+	args := make([]any, 0, len(filters))
+	for _, f := range filters {
+		cond, a, err := buildCond(f)
+		if err != nil {
+			return "", nil, err
+		}
+		conds = append(conds, cond)
+		args = append(args, a...)
+	}
+	return strings.Join(conds, " "+sep+" "), args, nil
+}
+
 // buildWhere turns a list of store.Filter into a SQL WHERE clause (without the
-// leading "WHERE") and its bound arguments. Multiple filters are ANDed together.
+// leading "WHERE") and its bound arguments. The top-level filters are ANDed together.
 // Returns ("", nil, nil) when there are no filters.
 func buildWhere(filters []store.Filter) (string, []any, error) {
 	if len(filters) == 0 {
 		return "", nil, nil
 	}
-	conds := make([]string, 0, len(filters))
-	args := make([]any, 0, len(filters))
+	return joinConds(filters, "AND")
+}
 
-	for _, f := range filters {
-		if err := safeIdent(f.Field); err != nil {
+// buildCond turns one store.Filter into a single SQL condition and its args. It
+// recurses for And/Or grouping nodes and for In/NotIn whose value is a Subquery.
+func buildCond(f store.Filter) (string, []any, error) {
+	op := f.Operator
+	if op == "" {
+		op = store.Eq
+	}
+
+	// Boolean grouping nodes carry no Field; handle them before identifier checks.
+	// Value is always a []store.Filter (built in-process; a Filter never crosses a
+	// wire or the driver), so a plain assertion is enough.
+	switch op {
+	case store.And, store.Or:
+		sub, ok := f.Value.([]store.Filter)
+		if !ok {
+			return "", nil, fmt.Errorf("%w: %s value must be a []store.Filter", store.ErrInvalidInput, op)
+		}
+		if len(sub) == 0 {
+			return "", nil, fmt.Errorf("%w: %s group requires at least one sub-filter", store.ErrInvalidInput, op)
+		}
+		sep := "AND"
+		if op == store.Or {
+			sep = "OR"
+		}
+		inner, args, err := joinConds(sub, sep)
+		if err != nil {
 			return "", nil, err
 		}
-		col := quote(f.Field)
-		op := f.Operator
-		if op == "" {
-			op = store.Eq
+		return "(" + inner + ")", args, nil
+	}
+
+	if err := safeIdent(f.Field); err != nil {
+		return "", nil, err
+	}
+	col := quote(f.Field)
+
+	switch op {
+	case store.Eq:
+		return col + " = ?", []any{normalize(f.Value)}, nil
+	case store.Ne:
+		return col + " <> ?", []any{normalize(f.Value)}, nil
+	case store.Gt:
+		return col + " > ?", []any{normalize(f.Value)}, nil
+	case store.Gte:
+		return col + " >= ?", []any{normalize(f.Value)}, nil
+	case store.Lt:
+		return col + " < ?", []any{normalize(f.Value)}, nil
+	case store.Lte:
+		return col + " <= ?", []any{normalize(f.Value)}, nil
+	case store.Contains:
+		return col + " LIKE ?", []any{"%" + fmt.Sprint(f.Value) + "%"}, nil
+	case store.StartsWith:
+		return col + " LIKE ?", []any{fmt.Sprint(f.Value) + "%"}, nil
+	case store.In, store.NotIn:
+		kw := "IN"
+		if op == store.NotIn {
+			kw = "NOT IN"
 		}
-		switch op {
-		case store.Eq:
-			conds = append(conds, col+" = ?")
-			args = append(args, normalize(f.Value))
-		case store.Ne:
-			conds = append(conds, col+" <> ?")
-			args = append(args, normalize(f.Value))
-		case store.Gt:
-			conds = append(conds, col+" > ?")
-			args = append(args, normalize(f.Value))
-		case store.Gte:
-			conds = append(conds, col+" >= ?")
-			args = append(args, normalize(f.Value))
-		case store.Lt:
-			conds = append(conds, col+" < ?")
-			args = append(args, normalize(f.Value))
-		case store.Lte:
-			conds = append(conds, col+" <= ?")
-			args = append(args, normalize(f.Value))
-		case store.Contains:
-			conds = append(conds, col+" LIKE ?")
-			args = append(args, "%"+fmt.Sprint(f.Value)+"%")
-		case store.StartsWith:
-			conds = append(conds, col+" LIKE ?")
-			args = append(args, fmt.Sprint(f.Value)+"%")
-		case store.In, store.NotIn:
-			placeholders, vals, err := expandSlice(f.Value)
+		// A Subquery value is a semi-join (ADR-0036); anything else is a literal set.
+		if sq, ok := f.Value.(store.Subquery); ok {
+			inner, a, err := buildSubquery(sq)
 			if err != nil {
 				return "", nil, err
 			}
-			kw := "IN"
-			if op == store.NotIn {
-				kw = "NOT IN"
-			}
-			conds = append(conds, fmt.Sprintf("%s %s (%s)", col, kw, placeholders))
-			args = append(args, vals...)
-		case store.IsNull:
-			conds = append(conds, col+" IS NULL")
-		case store.NotNull:
-			conds = append(conds, col+" IS NOT NULL")
-		default:
-			return "", nil, fmt.Errorf("%w: unsupported operator %q", store.ErrInvalidInput, op)
+			return fmt.Sprintf("%s %s (%s)", col, kw, inner), a, nil
 		}
+		placeholders, vals, err := expandSlice(f.Value)
+		if err != nil {
+			return "", nil, err
+		}
+		return fmt.Sprintf("%s %s (%s)", col, kw, placeholders), vals, nil
+	case store.IsNull:
+		return col + " IS NULL", nil, nil
+	case store.NotNull:
+		return col + " IS NOT NULL", nil, nil
+	default:
+		return "", nil, fmt.Errorf("%w: unsupported operator %q", store.ErrInvalidInput, op)
 	}
-	return strings.Join(conds, " AND "), args, nil
+}
+
+// buildSubquery compiles a store.Subquery into `SELECT <select> FROM <collection>
+// [WHERE …]` plus its args (ADR-0036). The projected column and collection are
+// identifier-checked; the WHERE reuses buildWhere, so a sub-filter may itself be any
+// supported condition. The uncorrelated invariant is the caller's contract — this
+// never splices an outer column, because a Filter only ever carries literal values.
+func buildSubquery(sq store.Subquery) (string, []any, error) {
+	if err := safeIdent(sq.Collection); err != nil {
+		return "", nil, err
+	}
+	if err := safeIdent(sq.Select); err != nil {
+		return "", nil, err
+	}
+	where, args, err := buildWhere(sq.Filters)
+	if err != nil {
+		return "", nil, err
+	}
+	sql := fmt.Sprintf("SELECT %s FROM %s", quote(sq.Select), quote(sq.Collection))
+	if where != "" {
+		sql += " WHERE " + where
+	}
+	return sql, args, nil
 }
 
 // expandSlice turns the value of an In/NotIn filter into "?, ?, ?" plus its args.

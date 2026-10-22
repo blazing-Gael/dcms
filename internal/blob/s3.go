@@ -93,6 +93,39 @@ func (s *s3store) Delete(ctx context.Context, key string) error {
 	return s.client.RemoveObject(ctx, s.bucket, key, minio.RemoveObjectOptions{})
 }
 
+// List returns every object key under prefix (an asset's derived files, ADR-0037).
+func (s *s3store) List(ctx context.Context, prefix string) ([]string, error) {
+	var keys []string
+	for obj := range s.client.ListObjects(ctx, s.bucket, minio.ListObjectsOptions{Prefix: prefix, Recursive: true}) {
+		if obj.Err != nil {
+			return nil, fmt.Errorf("blob: s3 list %q: %w", prefix, obj.Err)
+		}
+		keys = append(keys, obj.Key)
+	}
+	return keys, nil
+}
+
+// DeletePrefix removes every object under prefix. RemoveObjects streams the listing
+// into a bulk delete, so an asset's whole derived subtree goes in one pass.
+func (s *s3store) DeletePrefix(ctx context.Context, prefix string) error {
+	objCh := make(chan minio.ObjectInfo)
+	go func() {
+		defer close(objCh)
+		for obj := range s.client.ListObjects(ctx, s.bucket, minio.ListObjectsOptions{Prefix: prefix, Recursive: true}) {
+			if obj.Err != nil {
+				continue
+			}
+			objCh <- obj
+		}
+	}()
+	for err := range s.client.RemoveObjects(ctx, s.bucket, objCh, minio.RemoveObjectsOptions{}) {
+		if err.Err != nil {
+			return fmt.Errorf("blob: s3 delete-prefix %q: %w", prefix, err.Err)
+		}
+	}
+	return nil
+}
+
 func (s *s3store) URL(key string) string {
 	if s.publicBaseURL == "" {
 		return "" // no public base → served through the gateway proxy

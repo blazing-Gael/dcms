@@ -35,13 +35,41 @@ const (
 	// nullable field.
 	IsNull  Op = "is_null"
 	NotNull Op = "not_null"
+	// And / Or are boolean grouping operators (ADR-0036). The Filter's Field is
+	// ignored and its Value holds a []Filter of sub-conditions, combined with AND
+	// (all must hold) or OR (any must hold). Nodes nest arbitrarily, so a rule tree
+	// like `owner OR member` compiles to one Filter. The top-level Query.Filters list
+	// is still ANDed, so these are only needed to introduce an OR (or an AND inside an
+	// OR); callers that only AND leaves keep building a flat list as before.
+	And Op = "and"
+	Or  Op = "or"
 )
 
-// Filter represents a single field-level filter condition.
+// Filter represents a single field-level filter condition. For a leaf, Field +
+// Operator + Value name a column comparison. For an And/Or node, only Value matters
+// (a []Filter of children). For an In/NotIn whose Value is a Subquery, the filter is
+// a semi-join (ADR-0036).
 type Filter struct {
 	Field    string
 	Operator Op
 	Value    any
+}
+
+// Subquery is the value of an In/NotIn filter that matches a column against the
+// result of a lookup in another collection, compiled to `col IN (SELECT Select FROM
+// Collection WHERE …)` (ADR-0036). It is the store primitive behind membership
+// (`exists`) access rules.
+//
+// Invariant — UNCORRELATED: Filters must reference only literal values (e.g. the
+// caller's id, status constants), never a column of the outer query. This is what
+// lets every adapter run it as a single hash semi-join (SQLite/Postgres) or an
+// uncorrelated `IN (SELECT …)` (Couchbase N1QL, within one scope — no USE KEYS, no
+// cross-bucket join). An adapter that has not implemented Subquery must reject it
+// with ErrInvalidInput rather than silently ignore it.
+type Subquery struct {
+	Collection string   // the collection to look in
+	Select     string   // the column to project (the match column)
+	Filters    []Filter // literal-only conditions on Collection (uncorrelated)
 }
 
 // Query holds all parameters for a list operation.

@@ -89,14 +89,14 @@ func requestsHidden(v visibility) bool {
 }
 
 // previewDecision resolves the identity `preview` rule (ADR-0023) for a collection
-// against the request's principal, mirroring evalRule's allow/ownerScope/deny plus
-// the owner column for ownerScope. A collection with no preview rule is deny (only
+// against the request's principal, mirroring evalRule's allow/scope/deny plus the
+// scope filters for scope. A collection with no preview rule is deny (only
 // the shared token, handled separately, can widen the view). The token is NOT
 // folded in here; callers check tokenPreview first.
-func (s *Server) previewDecision(ctx context.Context, collection string) (decision, string) {
+func (s *Server) previewDecision(ctx context.Context, collection string) (decision, []store.Filter) {
 	rule, ok := s.collections[collection].PreviewRule()
 	if !ok {
-		return deny, ""
+		return deny, nil
 	}
 	return evalRule(rule, principalFromContext(ctx))
 }
@@ -106,7 +106,7 @@ func (s *Server) previewDecision(ctx context.Context, collection string) (decisi
 // to consume a request's visibility: it downgrades to the public view unless the
 // caller is preview-eligible for the requested hidden states. The token honours
 // the request as-is (no owner narrowing); the identity path honours hidden states
-// only when the preview rule allows, narrowing to owned rows on ownerScope.
+// only when the preview rule allows, narrowing to in-scope rows on scope.
 func (s *Server) effectiveListVisibility(ctx context.Context, collection string) (visibility, []store.Filter) {
 	v := visibilityFromContext(ctx)
 	if v.tokenPreview {
@@ -122,12 +122,11 @@ func (s *Server) effectiveListVisibility(ctx context.Context, collection string)
 	if v.status == "" {
 		v.status = "any"
 	}
-	switch d, field := s.previewDecision(ctx, collection); d {
+	switch d, filters := s.previewDecision(ctx, collection); d {
 	case allow:
 		return v, nil
-	case ownerScope:
-		p := principalFromContext(ctx)
-		return v, []store.Filter{{Field: field, Operator: store.Eq, Value: p.ID}}
+	case scope:
+		return v, filters
 	default:
 		return visibility{}, nil // not eligible → ignore the hidden request
 	}
@@ -163,7 +162,7 @@ func (s *Server) writeHidden(ctx context.Context, collection, id string) bool {
 // caller, combining lifecycle visibility with preview eligibility (ADR-0023). A
 // publicly-visible record (published, live, not trashed) is always visible; a
 // hidden one requires the shared token (honouring its requested view) or the
-// identity preview rule (allow, or ownerScope with the record's owner matching).
+// identity preview rule (allow, or scope with the record matching the filters).
 func (s *Server) recordPreviewVisible(ctx context.Context, collection string, rec store.Record) bool {
 	v := visibilityFromContext(ctx)
 	if v.tokenPreview {
@@ -178,19 +177,18 @@ func (s *Server) recordPreviewVisible(ctx context.Context, collection string, re
 // previewEligible reports whether the caller may see this record's hidden state —
 // the record-level preview decision alone, WITHOUT the public fallback. The
 // shared token grants it outright; otherwise the collection's `preview` rule must
-// admit the caller (allow, or ownerScope with the record's owner matching). Used
+// admit the caller (allow, or scope with the record matching the filters). Used
 // where "can this identity see behind the curtain" is the question independent of
 // whether the record happens to be public — e.g. revision history (issue #24).
 func (s *Server) previewEligible(ctx context.Context, collection string, rec store.Record) bool {
 	if visibilityFromContext(ctx).tokenPreview {
 		return true
 	}
-	switch d, field := s.previewDecision(ctx, collection); d {
+	switch d, filters := s.previewDecision(ctx, collection); d {
 	case allow:
 		return true
-	case ownerScope:
-		owner, _ := rec[field].(string)
-		return owner != "" && owner == principalFromContext(ctx).ID
+	case scope:
+		return s.recordInScope(ctx, collection, rec, filters)
 	default:
 		return false
 	}
