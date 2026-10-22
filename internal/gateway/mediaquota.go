@@ -45,11 +45,17 @@ func (q *MediaQuotaOptions) quotaFor(roles []string) int64 {
 // mediaUsage returns the total bytes of media a principal has uploaded (SUM of size
 // over their created_by rows). Zero when they have none.
 func (s *Server) mediaUsage(ctx context.Context, principalID string) (int64, error) {
-	// A principal's footprint is their primary bytes plus every asset's derived-file
-	// bytes (ADR-0037), so derived files (HLS ladders) count against the quota too.
+	return mediaUsageDB(ctx, s.db, principalID)
+}
+
+// mediaUsageDB is mediaUsage against an explicit DB, so the derived-file quota check
+// can run inside the same transaction as the reservation (ADR-0037). A principal's
+// footprint is their primary bytes plus every asset's derived-file bytes, so derived
+// files (HLS ladders) count against the quota too.
+func mediaUsageDB(ctx context.Context, db store.DB, principalID string) (int64, error) {
 	var total int64
 	for _, field := range []string{schema.MediaSize, schema.MediaDerivedSize} {
-		res, err := s.db.Aggregate(ctx, store.AggregateQuery{
+		res, err := db.Aggregate(ctx, store.AggregateQuery{
 			Collection: schema.MediaCollection,
 			Metric:     store.Sum,
 			Field:      field,

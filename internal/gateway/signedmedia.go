@@ -80,11 +80,12 @@ func (h *hmacURLSigner) SignedURL(id, scope, filePath string, ttl time.Duration,
 }
 
 func (h *hmacURLSigner) Verify(id, filePath, token string) (bool, time.Duration) {
-	ok, exp := h.signer.VerifyExpiry(id, filePath, token, h.now())
+	now := h.now()
+	ok, exp := h.signer.VerifyExpiry(id, filePath, token, now)
 	if !ok {
 		return false, 0
 	}
-	return true, time.Until(exp)
+	return true, exp.Sub(now) // the signer's clock, not the wall clock, so tests stay deterministic
 }
 
 // safeFilePath reports whether a derived-file path is safe to splice into a blob key:
@@ -311,32 +312,29 @@ func (s *Server) handleMediaFilePut(w http.ResponseWriter, r *http.Request) {
 	}
 	delta := newSize - oldSize
 
-	// Quota headroom against the asset owner (ADR-0028): derived bytes land in the
-	// owner's budget (mediaUsage counts size + derived_size), checked at admission.
+	// Derived bytes count against the asset owner's budget (ADR-0028/0037).
 	owner, _ := rec[createdByField].(string)
+	limit := int64(-1) // -1 = no quota / unlimited
 	if q := s.opts.MediaQuota; q != nil && owner != "" {
 		p := principalFromContext(r.Context())
 		roles := p.Roles
 		if owner != p.ID {
 			roles = nil // the owner's quota, evaluated at its default tier
 		}
-		if limit := q.quotaFor(roles); limit >= 0 {
-			used, err := s.mediaUsage(r.Context(), owner)
-			if err != nil {
-				writeStoreError(w, s.logger, r, err)
-				return
-			}
-			if used+delta > limit {
-				writeError(w, http.StatusRequestEntityTooLarge, apiError{Code: "QUOTA_EXCEEDED", Message: "storage quota exceeded"})
-				return
-			}
-		}
+		limit = q.quotaFor(roles)
 	}
 
-	// Reserve the quota by bumping derived_size BEFORE writing bytes, so a crash can
-	// only ever over-count (fail safe), never under-count past the limit. Compensate
-	// if the blob write then fails.
-	if err := s.addDerivedSize(r.Context(), rec, delta); err != nil {
+	// Check the quota and reserve the bytes (bump derived_size) in ONE transaction, so
+	// two concurrent uploads can't both pass a check against stale usage and together
+	// overshoot the limit — SQLite serializes transactions, making it atomic. This runs
+	// before the blob write; if the write then fails we compensate. A crash in that gap
+	// over-counts for a growing file (fail safe) or slightly under-counts for a smaller
+	// overwrite (delta < 0) — harmless either way, self-corrected by the next write.
+	if err := s.reserveDerivedSize(r.Context(), rec, owner, delta, limit); err != nil {
+		if errors.Is(err, errMediaQuota) {
+			writeError(w, http.StatusRequestEntityTooLarge, apiError{Code: "QUOTA_EXCEEDED", Message: "storage quota exceeded"})
+			return
+		}
 		writeStoreError(w, s.logger, r, err)
 		return
 	}
@@ -348,23 +346,56 @@ func (s *Server) handleMediaFilePut(w http.ResponseWriter, r *http.Request) {
 	writeData(w, http.StatusCreated, store.Record{"path": filePath, "size": newSize})
 }
 
-// addDerivedSize atomically adjusts an asset's derived-byte total by delta, inside a
-// transaction that re-reads the row so concurrent derived-file writes don't lose an
-// update. The total never goes below zero.
+// errMediaQuota signals that a derived-file write would exceed the owner's storage
+// quota; reserveDerivedSize returns it so the handler maps it to 413.
+var errMediaQuota = errors.New("media storage quota exceeded")
+
+// reserveDerivedSize checks the owner's quota and reserves delta bytes on the asset's
+// derived-size counter in a single transaction (ADR-0037). Doing both inside one Tx is
+// what makes the check-then-reserve atomic: SQLite runs transactions serially, so a
+// concurrent upload can't read stale usage and overshoot the limit. limit < 0 means no
+// quota. On an exceeded quota it returns errMediaQuota and makes no change.
+func (s *Server) reserveDerivedSize(ctx context.Context, rec store.Record, owner string, delta, limit int64) error {
+	if delta == 0 {
+		return nil
+	}
+	id, _ := rec["id"].(string)
+	return s.db.Tx(ctx, func(ctx context.Context, tx store.DB) error {
+		if limit >= 0 && owner != "" {
+			used, err := mediaUsageDB(ctx, tx, owner)
+			if err != nil {
+				return err
+			}
+			if used+delta > limit {
+				return errMediaQuota
+			}
+		}
+		return updateDerivedSize(ctx, tx, id, delta)
+	})
+}
+
+// addDerivedSize atomically adjusts an asset's derived-byte total by delta (no quota
+// check) — used to compensate a reservation when the blob write fails.
 func (s *Server) addDerivedSize(ctx context.Context, rec store.Record, delta int64) error {
 	if delta == 0 {
 		return nil
 	}
 	id, _ := rec["id"].(string)
 	return s.db.Tx(ctx, func(ctx context.Context, tx store.DB) error {
-		cur, err := tx.FindOne(ctx, schema.MediaCollection, id)
-		if err != nil {
-			return err
-		}
-		n := max(asInt64(cur[schema.MediaDerivedSize])+delta, 0)
-		_, err = tx.Update(ctx, store.WriteInput{Collection: schema.MediaCollection, Data: store.Record{"id": id, schema.MediaDerivedSize: n}})
-		return err
+		return updateDerivedSize(ctx, tx, id, delta)
 	})
+}
+
+// updateDerivedSize re-reads the row (so concurrent writes don't lose an update) and
+// adds delta to derived_size, floored at zero.
+func updateDerivedSize(ctx context.Context, tx store.DB, id string, delta int64) error {
+	cur, err := tx.FindOne(ctx, schema.MediaCollection, id)
+	if err != nil {
+		return err
+	}
+	n := max(asInt64(cur[schema.MediaDerivedSize])+delta, 0)
+	_, err = tx.Update(ctx, store.WriteInput{Collection: schema.MediaCollection, Data: store.Record{"id": id, schema.MediaDerivedSize: n}})
+	return err
 }
 
 // asInt64 coerces a stored numeric value (int64 from the store, float64 after a JSON

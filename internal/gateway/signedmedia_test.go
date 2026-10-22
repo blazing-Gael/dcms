@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -268,6 +269,54 @@ func TestSignedMedia_CacheHeaders(t *testing.T) {
 	if got := cc(srv.URL + segURL); !strings.HasPrefix(got, "public, max-age=") || !strings.Contains(got, "immutable") {
 		t.Fatalf("segment Cache-Control: got %q, want public bounded + immutable", got)
 	}
+}
+
+// /sign must not honour an arbitrarily long ttl_seconds — the configured TTL is the
+// ceiling (ADR-0037), so an authorized user can't mint a years-long link to paid
+// content. The signer's TTL and bucket window are both 1h here, so a signed URL's
+// expiry (and thus the served segment's max-age) can be at most ttl + window = 2h.
+func TestSignedMedia_SignTTLClamped(t *testing.T) {
+	srv, db := mediaAuthServer(t, signMediaSchema, gateway.Options{URLSigner: testSigner()})
+	seedUser(t, db, "root@x.com", "pw-root-12345", "admin")
+	admin := login(t, srv.URL, "root@x.com", "pw-root-12345")
+	_, up := uploadFileAs(t, srv.URL+"/__media", admin, "v.mp4", "video/mp4", []byte("ORIG"))
+	videoID := recordID(t, up)
+	base := srv.URL + "/__media/" + videoID
+	putRaw(t, base+"/files/seg.ts", admin, "video/mp2t", []byte("SEG"))
+
+	// Ask for ~100 years.
+	_, signed := doAs(t, http.MethodPost, base+"/sign", admin, `{"path":"seg.ts","ttl_seconds":3153600000}`)
+	url := dataStr(signed, "url")
+
+	cc := func(u string) string {
+		resp, err := http.Get(u)
+		if err != nil {
+			t.Fatalf("GET %s: %v", u, err)
+		}
+		resp.Body.Close()
+		return resp.Header.Get("Cache-Control")
+	}
+	maxAge := parseMaxAge(t, cc(srv.URL+url))
+	const ceiling = 2 * 60 * 60 // ttl (1h) + window (1h)
+	if maxAge <= 0 || maxAge > ceiling {
+		t.Fatalf("clamped TTL: segment max-age=%d, want 0 < maxAge <= %d (not the ~100y requested)", maxAge, ceiling)
+	}
+}
+
+func parseMaxAge(t *testing.T, cacheControl string) int {
+	t.Helper()
+	for _, part := range strings.Split(cacheControl, ",") {
+		part = strings.TrimSpace(part)
+		if v, ok := strings.CutPrefix(part, "max-age="); ok {
+			n, err := strconv.Atoi(v)
+			if err != nil {
+				t.Fatalf("bad max-age %q in %q", v, cacheControl)
+			}
+			return n
+		}
+	}
+	t.Fatalf("no max-age in %q", cacheControl)
+	return 0
 }
 
 // Without a configured signer, a gated library falls back to the credentialed /raw
