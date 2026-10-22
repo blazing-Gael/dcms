@@ -73,24 +73,35 @@ func (s *Signer) Sign(id, scope string, exp time.Time, principal string) string 
 }
 
 // Verify reports whether token authorizes fetching id's file at path at time `now`.
-// It verifies the MAC under any accepted secret (constant-time), then — only once the
-// payload is trusted — checks the expiry and that path falls under the signed scope.
 func (s *Signer) Verify(id, path, token string, now time.Time) bool {
-	rawPayload, mac, ok := splitToken(token)
-	if !ok {
-		return false
+	ok, _ := s.VerifyExpiry(id, path, token, now)
+	return ok
+}
+
+// VerifyExpiry is Verify that also returns the token's expiry, so a caller can bound a
+// cache's max-age to the token's remaining lifetime (a shared cache must not outlive
+// the token, or expiry and secret rotation stop working). exp is meaningful only when
+// ok is true. It verifies the MAC under any accepted secret (constant-time), then —
+// only once the payload is trusted — checks the expiry and that path falls under scope.
+func (s *Signer) VerifyExpiry(id, path, token string, now time.Time) (ok bool, exp time.Time) {
+	rawPayload, mac, split := splitToken(token)
+	if !split {
+		return false, time.Time{}
 	}
 	if !s.macValid(id, rawPayload, mac) {
-		return false
+		return false, time.Time{}
 	}
-	exp, scope, _, ok := decodePayload(rawPayload)
-	if !ok {
-		return false
+	exp, scope, _, decoded := decodePayload(rawPayload)
+	if !decoded {
+		return false, time.Time{}
 	}
 	if !now.Before(exp) {
-		return false // expired (exp is exclusive)
+		return false, time.Time{} // expired (exp is exclusive)
 	}
-	return strings.HasPrefix(path, scope)
+	if !strings.HasPrefix(path, scope) {
+		return false, time.Time{}
+	}
+	return true, exp
 }
 
 // mac computes HMAC-SHA256(secret, id "\n" payload).

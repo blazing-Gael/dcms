@@ -93,6 +93,18 @@ func (s *s3store) Delete(ctx context.Context, key string) error {
 	return s.client.RemoveObject(ctx, s.bucket, key, minio.RemoveObjectOptions{})
 }
 
+// Stat returns the object's size and whether it exists.
+func (s *s3store) Stat(ctx context.Context, key string) (int64, bool, error) {
+	info, err := s.client.StatObject(ctx, s.bucket, key, minio.StatObjectOptions{})
+	if err != nil {
+		if minio.ToErrorResponse(err).Code == "NoSuchKey" {
+			return 0, false, nil
+		}
+		return 0, false, err
+	}
+	return info.Size, true, nil
+}
+
 // List returns every object key under prefix (an asset's derived files, ADR-0037).
 func (s *s3store) List(ctx context.Context, prefix string) ([]string, error) {
 	var keys []string
@@ -109,11 +121,16 @@ func (s *s3store) List(ctx context.Context, prefix string) ([]string, error) {
 // into a bulk delete, so an asset's whole derived subtree goes in one pass.
 func (s *s3store) DeletePrefix(ctx context.Context, prefix string) error {
 	objCh := make(chan minio.ObjectInfo)
+	var listErr error
 	go func() {
 		defer close(objCh)
 		for obj := range s.client.ListObjects(ctx, s.bucket, minio.ListObjectsOptions{Prefix: prefix, Recursive: true}) {
 			if obj.Err != nil {
-				continue
+				// A listing error means we may not have enumerated everything, so the
+				// delete would be partial: record it and stop feeding, then report it
+				// rather than returning a false success.
+				listErr = obj.Err
+				return
 			}
 			objCh <- obj
 		}
@@ -122,6 +139,9 @@ func (s *s3store) DeletePrefix(ctx context.Context, prefix string) error {
 		if err.Err != nil {
 			return fmt.Errorf("blob: s3 delete-prefix %q: %w", prefix, err.Err)
 		}
+	}
+	if listErr != nil {
+		return fmt.Errorf("blob: s3 delete-prefix %q: incomplete listing: %w", prefix, listErr)
 	}
 	return nil
 }

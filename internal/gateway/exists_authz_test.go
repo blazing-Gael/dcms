@@ -176,6 +176,62 @@ func TestExists_AllRoleAndMembership(t *testing.T) {
 	}
 }
 
+const existsSoftDeleteSchema = `
+version: "1"
+auth:
+  roles:
+    admin: { label: Administrator }
+  session: { ttl: 1h }
+collections:
+  courses:
+    fields: { title: { type: string } }
+    access: { read: public, create: [admin] }
+  enrollments:
+    soft_delete: true
+    fields:
+      user:   { type: relation, target: _users }
+      course: { type: relation, target: courses }
+    access: { read: [admin], create: [admin], delete: [admin] }
+  lessons:
+    fields:
+      course: { type: relation, target: courses }
+    access:
+      read:
+        any:
+          - admin
+          - exists: { in: enrollments, match: { course: course }, principal: user }
+      create: [admin]
+`
+
+// A soft-deleted (trashed) membership row must stop granting access — e.g. a refunded
+// enrollment (ADR-0036 soft-delete handling).
+func TestExists_SoftDeletedMembershipRevokes(t *testing.T) {
+	srv, db := newServerWith(t, existsSoftDeleteSchema)
+	seedUser(t, db, "root@x.com", "pw-root-12345", "admin")
+	aliceID := seedUserID(t, db, "alice@x.com", "pw-alice-1234")
+	admin := login(t, srv.URL, "root@x.com", "pw-root-12345")
+	alice := login(t, srv.URL, "alice@x.com", "pw-alice-1234")
+
+	_, cr := doAs(t, http.MethodPost, srv.URL+"/api/v1/courses", admin, `{"title":"Go 101"}`)
+	courseID := recordID(t, cr)
+	doAs(t, http.MethodPost, srv.URL+"/api/v1/lessons", admin, `{"course":"`+courseID+`"}`)
+	_, er := doAs(t, http.MethodPost, srv.URL+"/api/v1/enrollments", admin, `{"user":"`+aliceID+`","course":"`+courseID+`"}`)
+	enrollID := recordID(t, er)
+
+	// Enrolled → sees the lesson.
+	if _, b := doAs(t, http.MethodGet, srv.URL+"/api/v1/lessons", alice, ""); listLen(t, b) != 1 {
+		t.Fatalf("before trash: want 1 lesson, got %v", b)
+	}
+	// Admin trashes the enrollment (soft delete).
+	if st, _ := doAs(t, http.MethodDelete, srv.URL+"/api/v1/enrollments/"+enrollID, admin, ""); st != http.StatusNoContent {
+		t.Fatalf("trash enrollment: got %d, want 204", st)
+	}
+	// Access is revoked immediately — the trashed row no longer counts.
+	if _, b := doAs(t, http.MethodGet, srv.URL+"/api/v1/lessons", alice, ""); listLen(t, b) != 0 {
+		t.Fatalf("after trash: want 0 lessons, got %v", b)
+	}
+}
+
 // Anonymous callers can never satisfy an `exists` rule (no principal to bind).
 func TestExists_AnonymousDenied(t *testing.T) {
 	srv, db := newServerWith(t, existsSchema)

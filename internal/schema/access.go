@@ -82,6 +82,10 @@ type ExistsSpec struct {
 	MatchThis string         `json:"match_this"` // relation/column on this collection
 	Principal string         `json:"principal"`  // belongs-to relation on In to _users
 	Where     map[string]any `json:"where,omitempty"`
+	// InSoftDelete is set at schema-compile when In is a soft-delete collection, so the
+	// membership subquery can exclude trashed rows (a cancelled enrollment must stop
+	// granting access). Computed, not from YAML.
+	InSoftDelete bool `json:"in_soft_delete,omitempty"`
 }
 
 // children returns the sub-rules of a composite (`any`/`all`), empty for a leaf.
@@ -185,6 +189,9 @@ func (s *SchemaDefinition) validateExistsRules(rule Rule, col CollectionDef) []s
 			msgs = append(msgs, fmt.Sprintf("exists.in %q is not a declared collection", sp.In))
 			continue
 		}
+		// Record whether the membership collection trashes rows, so enforcement can
+		// exclude soft-deleted memberships (a cancelled enrollment revokes access).
+		sp.InSoftDelete = inCol.SoftDelete
 		// match: a relation on this collection and one on `in`, same target.
 		thisTarget, thisOK := col.BelongsTo(sp.MatchThis)
 		if !thisOK {

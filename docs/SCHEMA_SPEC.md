@@ -668,6 +668,13 @@ lessons:
 - Works in every rule slot (`read`/`create`/`update`/`delete`/`preview`/`publish`,
   field rules, transition `who`). On a list read it filters; on a single read a
   non-member gets `404`; an anonymous caller never matches.
+- When `in` is a **soft-delete** collection, trashed membership rows are excluded
+  automatically — a refunded enrollment or revoked guardianship stops granting access
+  the moment it is trashed.
+- `where:` supports **equality only**. A time-based rule like "access until
+  `expires_at`" can't be expressed as a comparison; model it by flipping a `status`
+  enum (e.g. a scheduled job sets `status: expired`) and matching `where: { status:
+  active }`.
 
 Enforcement (ADR-0016) is at the gateway, above the store:
 

@@ -45,17 +45,22 @@ func (q *MediaQuotaOptions) quotaFor(roles []string) int64 {
 // mediaUsage returns the total bytes of media a principal has uploaded (SUM of size
 // over their created_by rows). Zero when they have none.
 func (s *Server) mediaUsage(ctx context.Context, principalID string) (int64, error) {
-	res, err := s.db.Aggregate(ctx, store.AggregateQuery{
-		Collection: schema.MediaCollection,
-		Metric:     store.Sum,
-		Field:      schema.MediaSize,
-		Filters:    []store.Filter{{Field: createdByField, Operator: store.Eq, Value: principalID}},
-	})
-	if err != nil {
-		return 0, err
+	// A principal's footprint is their primary bytes plus every asset's derived-file
+	// bytes (ADR-0037), so derived files (HLS ladders) count against the quota too.
+	var total int64
+	for _, field := range []string{schema.MediaSize, schema.MediaDerivedSize} {
+		res, err := s.db.Aggregate(ctx, store.AggregateQuery{
+			Collection: schema.MediaCollection,
+			Metric:     store.Sum,
+			Field:      field,
+			Filters:    []store.Filter{{Field: createdByField, Operator: store.Eq, Value: principalID}},
+		})
+		if err != nil {
+			return 0, err
+		}
+		if len(res) > 0 {
+			total += int64(res[0].Value)
+		}
 	}
-	if len(res) == 0 {
-		return 0, nil
-	}
-	return int64(res[0].Value), nil
+	return total, nil
 }
