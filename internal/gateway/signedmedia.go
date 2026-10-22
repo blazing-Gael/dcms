@@ -1,6 +1,8 @@
 package gateway
 
 import (
+	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -28,12 +30,14 @@ import (
 // (DCMS verifies); the seam lets a host swap in CDN token-auth or S3/R2 presigned GETs
 // without touching the media handlers. Nil on Options ⇒ signing is off.
 type URLSigner interface {
-	// SignedURL returns a URL that serves id's file at `filePath`, valid for ttl (0 =
-	// the signer's default), authorizing any path under `scope` (a prefix, so one URL's
-	// token covers a whole ladder). principal binds the token when non-empty.
+	// SignedURL returns a URL that serves id's file at `filePath`, valid for ttl (0 or
+	// over the configured maximum = the signer's default/max), authorizing any path
+	// under `scope` (a prefix, so one URL's token covers a whole ladder). principal
+	// binds the token when non-empty.
 	SignedURL(id, scope, filePath string, ttl time.Duration, principal string) string
-	// Verify reports whether token authorizes fetching id's file at filePath now.
-	Verify(id, filePath, token string) bool
+	// Verify reports whether token authorizes fetching id's file at filePath now, and
+	// the token's remaining lifetime — so a cache's max-age can be bounded to it.
+	Verify(id, filePath, token string) (ok bool, remaining time.Duration)
 }
 
 // hmacURLSigner is the built-in URLSigner backed by pkg/sign. It composes gateway
@@ -65,7 +69,9 @@ func NewHMACURLSigner(secret string, previous []string, ttl, window time.Duratio
 }
 
 func (h *hmacURLSigner) SignedURL(id, scope, filePath string, ttl time.Duration, principal string) string {
-	if ttl <= 0 {
+	// The configured TTL is the ceiling: a caller can ask for less, but never more —
+	// so an authorized user can't mint a year-long shareable link to paid content.
+	if ttl <= 0 || ttl > h.ttl {
 		ttl = h.ttl
 	}
 	exp := sign.BucketExpiry(h.now(), ttl, h.window)
@@ -73,8 +79,12 @@ func (h *hmacURLSigner) SignedURL(id, scope, filePath string, ttl time.Duration,
 	return mediaBasePath + "/" + id + "/s/" + tok + "/" + filePath
 }
 
-func (h *hmacURLSigner) Verify(id, filePath, token string) bool {
-	return h.signer.Verify(id, filePath, token, h.now())
+func (h *hmacURLSigner) Verify(id, filePath, token string) (bool, time.Duration) {
+	ok, exp := h.signer.VerifyExpiry(id, filePath, token, h.now())
+	if !ok {
+		return false, 0
+	}
+	return true, time.Until(exp)
 }
 
 // safeFilePath reports whether a derived-file path is safe to splice into a blob key:
@@ -152,7 +162,8 @@ func (s *Server) handleMediaSignedRaw(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	token := chi.URLParam(r, "token")
 	filePath := chi.URLParam(r, "*")
-	if s.opts.URLSigner == nil || !s.opts.URLSigner.Verify(id, filePath, token) {
+	ok, remaining := URLSignerVerify(s.opts.URLSigner, id, filePath, token)
+	if !ok {
 		writeError(w, http.StatusForbidden, apiError{Code: "FORBIDDEN", Message: "invalid or expired media token"})
 		return
 	}
@@ -166,15 +177,36 @@ func (s *Server) handleMediaSignedRaw(w http.ResponseWriter, r *http.Request) {
 		}
 		ct, _ := rec[schema.MediaContentType].(string)
 		ck, _ := rec[schema.MediaChecksum].(string)
-		s.serveBlobBytes(w, r, id, ct, ck, "public, max-age=3600")
+		s.serveBlobBytes(w, r, id, ct, ck, derivedCacheControl(filePath, remaining))
 		return
 	}
 	if !safeFilePath(filePath) {
 		writeError(w, http.StatusNotFound, apiError{Code: "NOT_FOUND", Message: "no such file"})
 		return
 	}
-	// Derived file: type from the path, no DB. Immutable content → cache hard.
-	s.serveBlobBytes(w, r, id+"/"+filePath, derivedContentType(filePath), "", "public, max-age=31536000, immutable")
+	// Derived file: type from the path, no DB.
+	s.serveBlobBytes(w, r, id+"/"+filePath, derivedContentType(filePath), "", derivedCacheControl(filePath, remaining))
+}
+
+// URLSignerVerify guards a nil signer (signing disabled) and returns the verify result.
+func URLSignerVerify(signer URLSigner, id, filePath, token string) (bool, time.Duration) {
+	if signer == nil {
+		return false, 0
+	}
+	return signer.Verify(id, filePath, token)
+}
+
+// derivedCacheControl bounds a cache's max-age to the token's remaining lifetime, so a
+// shared cache never serves bytes past token expiry or a secret rotation. A manifest
+// (.m3u8/.mpd) is marked no-cache because it changes — a live HLS playlist is rewritten
+// continuously; other files (segments, renditions) are immutable within the window.
+func derivedCacheControl(filePath string, remaining time.Duration) string {
+	secs := max(int(remaining.Seconds()), 0)
+	switch strings.ToLower(path.Ext(filePath)) {
+	case ".m3u8", ".mpd":
+		return "no-cache"
+	}
+	return fmt.Sprintf("public, max-age=%d, immutable", secs)
 }
 
 // handleMediaSign issues a signed URL for an asset after the normal access check — for
@@ -253,47 +285,100 @@ func (s *Server) handleMediaFilePut(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Cap the body and buffer it, so we know the true size (for quota + blob Put) even
-	// when Content-Length is absent.
+	// Cap the body and buffer it once, so we know the true size (for quota + blob Put)
+	// even when Content-Length is absent. bytes.NewReader below reuses this buffer —
+	// no second copy.
 	r.Body = http.MaxBytesReader(w, r.Body, s.maxUpload())
 	data, err := io.ReadAll(r.Body)
 	if err != nil {
-		if strings.Contains(err.Error(), "too large") {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
 			writeError(w, http.StatusRequestEntityTooLarge, apiError{Code: "TOO_LARGE", Message: fmt.Sprintf("upload exceeds the %d-byte limit", s.maxUpload())})
 			return
 		}
 		writeError(w, http.StatusBadRequest, apiError{Code: "BAD_REQUEST", Message: "could not read request body"})
 		return
 	}
+	newSize := int64(len(data))
+
+	key := id + "/" + filePath
+	// Net byte delta: overwriting an existing derived file only costs the difference,
+	// so repeated segment uploads don't over-count against the quota.
+	oldSize, _, err := s.opts.Blob.Stat(r.Context(), key)
+	if err != nil {
+		writeStoreError(w, s.logger, r, err)
+		return
+	}
+	delta := newSize - oldSize
 
 	// Quota headroom against the asset owner (ADR-0028): derived bytes land in the
-	// owner's budget, checked at admission.
-	if q := s.opts.MediaQuota; q != nil {
-		owner, _ := rec[createdByField].(string)
+	// owner's budget (mediaUsage counts size + derived_size), checked at admission.
+	owner, _ := rec[createdByField].(string)
+	if q := s.opts.MediaQuota; q != nil && owner != "" {
 		p := principalFromContext(r.Context())
 		roles := p.Roles
-		if owner != "" && owner != p.ID {
-			roles = nil // quota of the owner, evaluated at its default tier
+		if owner != p.ID {
+			roles = nil // the owner's quota, evaluated at its default tier
 		}
-		if limit := q.quotaFor(roles); limit >= 0 && owner != "" {
+		if limit := q.quotaFor(roles); limit >= 0 {
 			used, err := s.mediaUsage(r.Context(), owner)
 			if err != nil {
 				writeStoreError(w, s.logger, r, err)
 				return
 			}
-			if used+int64(len(data)) > limit {
+			if used+delta > limit {
 				writeError(w, http.StatusRequestEntityTooLarge, apiError{Code: "QUOTA_EXCEEDED", Message: "storage quota exceeded"})
 				return
 			}
 		}
 	}
 
-	key := id + "/" + filePath
-	if err := s.opts.Blob.Put(r.Context(), key, strings.NewReader(string(data)), int64(len(data)), contentType); err != nil {
+	// Reserve the quota by bumping derived_size BEFORE writing bytes, so a crash can
+	// only ever over-count (fail safe), never under-count past the limit. Compensate
+	// if the blob write then fails.
+	if err := s.addDerivedSize(r.Context(), rec, delta); err != nil {
 		writeStoreError(w, s.logger, r, err)
 		return
 	}
-	writeData(w, http.StatusCreated, store.Record{"path": filePath, "size": int64(len(data))})
+	if err := s.opts.Blob.Put(r.Context(), key, bytes.NewReader(data), newSize, contentType); err != nil {
+		_ = s.addDerivedSize(r.Context(), rec, -delta) // best-effort rollback of the reservation
+		writeStoreError(w, s.logger, r, err)
+		return
+	}
+	writeData(w, http.StatusCreated, store.Record{"path": filePath, "size": newSize})
+}
+
+// addDerivedSize atomically adjusts an asset's derived-byte total by delta, inside a
+// transaction that re-reads the row so concurrent derived-file writes don't lose an
+// update. The total never goes below zero.
+func (s *Server) addDerivedSize(ctx context.Context, rec store.Record, delta int64) error {
+	if delta == 0 {
+		return nil
+	}
+	id, _ := rec["id"].(string)
+	return s.db.Tx(ctx, func(ctx context.Context, tx store.DB) error {
+		cur, err := tx.FindOne(ctx, schema.MediaCollection, id)
+		if err != nil {
+			return err
+		}
+		n := max(asInt64(cur[schema.MediaDerivedSize])+delta, 0)
+		_, err = tx.Update(ctx, store.WriteInput{Collection: schema.MediaCollection, Data: store.Record{"id": id, schema.MediaDerivedSize: n}})
+		return err
+	})
+}
+
+// asInt64 coerces a stored numeric value (int64 from the store, float64 after a JSON
+// round-trip) to int64.
+func asInt64(v any) int64 {
+	switch n := v.(type) {
+	case int64:
+		return n
+	case float64:
+		return int64(n)
+	case int:
+		return int64(n)
+	}
+	return 0
 }
 
 // handleMediaFileList lists an asset's derived files: GET /__media/{id}/files.

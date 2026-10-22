@@ -90,6 +90,11 @@ func existsFilter(sp *schema.ExistsSpec, p principal) store.Filter {
 		Select:     sp.MatchIn,
 		Filters:    []store.Filter{{Field: sp.Principal, Operator: store.Eq, Value: p.ID}},
 	}
+	// A soft-deleted membership must not grant access — a cancelled enrollment or a
+	// revoked guardianship stops counting the moment it is trashed (ADR-0036).
+	if sp.InSoftDelete {
+		sub.Filters = append(sub.Filters, store.Filter{Field: schema.LifecycleDeletedAt, Operator: store.IsNull})
+	}
 	for _, k := range sortedKeys(sp.Where) {
 		sub.Filters = append(sub.Filters, store.Filter{Field: k, Operator: store.Eq, Value: sp.Where[k]})
 	}

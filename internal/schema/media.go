@@ -14,6 +14,10 @@ const (
 	MediaSize        = "size"
 	MediaStorageKey  = "storage_key"
 	MediaChecksum    = "checksum"
+	// MediaDerivedSize is the running total of an asset's derived-file bytes
+	// (ADR-0037 multi-file assets). It is maintained by the /files handler so derived
+	// files count against the owner's storage quota, which sums size + derived_size.
+	MediaDerivedSize = "derived_size"
 	MediaWidth       = "width"
 	MediaHeight      = "height"
 	MediaAlt         = "alt"
@@ -32,6 +36,7 @@ func mediaCollectionDef() CollectionDef {
 			{Name: MediaFilename, Type: TypeString},
 			{Name: MediaContentType, Type: TypeString},
 			{Name: MediaSize, Type: TypeInteger},
+			{Name: MediaDerivedSize, Type: TypeInteger},
 			{Name: MediaStorageKey, Type: TypeString},
 			{Name: MediaChecksum, Type: TypeString},
 			{Name: MediaWidth, Type: TypeInteger},

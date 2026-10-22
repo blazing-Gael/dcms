@@ -30,6 +30,11 @@ type Store interface {
 	// The caller must Close the returned reader.
 	Get(ctx context.Context, key string) (io.ReadCloser, error)
 
+	// Stat returns the size in bytes of the object at key, and whether it exists.
+	// Used to account for an overwrite's net byte delta without reading the object
+	// (ADR-0037 derived-file quota). A missing object is (0, false, nil).
+	Stat(ctx context.Context, key string) (size int64, exists bool, err error)
+
 	// Delete removes the object at key. Deleting a missing key is not an error.
 	Delete(ctx context.Context, key string) error
 

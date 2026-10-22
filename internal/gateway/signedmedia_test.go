@@ -206,6 +206,70 @@ func TestSignedMedia_MultiFileHLS(t *testing.T) {
 	}
 }
 
+// Derived files count against the asset owner's storage quota (ADR-0037): a derived
+// PUT that would push the owner over the limit is refused, and the running total is
+// correct on overwrite.
+func TestSignedMedia_DerivedFilesCountAgainstQuota(t *testing.T) {
+	srv, db := mediaAuthServer(t, signMediaSchema, gateway.Options{
+		URLSigner:  testSigner(),
+		MediaQuota: &gateway.MediaQuotaOptions{Default: 20, Roles: map[string]int64{}},
+	})
+	seedUser(t, db, "root@x.com", "pw-root-12345", "admin")
+	admin := login(t, srv.URL, "root@x.com", "pw-root-12345")
+
+	_, up := uploadFileAs(t, srv.URL+"/__media", admin, "v.mp4", "video/mp4", []byte("ORIGINAL")) // 8 bytes
+	videoID := recordID(t, up)
+	base := srv.URL + "/__media/" + videoID
+
+	// 8 (primary) + 20 (derived) = 28 > 20 → refused. Without derived accounting this
+	// would wrongly pass, since the primary alone is under the limit.
+	if code := putRaw(t, base+"/files/big.bin", admin, "application/octet-stream", bytes.Repeat([]byte("x"), 20)); code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("over-quota derived PUT: got %d, want 413", code)
+	}
+	// 8 + 5 = 13 ≤ 20 → allowed.
+	if code := putRaw(t, base+"/files/ok.bin", admin, "application/octet-stream", []byte("12345")); code != http.StatusCreated {
+		t.Fatalf("within-quota derived PUT: got %d, want 201", code)
+	}
+	// Overwriting ok.bin (5B) with 7B costs only the +2 delta: 13 + 2 = 15 ≤ 20.
+	if code := putRaw(t, base+"/files/ok.bin", admin, "application/octet-stream", []byte("1234567")); code != http.StatusCreated {
+		t.Fatalf("overwrite within quota: got %d, want 201 (delta accounting)", code)
+	}
+}
+
+// Signed delivery sets cache headers that respect the token (ADR-0037 review): a
+// changing manifest is no-cache, a segment is cacheable but bounded by the token's
+// remaining lifetime so expiry/rotation take effect at the edge.
+func TestSignedMedia_CacheHeaders(t *testing.T) {
+	srv, db := mediaAuthServer(t, signMediaSchema, gateway.Options{URLSigner: testSigner()})
+	seedUser(t, db, "root@x.com", "pw-root-12345", "admin")
+	admin := login(t, srv.URL, "root@x.com", "pw-root-12345")
+	_, up := uploadFileAs(t, srv.URL+"/__media", admin, "v.mp4", "video/mp4", []byte("ORIG"))
+	videoID := recordID(t, up)
+	base := srv.URL + "/__media/" + videoID
+	putRaw(t, base+"/files/hls/index.m3u8", admin, "application/vnd.apple.mpegurl", []byte("#EXTM3U"))
+	putRaw(t, base+"/files/hls/seg0.ts", admin, "video/mp2t", []byte("SEG"))
+
+	_, signed := doAs(t, http.MethodPost, base+"/sign", admin, `{"scope":"hls/","path":"hls/index.m3u8"}`)
+	playlistURL := dataStr(signed, "url")
+
+	cc := func(url string) string {
+		req, _ := http.NewRequest(http.MethodGet, url, nil)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("GET %s: %v", url, err)
+		}
+		resp.Body.Close()
+		return resp.Header.Get("Cache-Control")
+	}
+	if got := cc(srv.URL + playlistURL); got != "no-cache" {
+		t.Fatalf("playlist Cache-Control: got %q, want no-cache (it changes)", got)
+	}
+	segURL := strings.Replace(playlistURL, "hls/index.m3u8", "hls/seg0.ts", 1)
+	if got := cc(srv.URL + segURL); !strings.HasPrefix(got, "public, max-age=") || !strings.Contains(got, "immutable") {
+		t.Fatalf("segment Cache-Control: got %q, want public bounded + immutable", got)
+	}
+}
+
 // Without a configured signer, a gated library falls back to the credentialed /raw
 // proxy and /sign reports not-implemented.
 func TestSignedMedia_NoSignerFallsBack(t *testing.T) {

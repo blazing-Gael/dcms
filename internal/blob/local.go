@@ -79,12 +79,14 @@ func (l *local) Put(ctx context.Context, key string, r io.Reader, size int64, co
 	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 		return err
 	}
-	// Write to a temp file then rename, so a reader never sees a half-written blob.
-	tmp := p + ".tmp"
-	f, err := os.Create(tmp)
+	// Write to a unique temp file in the target directory, then rename, so a reader
+	// never sees a half-written blob and two concurrent writers to the same key (e.g.
+	// a retried segment upload) can't clobber each other's in-progress temp file.
+	f, err := os.CreateTemp(filepath.Dir(p), "."+filepath.Base(p)+".tmp-*")
 	if err != nil {
 		return err
 	}
+	tmp := f.Name()
 	if _, err := io.Copy(f, r); err != nil {
 		f.Close()
 		os.Remove(tmp)
@@ -121,6 +123,22 @@ func (l *local) Delete(ctx context.Context, key string) error {
 		return err
 	}
 	return nil
+}
+
+// Stat returns the object's size and whether it exists.
+func (l *local) Stat(ctx context.Context, key string) (int64, bool, error) {
+	p, err := l.path(key)
+	if err != nil {
+		return 0, false, err
+	}
+	fi, err := os.Stat(p)
+	if os.IsNotExist(err) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, err
+	}
+	return fi.Size(), true, nil
 }
 
 // List returns the derived-file keys under prefix ("{id}/"). It walks the asset's
