@@ -86,14 +86,14 @@ func (s *Server) mediaReferencedReadable(ctx context.Context, id string) bool {
 	}
 	p := principalFromContext(ctx)
 	readFilters := func(source string) ([]store.Filter, bool) {
-		d, ownerField := evalRule(s.collections[source].AccessRule(schema.ActionRead), p)
+		d, filters := evalRule(s.collections[source].AccessRule(schema.ActionRead), p)
 		if d == deny {
 			return nil, false
 		}
-		if d == ownerScope {
-			return []store.Filter{{Field: ownerField, Operator: store.Eq, Value: p.ID}}, true
-		}
-		return nil, true
+		// `scope` carries the narrowing filters (owner, membership, or a composite);
+		// `allow` carries none. Either way they AND onto the referencing-record query,
+		// so inherit admits a file only through a record the caller could read directly.
+		return filters, true
 	}
 	// belongs-to references (a `file` field is a belongs-to relation to _media).
 	for _, inv := range s.schema.InverseRelations(schema.MediaCollection) {
@@ -185,8 +185,21 @@ func (s *Server) addMediaURL(rec store.Record) {
 		return
 	}
 	ver := mediaVersion(rec)
-	if u := s.opts.Blob.URL(key); u != "" {
-		rec["url"] = withVersion(u, ver)
+	// A world-readable library takes the direct/public URL (or the plain proxy): the
+	// bytes aren't secret, so no token is needed and a CDN can cache freely.
+	if !s.mediaReadGated() {
+		if u := s.opts.Blob.URL(key); u != "" {
+			rec["url"] = withVersion(u, ver)
+			return
+		}
+		rec["url"] = withVersion(mediaBasePath+"/"+id+"/raw", ver)
+		return
+	}
+	// A gated library: when signing is configured, emit a signed URL so an authorized
+	// caller gets a credential-free, CDN-usable link (an <img>/<video> src) for the
+	// primary file. Without a signer, fall back to the credentialed /raw proxy.
+	if s.opts.URLSigner != nil {
+		rec["url"] = withVersion(s.opts.URLSigner.SignedURL(id, "", "", 0, ""), ver)
 		return
 	}
 	rec["url"] = withVersion(mediaBasePath+"/"+id+"/raw", ver)
@@ -412,10 +425,14 @@ func (s *Server) handleMediaDelete(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, s.logger, r, err)
 		return
 	}
-	// Best-effort blob cleanup; the row is already gone.
+	// Best-effort blob cleanup; the row is already gone. Remove the primary bytes and
+	// the whole derived-file subtree (ADR-0037), so an HLS ladder doesn't orphan.
 	if s.opts.Blob != nil {
 		if key, _ := rec[schema.MediaStorageKey].(string); key != "" {
 			_ = s.opts.Blob.Delete(r.Context(), key)
+		}
+		if id != "" {
+			_ = s.opts.Blob.DeletePrefix(r.Context(), id+"/")
 		}
 	}
 	w.WriteHeader(http.StatusNoContent)

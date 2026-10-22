@@ -161,12 +161,24 @@ func (s *Server) GatewayOptions(ctx context.Context, hooks *gateway.HookRegistry
 		}
 	}
 
+	var urlSigner gateway.URLSigner
+	if sec := cfg.Media.Sign.Secret; sec != "" {
+		var prev []string
+		if cfg.Media.Sign.PreviousSecret != "" {
+			prev = []string{cfg.Media.Sign.PreviousSecret}
+		}
+		urlSigner = gateway.NewHMACURLSigner(sec, prev,
+			time.Duration(cfg.Media.Sign.TTLSeconds)*time.Second,
+			time.Duration(cfg.Media.Sign.WindowSeconds)*time.Second)
+	}
+
 	opts := gateway.Options{
 		ValidateResponses:      validateResponses,
 		Blob:                   bs,
 		MaxUploadBytes:         cfg.Media.MaxUploadBytes,
 		AllowedContentTypes:    cfg.Media.AllowedContentTypes,
 		MediaQuota:             mediaQuota,
+		URLSigner:              urlSigner,
 		PreviewToken:           cfg.Content.PreviewToken,
 		Introspection:          cfg.Server.Introspection,
 		Authenticator:          authenticator,

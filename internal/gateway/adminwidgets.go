@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"context"
 	"net/http"
 	"strings"
 
@@ -121,13 +122,13 @@ func (s *Server) adminM2MSelected(r *http.Request, collection, field, sourceID s
 // from the current value are offered (plus the current value itself), so the panel
 // can never lead a non-technical user into a 403. `rec` is the record being edited
 // (nil on create), used for the current value and any owner-scoped `who` check.
-func (s *Server) adminEnumOptions(f schema.FieldDef, p principal, rec store.Record, isCreate bool) []adminOption {
+func (s *Server) adminEnumOptions(ctx context.Context, collection string, f schema.FieldDef, p principal, rec store.Record, isCreate bool) []adminOption {
 	curVal, _ := rec[f.Name].(string)
 	gated := s.authEnabled() && f.Access != nil && len(f.Access.WriteTransitions) > 0
 	var opts []adminOption
 	for _, v := range f.Values {
 		if gated && v != curVal {
-			if s.evalTransition(f.Access.WriteTransitions, p, rec, curVal, v, isCreate) != transitionAllowed {
+			if s.evalTransition(ctx, collection, f.Access.WriteTransitions, p, rec, curVal, v, isCreate) != transitionAllowed {
 				continue
 			}
 		}

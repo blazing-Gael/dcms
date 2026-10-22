@@ -114,20 +114,6 @@ collections:
 			want: `cannot be a many-to-many`,
 		},
 		{
-			name: "two owner scopes",
-			src: `
-version: "1"
-collections:
-  subs:
-    fields:
-      user: { type: relation, target: _users }
-    access:
-      read:
-        any: [owner, { owner_field: user }]
-`,
-			want: `at most one owner scope`,
-		},
-		{
 			name: "field-level owner_field bad target",
 			src: `
 version: "1"
@@ -163,7 +149,7 @@ collections:
     access:
       read: { owner: user }
 `,
-			want: `want ` + "`any` or `owner_field`",
+			want: "want `any`, `all`, `owner_field`, or `exists`",
 		},
 	}
 	for _, tc := range cases {

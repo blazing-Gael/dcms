@@ -300,7 +300,8 @@ collections:
 	}
 }
 
-func TestAccess_CompositeUnknownKeyIsError(t *testing.T) {
+// `all:` (AND) is a valid composite (ADR-0036) — it must parse without error.
+func TestAccess_AllCompositeParses(t *testing.T) {
 	_, err := Parse([]byte(`
 version: "1"
 auth:
@@ -314,8 +315,25 @@ collections:
       read:
         all: [admin, owner]
 `))
-	if err == nil || !strings.Contains(err.Error(), "any") {
-		t.Fatalf("expected composite-key error mentioning 'any', got: %v", err)
+	if err != nil {
+		t.Fatalf("all: composite should parse, got: %v", err)
+	}
+}
+
+// A genuinely unknown mapping-rule key is still an error, now naming all four keys.
+func TestAccess_UnknownMappingKeyIsError(t *testing.T) {
+	_, err := Parse([]byte(`
+version: "1"
+collections:
+  orders:
+    fields:
+      total: number
+    access:
+      read:
+        none: [admin, owner]
+`))
+	if err == nil || !strings.Contains(err.Error(), "owner_field") {
+		t.Fatalf("expected unknown-key error naming the valid keys, got: %v", err)
 	}
 }
 
