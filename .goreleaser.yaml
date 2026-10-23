@@ -87,9 +87,9 @@ homebrew_casks:
     # so `dcms` runs without a Gatekeeper "cannot be opened" prompt.
     hooks:
       post:
-        install: |
-          if OS.mac?
-            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/dcms"]
+        install_steps: |
+          on_macos do
+            run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "{{ .StagedPath }}/dcms"]
           end
     # During 0.x there is no stable release, so publish the cask on every release
     # (betas included). Switch to `skip_upload: auto` once 1.x ships — same rule as
