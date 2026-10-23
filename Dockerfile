@@ -5,7 +5,7 @@
 #   docker build -t dcms .
 #   docker run -p 8080:8080 -v "$PWD:/data" -w /data \
 #     -e DCMS_ADMIN_EMAIL=you@example.com -e DCMS_ADMIN_PASSWORD=change-me dcms dev
-FROM --platform=$BUILDPLATFORM golang:1.25 AS build
+FROM --platform=$BUILDPLATFORM golang:1.26 AS build
 WORKDIR /src
 
 # Cache modules first for faster rebuilds.
