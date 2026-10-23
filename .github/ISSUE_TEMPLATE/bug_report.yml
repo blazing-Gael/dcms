@@ -34,6 +34,6 @@ body:
     id: env
     attributes:
       label: OS / Go version
-      placeholder: "Windows 11, Go 1.25"
+      placeholder: "Windows 11, Go 1.26"
     validations:
       required: false
