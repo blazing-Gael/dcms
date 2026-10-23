@@ -30,8 +30,22 @@ type Store interface {
 	// The caller must Close the returned reader.
 	Get(ctx context.Context, key string) (io.ReadCloser, error)
 
+	// Stat returns the size in bytes of the object at key, and whether it exists.
+	// Used to account for an overwrite's net byte delta without reading the object
+	// (ADR-0037 derived-file quota). A missing object is (0, false, nil).
+	Stat(ctx context.Context, key string) (size int64, exists bool, err error)
+
 	// Delete removes the object at key. Deleting a missing key is not an error.
 	Delete(ctx context.Context, key string) error
+
+	// List returns the keys of every object under prefix (e.g. "{id}/"), in no
+	// particular order — used to enumerate an asset's derived files (ADR-0037). A
+	// prefix with no matches returns an empty slice, not an error.
+	List(ctx context.Context, prefix string) ([]string, error)
+
+	// DeletePrefix removes every object under prefix (e.g. "{id}/") — an asset's
+	// derived files as a group (ADR-0037). Deleting an empty prefix is not an error.
+	DeletePrefix(ctx context.Context, prefix string) error
 
 	// URL returns an absolute URL a client may fetch the object from directly
 	// (e.g. an S3/R2 object or signed URL), or "" when this store is served

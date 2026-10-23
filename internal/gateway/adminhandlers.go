@@ -495,7 +495,7 @@ func (s *Server) adminFields(r *http.Request, cd schema.CollectionDef, rec, subm
 			af.Widget = "checkbox"
 		case schema.TypeEnum:
 			af.Widget = "select"
-			af.Options = markSelected(s.adminEnumOptions(f, p, rec, isCreate), shownVal(f.Name))
+			af.Options = markSelected(s.adminEnumOptions(r.Context(), cd.Name, f, p, rec, isCreate), shownVal(f.Name))
 		case schema.TypeNumber, schema.TypeInteger:
 			af.InputType = "number"
 		case schema.TypeDate:
@@ -683,7 +683,7 @@ func (s *Server) adminCan(r *http.Request, collection string, action schema.Acce
 	}
 	p := principalFromContext(r.Context())
 	d, _ := evalRule(s.collections[collection].AccessRule(action), p)
-	return d == allow || d == ownerScope
+	return d == allow || d == scope
 }
 
 func (s *Server) adminCanRecord(r *http.Request, collection, id string, action schema.AccessAction) bool {
@@ -698,16 +698,15 @@ func (s *Server) adminCanRule(r *http.Request, collection, id string, rule schem
 		return true
 	}
 	p := principalFromContext(r.Context())
-	switch d, field := evalRule(rule, p); d {
+	switch d, filters := evalRule(rule, p); d {
 	case allow:
 		return true
-	case ownerScope:
+	case scope:
 		rec, err := s.db.FindOne(r.Context(), collection, id)
 		if err != nil {
 			return false
 		}
-		owner, _ := rec[field].(string)
-		return owner != "" && owner == p.ID
+		return s.recordInScope(r.Context(), collection, rec, filters)
 	default:
 		return false
 	}
@@ -718,11 +717,11 @@ func (s *Server) adminReadFilters(r *http.Request, collection string) ([]store.F
 		return nil, true
 	}
 	p := principalFromContext(r.Context())
-	switch d, field := evalRule(s.collections[collection].AccessRule(schema.ActionRead), p); d {
+	switch d, filters := evalRule(s.collections[collection].AccessRule(schema.ActionRead), p); d {
 	case allow:
 		return nil, true
-	case ownerScope:
-		return []store.Filter{{Field: field, Operator: store.Eq, Value: p.ID}}, true
+	case scope:
+		return filters, true
 	default:
 		return nil, false
 	}

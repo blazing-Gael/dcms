@@ -75,6 +75,12 @@ type Options struct {
 	// MediaQuota caps total uploaded bytes per principal (issue #31). Nil ⇒ no quota.
 	MediaQuota *MediaQuotaOptions
 
+	// URLSigner mints and verifies signed media URLs (ADR-0037). When set, a gated
+	// library's response `url` fields become signed (credential-free, CDN-usable) and
+	// the /__media/{id}/s/{token}/{path} + /__media/{id}/sign routes work. Nil ⇒
+	// signing is off: gated media serves only through the credentialed /raw proxy.
+	URLSigner URLSigner
+
 	// PreviewToken, when set, unlocks the lifecycle preview bypass (ADR-0012): a
 	// request presenting it via X-DCMS-Preview (or ?preview_token=) may view
 	// drafts/scheduled/archived/trashed content through ?status / ?include_deleted.
@@ -369,6 +375,11 @@ func (s *Server) Handler() http.Handler {
 		r.Patch("/{id}", s.handleMediaPatch)
 		r.Delete("/{id}", s.handleMediaDelete)
 		r.Get("/{id}/raw", s.handleMediaRaw)
+		// Signed, credential-free delivery + multi-file assets (ADR-0037).
+		r.Get("/{id}/s/{token}/*", s.handleMediaSignedRaw)
+		r.Post("/{id}/sign", s.handleMediaSign)
+		r.Get("/{id}/files", s.handleMediaFileList)
+		r.Put("/{id}/files/*", s.handleMediaFilePut)
 	})
 
 	// Virtual collection routes under the configured base URL. All JSON, so the

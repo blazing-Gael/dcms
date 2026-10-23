@@ -35,6 +35,11 @@ const (
 	RuleOwner         RuleKind = "owner"         // principal is the record's created_by
 	RuleOwnerField    RuleKind = "owner_field"   // principal.ID equals the record's named relation
 	RuleAny           RuleKind = "any"           // satisfied if ANY sub-rule is (logical OR)
+	RuleAll           RuleKind = "all"           // satisfied if EVERY sub-rule is (logical AND)
+	// RuleExists matches the caller against a row in another collection (ADR-0036):
+	// satisfied when a row in `Exists.In` links this record to the caller. It is the
+	// membership primitive behind enrollment/guardian/team/sharing rules.
+	RuleExists RuleKind = "exists"
 	// RuleInherit is valid only as `_media.access.read` (issue #30): a media file is
 	// readable iff the caller can read a record that references it (else the uploader
 	// only). It lets private user uploads and shared editorial images coexist on one
@@ -55,9 +60,45 @@ type Rule struct {
 	Kind  RuleKind `json:"kind"`
 	Roles []string `json:"roles,omitempty"`
 	Any   []Rule   `json:"any,omitempty"`
+	All   []Rule   `json:"all,omitempty"`
 	// Field names the relation an `owner_field` rule matches against
 	// (principal.ID == this row's <Field>). Empty for every other kind.
 	Field string `json:"field,omitempty"`
+	// Exists carries the membership spec for a RuleExists (ADR-0036); nil otherwise.
+	Exists *ExistsSpec `json:"exists,omitempty"`
+}
+
+// ExistsSpec is the membership lookup of an `exists` rule (ADR-0036). The rule is
+// satisfied when a row exists in In whose Principal relation points at the caller and
+// whose MatchIn column equals this record's MatchThis column — i.e.
+//
+//	<this>.MatchThis IN (SELECT MatchIn FROM In WHERE Principal = caller AND Where…)
+//
+// Single hop, uncorrelated by construction (the lookup is keyed only by the caller
+// and Where literals, never by the outer record).
+type ExistsSpec struct {
+	In        string         `json:"in"`         // the membership collection
+	MatchIn   string         `json:"match_in"`   // relation/column on In to project + match
+	MatchThis string         `json:"match_this"` // relation/column on this collection
+	Principal string         `json:"principal"`  // belongs-to relation on In to _users
+	Where     map[string]any `json:"where,omitempty"`
+	// InSoftDelete is set at schema-compile when In is a soft-delete collection, so the
+	// membership subquery can exclude trashed rows (a cancelled enrollment must stop
+	// granting access). Computed, not from YAML.
+	InSoftDelete bool `json:"in_soft_delete,omitempty"`
+}
+
+// children returns the sub-rules of a composite (`any`/`all`), empty for a leaf.
+// The tree-walking helpers below recurse through it so a new composite kind is
+// covered everywhere at once.
+func (r Rule) children() []Rule {
+	switch r.Kind {
+	case RuleAny:
+		return r.Any
+	case RuleAll:
+		return r.All
+	}
+	return nil
 }
 
 // roleNames returns every role name referenced anywhere in the rule tree, so
@@ -67,7 +108,7 @@ func (r Rule) roleNames() []string {
 		return r.Roles
 	}
 	var out []string
-	for _, sub := range r.Any {
+	for _, sub := range r.children() {
 		out = append(out, sub.roleNames()...)
 	}
 	return out
@@ -82,7 +123,7 @@ func (r Rule) MentionsOwner() bool {
 	if r.Kind == RuleOwner || r.Kind == RuleOwnerField {
 		return true
 	}
-	for _, sub := range r.Any {
+	for _, sub := range r.children() {
 		if sub.MentionsOwner() {
 			return true
 		}
@@ -102,24 +143,23 @@ func (r Rule) ownerFields(createdBy string) []string {
 		return []string{r.Field}
 	}
 	var out []string
-	for _, sub := range r.Any {
+	for _, sub := range r.children() {
 		out = append(out, sub.ownerFields(createdBy)...)
 	}
 	return out
 }
 
 // validateOwnerFields checks the owner-ish rules in a tree against a collection:
-// every `owner_field` must name an existing relation on the collection (a
-// relation, not a bare string, so referential integrity stays in play), and a
-// rule tree may reference at most one distinct owner scope — an OR of two
-// different owner scopes (e.g. created_by OR a relation) cannot be expressed as a
-// single query filter for list reads. Returns human-readable problems, empty if
-// the rule is sound.
+// every `owner_field` must name an existing non-many relation on the collection (a
+// relation, not a bare string, so referential integrity stays in play).
+//
+// Before ADR-0036 a rule tree could reference at most one owner scope, because list
+// reads could only AND filters. The `And`/`Or` filter nodes lift that: an OR of
+// different scopes (`owner OR {owner_field: x}`, `author OR editor`) now compiles to
+// one Or node, so multiple scopes are allowed. Returns human-readable problems.
 func validateOwnerFields(rule Rule, col CollectionDef) []string {
 	var msgs []string
-	seen := map[string]bool{}
 	for _, f := range rule.ownerFields("created_by") {
-		seen[f] = true
 		if f == "created_by" {
 			continue // the always-present audit column backing a bare `owner`
 		}
@@ -133,10 +173,104 @@ func validateOwnerFields(rule Rule, col CollectionDef) []string {
 			msgs = append(msgs, fmt.Sprintf("owner_field %q cannot be a many-to-many relation (it has no column to match on)", f))
 		}
 	}
-	if len(seen) > 1 {
-		msgs = append(msgs, "a rule may reference at most one owner scope (an OR of different owners is not supported)")
+	return msgs
+}
+
+// validateExistsRules checks every `exists` membership rule in a tree against the
+// schema (ADR-0036): the `in` collection is declared; `match` names a non-many
+// relation on each side pointing at the same collection; `principal` is a non-many
+// relation on `in` to _users; and `where` keys are declared fields of `in`. Single
+// hop is structural (an exists cannot nest another). Returns human-readable problems.
+func (s *SchemaDefinition) validateExistsRules(rule Rule, col CollectionDef) []string {
+	var msgs []string
+	for _, sp := range rule.existsSpecs() {
+		inCol, ok := s.collectionByName(sp.In)
+		if !ok {
+			msgs = append(msgs, fmt.Sprintf("exists.in %q is not a declared collection", sp.In))
+			continue
+		}
+		// Record whether the membership collection trashes rows, so enforcement can
+		// exclude soft-deleted memberships (a cancelled enrollment revokes access).
+		sp.InSoftDelete = inCol.SoftDelete
+		// match: a relation on this collection and one on `in`, same target.
+		thisTarget, thisOK := col.BelongsTo(sp.MatchThis)
+		if !thisOK {
+			msgs = append(msgs, fmt.Sprintf("exists.match %q must be a belongs-to relation on this collection", sp.MatchThis))
+		}
+		inTarget, inOK := inCol.BelongsTo(sp.MatchIn)
+		if !inOK {
+			msgs = append(msgs, fmt.Sprintf("exists.match %q must be a belongs-to relation on %q", sp.MatchIn, sp.In))
+		}
+		if thisOK && inOK && thisTarget != inTarget {
+			msgs = append(msgs, fmt.Sprintf("exists.match sides point at different collections (%q vs %q) — they must match on the same entity", thisTarget, inTarget))
+		}
+		// principal: a relation on `in` to _users, bound to the caller.
+		switch pt, pok := inCol.BelongsTo(sp.Principal); {
+		case !pok:
+			msgs = append(msgs, fmt.Sprintf("exists.principal %q must be a belongs-to relation on %q", sp.Principal, sp.In))
+		case pt != UsersCollection:
+			msgs = append(msgs, fmt.Sprintf("exists.principal %q must relate to %s (the caller), not %q", sp.Principal, UsersCollection, pt))
+		}
+		// where: declared fields of `in`.
+		for k := range sp.Where {
+			if _, ok := inCol.field(k); !ok {
+				msgs = append(msgs, fmt.Sprintf("exists.where %q is not a field of %q", k, sp.In))
+			}
+		}
 	}
 	return msgs
+}
+
+// allRules returns every access rule declared on the collection — the six
+// collection-level actions, each field's read/write, and each value-scoped
+// transition's `who` — so a walker (validation, index planning) finds rules wherever
+// they sit.
+func (c CollectionDef) allRules() []Rule {
+	var out []Rule
+	if c.Access != nil {
+		for _, r := range []*Rule{c.Access.Read, c.Access.Create, c.Access.Update, c.Access.Delete, c.Access.Preview, c.Access.Publish} {
+			if r != nil {
+				out = append(out, *r)
+			}
+		}
+	}
+	for _, f := range c.Fields {
+		if f.Access == nil {
+			continue
+		}
+		if f.Access.Read != nil {
+			out = append(out, *f.Access.Read)
+		}
+		if f.Access.Write != nil {
+			out = append(out, *f.Access.Write)
+		}
+		for _, tr := range f.Access.WriteTransitions {
+			out = append(out, tr.Who)
+		}
+	}
+	return out
+}
+
+// existsSpecs returns every ExistsSpec anywhere in the rule tree.
+func (r Rule) existsSpecs() []*ExistsSpec {
+	if r.Kind == RuleExists && r.Exists != nil {
+		return []*ExistsSpec{r.Exists}
+	}
+	var out []*ExistsSpec
+	for _, sub := range r.children() {
+		out = append(out, sub.existsSpecs()...)
+	}
+	return out
+}
+
+// collectionByName returns the collection with the given name, if declared.
+func (s *SchemaDefinition) collectionByName(name string) (CollectionDef, bool) {
+	for _, c := range s.Collections {
+		if c.Name == name {
+			return c, true
+		}
+	}
+	return CollectionDef{}, false
 }
 
 // field returns the field with the given name, if declared.
@@ -228,7 +362,7 @@ func (r Rule) mentionsPublic() bool {
 	if r.Kind == RulePublic {
 		return true
 	}
-	for _, sub := range r.Any {
+	for _, sub := range r.children() {
 		if sub.mentionsPublic() {
 			return true
 		}
@@ -243,7 +377,7 @@ func (r Rule) mentionsInherit() bool {
 	if r.Kind == RuleInherit {
 		return true
 	}
-	for _, sub := range r.Any {
+	for _, sub := range r.children() {
 		if sub.mentionsInherit() {
 			return true
 		}
@@ -545,60 +679,108 @@ func parseRule(node *yaml.Node) (*Rule, error) {
 }
 
 // parseMappingRule decodes a mapping-form rule. Exactly one key is allowed:
-// `any` (a logical-OR composite) or `owner_field` (match a named relation
-// against the principal). Splitting the two shapes here keeps parseCompositeRule
-// focused on the OR combinator.
+// `any`/`all` (boolean composites), `owner_field` (match a named relation against
+// the principal), or `exists` (match a row in another collection — ADR-0036).
 func parseMappingRule(node *yaml.Node) (*Rule, error) {
 	entries, err := mappingEntries(node)
 	if err != nil {
 		return nil, err
 	}
 	if len(entries) != 1 {
-		return nil, fmt.Errorf("a mapping access rule takes exactly one key (`any` or `owner_field`)")
+		return nil, fmt.Errorf("a mapping access rule takes exactly one key (`any`, `all`, `owner_field`, or `exists`)")
 	}
 	switch entries[0].Key {
 	case "any":
-		return parseCompositeRule(node)
+		return parseBooleanRule(entries[0].Val, RuleAny)
+	case "all":
+		return parseBooleanRule(entries[0].Val, RuleAll)
 	case "owner_field":
 		field := entries[0].Val.Value
 		if entries[0].Val.Kind != yaml.ScalarNode || field == "" {
 			return nil, fmt.Errorf("owner_field: expected a field name")
 		}
 		return &Rule{Kind: RuleOwnerField, Field: field}, nil
+	case "exists":
+		return parseExistsRule(entries[0].Val)
 	default:
-		return nil, fmt.Errorf("unknown access rule key %q (want `any` or `owner_field`)", entries[0].Key)
+		return nil, fmt.Errorf("unknown access rule key %q (want `any`, `all`, `owner_field`, or `exists`)", entries[0].Key)
 	}
 }
 
-// parseCompositeRule decodes a mapping-form rule. The only supported key is
-// `any:` (logical OR); its value is a sequence of rules, each parsed recursively
-// so a sub-rule may itself be a keyword, a role, a role list, or a nested
-// composite. An `all:` (AND) counterpart is intentionally not offered yet — no
-// use case has needed it, and adding it later is additive.
-func parseCompositeRule(node *yaml.Node) (*Rule, error) {
-	entries, err := mappingEntries(node)
-	if err != nil {
-		return nil, err
-	}
-	if len(entries) != 1 || entries[0].Key != "any" {
-		return nil, fmt.Errorf("a composite access rule takes exactly one key, `any`")
-	}
-	seq := entries[0].Val
+// parseBooleanRule decodes the sequence value of an `any:` (OR) or `all:` (AND)
+// composite. Each item is parsed recursively, so a sub-rule may be a keyword, a role,
+// a role list, or a nested composite/exists. Two rules minimum — a one-element
+// composite is a mistake worth catching.
+func parseBooleanRule(seq *yaml.Node, kind RuleKind) (*Rule, error) {
 	if seq.Kind != yaml.SequenceNode {
-		return nil, fmt.Errorf("any: expected a list of rules, got %s", kindName(seq.Kind))
+		return nil, fmt.Errorf("%s: expected a list of rules, got %s", kind, kindName(seq.Kind))
 	}
 	subs := make([]Rule, 0, len(seq.Content))
 	for _, item := range seq.Content {
 		sub, err := parseRule(item)
 		if err != nil {
-			return nil, fmt.Errorf("any: %w", err)
+			return nil, fmt.Errorf("%s: %w", kind, err)
 		}
 		subs = append(subs, *sub)
 	}
 	if len(subs) < 2 {
-		return nil, fmt.Errorf("any: needs at least two rules to combine")
+		return nil, fmt.Errorf("%s: needs at least two rules to combine", kind)
+	}
+	if kind == RuleAll {
+		return &Rule{Kind: RuleAll, All: subs}, nil
 	}
 	return &Rule{Kind: RuleAny, Any: subs}, nil
+}
+
+// parseExistsRule decodes an `exists:` membership rule (ADR-0036):
+//
+//	exists:
+//	  in: enrollments
+//	  match: { course: course }   # enrollments.course == <this>.course
+//	  principal: user             # enrollments.user == caller
+//	  where: { status: active }   # optional literal equality filters
+func parseExistsRule(node *yaml.Node) (*Rule, error) {
+	entries, err := mappingEntries(node)
+	if err != nil {
+		return nil, err
+	}
+	spec := &ExistsSpec{}
+	var matchSeen bool
+	for _, e := range entries {
+		switch e.Key {
+		case "in":
+			spec.In = e.Val.Value
+		case "principal":
+			spec.Principal = e.Val.Value
+		case "match":
+			m, err := mappingEntries(e.Val)
+			if err != nil {
+				return nil, fmt.Errorf("match: %w", err)
+			}
+			if len(m) != 1 {
+				return nil, fmt.Errorf("match: expected exactly one { <field-on-%s>: <field-on-this> } pair", "in")
+			}
+			spec.MatchIn, spec.MatchThis = m[0].Key, m[0].Val.Value
+			matchSeen = true
+		case "where":
+			if err := e.Val.Decode(&spec.Where); err != nil {
+				return nil, fmt.Errorf("where: %w", err)
+			}
+		default:
+			return nil, fmt.Errorf("unknown exists key %q (want in, match, principal, where)", e.Key)
+		}
+	}
+	switch {
+	case spec.In == "":
+		return nil, fmt.Errorf("exists: `in` (the membership collection) is required")
+	case !matchSeen:
+		return nil, fmt.Errorf("exists: `match` is required")
+	case spec.MatchThis == "":
+		return nil, fmt.Errorf("exists: match value (the field on this collection) is required")
+	case spec.Principal == "":
+		return nil, fmt.Errorf("exists: `principal` (the relation to the caller) is required")
+	}
+	return &Rule{Kind: RuleExists, Exists: spec}, nil
 }
 
 // parseAuth decodes the top-level `auth:` block. provider/session are scalars;

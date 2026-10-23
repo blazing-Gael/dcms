@@ -252,6 +252,23 @@ the schema — `media.quotas` (a `default` size plus optional per-role overrides
 most-permissive wins). An upload that would exceed the caller's quota is refused
 with `413 QUOTA_EXCEEDED`. See `examples/dcms.config.yaml`.
 
+**Signed URLs + multi-file assets (ADR-0037).** Two things make private media usable
+for real delivery — images in cross-origin `<img>` tags, and enrollment-gated video:
+
+- **Multi-file assets.** An asset can hold derived files (an HLS ladder, image
+  renditions) under its id: `PUT /__media/{id}/files/{path}` adds one,
+  `GET /__media/{id}/files` lists them, and deleting the asset removes them all.
+- **Signed URLs.** With `media.sign.secret` configured (env-only), a *gated* library's
+  response `url` fields become signed URLs — `/__media/{id}/s/{token}/{path}`, verified
+  by HMAC + expiry with no session or DB — so a frontend can use them directly and a
+  CDN can cache them. `POST /__media/{id}/sign` (after the normal access check) mints
+  one explicitly for a player, with a `scope` prefix so a single token covers a whole
+  ladder. URLs are shareable within their TTL (expiry is bucketed so repeated reads
+  return the same, cacheable URL); secret rotation (`..._PREVIOUS`) revokes outstanding
+  URLs. Without a secret, gated media serves only through the credentialed `/raw` proxy.
+  This composes with `inherit`: the record read that mints the URL is gated by the
+  referencing record's rule (including membership, ADR-0036).
+
 #### Rich content — `richtext` (ADR-0014)
 
 Formatted body content: headings, bold/italic/links, lists, and inline embeds
@@ -597,21 +614,67 @@ access:
     any: [admin, owner]
   delete:  [admin]
   # rule values:
-  #   public         — no authentication required
-  #   authenticated  — any valid principal, regardless of role
-  #   [role, ...]    — the principal holds at least one listed role
-  #   owner          — the principal is the record's created_by
-  #   {any: [...]}   — composite OR: satisfied if any listed sub-rule is
+  #   public             — no authentication required
+  #   authenticated      — any valid principal, regardless of role
+  #   [role, ...]        — the principal holds at least one listed role
+  #   owner              — the principal is the record's created_by
+  #   {owner_field: f}   — the principal equals the record's relation field f
+  #   {exists: {...}}    — the principal has a matching row in another collection
+  #   {any: [...]}       — composite OR: satisfied if ANY listed sub-rule is
+  #   {all: [...]}       — composite AND: satisfied only if EVERY sub-rule is
 ```
 
-The `any:` composite lets one rule mix gates that resolve differently per caller.
-`any: [admin, owner]` is the canonical case: an admin gets full access (list is
-unfiltered), while everyone else is narrowed to the rows they created — exactly
-what a bare `owner` could **not** express, since `owner` alone also hides records
-from admins. Each element of `any:` is itself a rule (keyword, role, role list,
-or nested `any:`), roles named anywhere in it must be declared, and it needs at
-least two sub-rules. There is no query-cost or `N+1` change: an admin resolves to
-a plain allow, a non-owner to the same single `created_by` filter as `owner`.
+**Boolean composition — `any:` (OR) and `all:` (AND).** A composite lets one rule
+mix gates that resolve differently per caller, and they nest arbitrarily.
+`any: [admin, owner]` is the canonical OR: an admin gets full access (list is
+unfiltered), while everyone else is narrowed to the rows they created — what a bare
+`owner` could **not** express, since `owner` alone also hides records from admins.
+`all: [teacher, {exists: ...}]` is the canonical AND — a coarse role gate *and* a
+fine membership gate: the caller must be a teacher **and** satisfy the membership
+rule. Each element is itself a rule (keyword, role, role list, `owner_field`,
+`exists`, or a nested composite); roles named anywhere must be declared; each needs
+at least two sub-rules. An admin in an `any:` resolves to a plain allow (no filter);
+scoped branches (`owner`/`owner_field`/`exists`) are OR-combined into one query
+condition, so there is no `N+1`.
+
+**Membership — `exists:` (ADR-0036).** When read/write must depend on a row in
+*another* collection — enrollment-gated lessons, a guardian who may see their
+student's grades, a teacher assigned to a batch — `exists:` matches the caller
+against that collection:
+
+```yaml
+lessons:
+  access:
+    read:
+      any:
+        - admin
+        - exists:
+            in: enrollments            # the membership collection
+            match: { course: course }  # enrollments.course == lessons.course
+            principal: user            # enrollments.user == the caller
+            where: { status: active }  # optional literal equality filters
+```
+
+- `in` is a declared collection; `match` is `{ <field-on-in>: <field-on-this> }`,
+  both **belongs-to relations** pointing at the same entity; `principal` is a
+  belongs-to relation on `in` to `_users`, bound to the caller; `where` is optional
+  literal equality filters on `in`.
+- It compiles to **one indexed semi-join** per request —
+  `course IN (SELECT course FROM enrollments WHERE user = <caller> AND status = 'active')` —
+  not an N+1, and the supporting index on `in` is **declared automatically**.
+- **Single hop.** The record's referenced entity must join directly to a membership
+  table keyed by the caller. (A chain through an intermediate entity is reserved for
+  a future additive `through:`.)
+- Works in every rule slot (`read`/`create`/`update`/`delete`/`preview`/`publish`,
+  field rules, transition `who`). On a list read it filters; on a single read a
+  non-member gets `404`; an anonymous caller never matches.
+- When `in` is a **soft-delete** collection, trashed membership rows are excluded
+  automatically — a refunded enrollment or revoked guardianship stops granting access
+  the moment it is trashed.
+- `where:` supports **equality only**. A time-based rule like "access until
+  `expires_at`" can't be expressed as a comparison; model it by flipping a `status`
+  enum (e.g. a scheduled job sets `status: expired`) and matching `where: { status:
+  active }`.
 
 Enforcement (ADR-0016) is at the gateway, above the store:
 

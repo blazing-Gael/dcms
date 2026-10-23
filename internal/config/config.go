@@ -207,6 +207,10 @@ type Media struct {
 	// wins). Sizes are strings like "200MiB" / "5GiB" / "unlimited". Empty ⇒ no quota.
 	Quotas MediaQuotas `yaml:"quotas"`
 
+	// Sign configures signed media URLs (ADR-0037): credential-free, CDN-usable links
+	// for private media. Off unless a secret is supplied (env-only).
+	Sign MediaSign `yaml:"sign"`
+
 	// S3-compatible driver settings (MinIO, SeaweedFS, Cloudflare R2, AWS S3, …).
 	Endpoint       string `yaml:"endpoint"`
 	Region         string `yaml:"region"`
@@ -225,6 +229,20 @@ type Media struct {
 type MediaQuotas struct {
 	Default string            `yaml:"default"`
 	Roles   map[string]string `yaml:"roles"`
+}
+
+// MediaSign configures signed media URLs (ADR-0037). Secret and PreviousSecret are
+// env-only (DCMS_MEDIA_SIGN_SECRET / _PREVIOUS) — rotating the current into previous
+// keeps outstanding URLs valid for one window; dropping it revokes them. Signing is
+// off when Secret is empty. TTL/window are tunable in the config file.
+type MediaSign struct {
+	Secret         string `yaml:"-"`
+	PreviousSecret string `yaml:"-"`
+	// TTLSeconds bounds a signed URL's lifetime; 0 uses the engine default (1h).
+	TTLSeconds int `yaml:"ttl_seconds"`
+	// WindowSeconds buckets expiry so repeated signs return the same URL (caching);
+	// 0 uses the engine default (1h).
+	WindowSeconds int `yaml:"window_seconds"`
 }
 
 // ParseByteSize parses a human byte size ("200MiB", "5GB", "1024", "unlimited")
@@ -523,6 +541,12 @@ func (c *Config) ApplyEnv() error {
 	}
 	if v, ok := os.LookupEnv("DCMS_PREVIEW_TOKEN"); ok {
 		c.Content.PreviewToken = v
+	}
+	if v, ok := os.LookupEnv("DCMS_MEDIA_SIGN_SECRET"); ok {
+		c.Media.Sign.Secret = v
+	}
+	if v, ok := os.LookupEnv("DCMS_MEDIA_SIGN_SECRET_PREVIOUS"); ok {
+		c.Media.Sign.PreviousSecret = v
 	}
 	if v, ok := os.LookupEnv("DCMS_INTROSPECTION"); ok {
 		c.Server.Introspection = v

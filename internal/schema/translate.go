@@ -47,7 +47,46 @@ func (s *SchemaDefinition) CollectionMetas() []store.CollectionMeta {
 			}
 		}
 	}
+	s.addExistsIndexes(metas)
 	return metas
+}
+
+// addExistsIndexes adds the supporting index each `exists` rule needs on its
+// membership collection (ADR-0036): the lookup filters on `principal` and projects
+// `match_in`, so an index on (principal, match_in) keeps a gated list from scanning
+// the membership table. Indexes are deduplicated against those already present (same
+// column set), so a redundant declaration never produces a clashing index name.
+func (s *SchemaDefinition) addExistsIndexes(metas []store.CollectionMeta) {
+	byName := make(map[string]int, len(metas))
+	have := make(map[string]map[string]bool, len(metas))
+	for i, m := range metas {
+		byName[m.Name] = i
+		sig := make(map[string]bool, len(m.Indexes))
+		for _, idx := range m.Indexes {
+			sig[strings.Join(idx.Columns, ",")] = true
+		}
+		have[m.Name] = sig
+	}
+	for _, c := range s.Collections {
+		for _, rule := range c.allRules() {
+			for _, sp := range rule.existsSpecs() {
+				i, ok := byName[sp.In]
+				if !ok {
+					continue
+				}
+				cols := []string{sp.Principal}
+				if sp.MatchIn != "" && sp.MatchIn != sp.Principal {
+					cols = append(cols, sp.MatchIn)
+				}
+				sig := strings.Join(cols, ",")
+				if have[sp.In][sig] {
+					continue
+				}
+				have[sp.In][sig] = true
+				metas[i].Indexes = append(metas[i].Indexes, store.IndexMeta{Columns: cols})
+			}
+		}
+	}
 }
 
 // JoinTableName is the engine-managed table backing a many-to-many field. Keyed

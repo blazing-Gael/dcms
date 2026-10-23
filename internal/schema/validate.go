@@ -189,6 +189,9 @@ func (s *SchemaDefinition) Validate() error {
 					for _, msg := range validateOwnerFields(*rule, col) {
 						add("%s.access.%s: %s", fpath, dir, msg)
 					}
+					for _, msg := range s.validateExistsRules(*rule, col) {
+						add("%s.access.%s: %s", fpath, dir, msg)
+					}
 				}
 				// Value-scoped write rules (issue #27): only on an enum field; each
 				// rule's roles must be declared and its from/to values must be
@@ -209,6 +212,9 @@ func (s *SchemaDefinition) Validate() error {
 							}
 						}
 						for _, msg := range validateOwnerFields(tr.Who, col) {
+							add("%s.who: %s", rpath, msg)
+						}
+						for _, msg := range s.validateExistsRules(tr.Who, col) {
 							add("%s.who: %s", rpath, msg)
 						}
 						if f.Type == TypeEnum {
@@ -417,6 +423,9 @@ func (s *SchemaDefinition) Validate() error {
 					}
 				}
 				for _, msg := range validateOwnerFields(*rule, col) {
+					add("%s.access.%s: %s", cpath, action, msg)
+				}
+				for _, msg := range s.validateExistsRules(*rule, col) {
 					add("%s.access.%s: %s", cpath, action, msg)
 				}
 				// `inherit` (issue #30) is meaningful only as the _media read rule.

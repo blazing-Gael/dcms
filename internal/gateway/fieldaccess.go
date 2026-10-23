@@ -37,7 +37,7 @@ func (s *Server) maskReadFields(ctx context.Context, collection string, rec stor
 		if f.Access == nil || f.Access.Read == nil {
 			continue
 		}
-		if !s.fieldPermitted(*f.Access.Read, p, rec) {
+		if !s.fieldPermitted(ctx, collection, *f.Access.Read, p, rec) {
 			delete(rec, f.Name)
 		}
 	}
@@ -120,7 +120,7 @@ func (s *Server) stripUnwritableFields(ctx context.Context, collection, id strin
 			}
 			cur := loadCurrent() // nil on create → current value ""
 			curVal, _ := cur[f.Name].(string)
-			switch s.evalTransition(f.Access.WriteTransitions, p, cur, curVal, newVal, isCreate) {
+			switch s.evalTransition(ctx, collection, f.Access.WriteTransitions, p, cur, curVal, newVal, isCreate) {
 			case transitionAllowed:
 				// keep it
 			case transitionForbidden:
@@ -141,7 +141,7 @@ func (s *Server) stripUnwritableFields(ctx context.Context, collection, id strin
 		if rule.MentionsOwner() && !isCreate {
 			cur = loadCurrent()
 		}
-		if !s.fieldWritable(rule, p, cur) {
+		if !s.fieldWritable(ctx, collection, rule, p, cur) {
 			delete(data, f.Name)
 		}
 	}
@@ -162,13 +162,13 @@ const (
 // the current value is in `from` (ignored on create) and the new value in `to` (an
 // empty set means "any"). A no-op (new == current, on update) is always allowed so
 // a round-tripped record never trips.
-func (s *Server) evalTransition(rules []schema.TransitionRule, p principal, current store.Record, curVal, newVal string, isCreate bool) transitionOutcome {
+func (s *Server) evalTransition(ctx context.Context, collection string, rules []schema.TransitionRule, p principal, current store.Record, curVal, newVal string, isCreate bool) transitionOutcome {
 	if !isCreate && newVal == curVal {
 		return transitionAllowed
 	}
 	applied := false
 	for _, tr := range rules {
-		if !s.fieldWritable(tr.Who, p, current) {
+		if !s.fieldWritable(ctx, collection, tr.Who, p, current) {
 			continue
 		}
 		applied = true
@@ -198,32 +198,33 @@ func inSetOrAny(set []string, v string) bool {
 	return false
 }
 
-// fieldPermitted evaluates a field read rule against a specific record.
-func (s *Server) fieldPermitted(rule schema.Rule, p principal, rec store.Record) bool {
-	switch d, field := evalRule(rule, p); d {
+// fieldPermitted evaluates a field read rule against a specific record. A scoped
+// rule (owner / owner_field / membership) is tested against the record via
+// recordInScope — simple owner checks stay in-Go; a membership field rule costs one
+// indexed query per masked field, which is rare.
+func (s *Server) fieldPermitted(ctx context.Context, collection string, rule schema.Rule, p principal, rec store.Record) bool {
+	switch d, filters := evalRule(rule, p); d {
 	case allow:
 		return true
-	case ownerScope:
-		owner, _ := rec[field].(string)
-		return owner != "" && owner == p.ID
+	case scope:
+		return s.recordInScope(ctx, collection, rec, filters)
 	default:
 		return false
 	}
 }
 
-// fieldWritable evaluates a field write rule. `current` is the pre-loaded record
-// for an update (owner comparison), or nil for a create — where `owner` collapses
-// to authenticated, mirroring authorizeCreate.
-func (s *Server) fieldWritable(rule schema.Rule, p principal, current store.Record) bool {
-	switch d, field := evalRule(rule, p); d {
+// fieldWritable evaluates a field write rule. `current` is the pre-loaded record for
+// an update, or nil for a create — where a scoped rule collapses to authenticated,
+// mirroring authorizeCreate (you are about to become the owner).
+func (s *Server) fieldWritable(ctx context.Context, collection string, rule schema.Rule, p principal, current store.Record) bool {
+	switch d, filters := evalRule(rule, p); d {
 	case allow:
 		return true
-	case ownerScope:
+	case scope:
 		if current == nil {
 			return p.Authenticated
 		}
-		owner, _ := current[field].(string)
-		return owner != "" && owner == p.ID
+		return s.recordInScope(ctx, collection, current, filters)
 	default:
 		return false
 	}
