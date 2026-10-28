@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/blazing-Gael/dcms/internal/gateway"
 	"github.com/blazing-Gael/dcms/internal/schema"
@@ -83,6 +84,25 @@ func TestOTPLogin_EnumerationSafe(t *testing.T) {
 	// A wrong code for a non-existent account is the same flat 401 as any miss.
 	if st, _ := do(t, http.MethodPost, base+"/auth/otp/verify", `{"email":"nobody@x.com","code":"123456"}`); st != http.StatusUnauthorized {
 		t.Fatalf("verify for unknown email should be 401, got %d", st)
+	}
+}
+
+// TestAccountMail_ResponseFloor pins GHSA-38cf-62wh-v3g3 for the mail endpoints:
+// an unknown email (one lookup) must not answer faster than a real account (token
+// writes + mail enqueue), so both are padded to the same floor.
+func TestAccountMail_ResponseFloor(t *testing.T) {
+	const floor = 80 * time.Millisecond
+	base, db := newAccountsServer(t, gateway.Options{OTPLogin: &gateway.OTPLoginOptions{}, MailMinResponse: floor})
+	seedUser(t, db, "u@x.com", "irrelevant-pw", "author")
+
+	for _, path := range []string{"/auth/otp/request", "/auth/forgot"} {
+		for _, email := range []string{"nobody@x.com", "u@x.com"} {
+			start := time.Now()
+			do(t, http.MethodPost, base+path, `{"email":"`+email+`"}`)
+			if d := time.Since(start); d < floor {
+				t.Errorf("%s for %s answered in %v, want >= %v", path, email, d, floor)
+			}
+		}
 	}
 }
 

@@ -207,6 +207,55 @@ func TestSignedMedia_MultiFileHLS(t *testing.T) {
 	}
 }
 
+// TestSignedMedia_DerivedFilesAreSafe pins GHSA-74xf-v9pf-rhj4 on the ADR-0037
+// paths: a derived file's type comes from an allowlisted extension (a declared
+// image/png can't smuggle in x.html), signed responses carry the media safety
+// headers, and /sign rejects a malformed body or an unsafe scope instead of
+// minting a whole-asset token.
+func TestSignedMedia_DerivedFilesAreSafe(t *testing.T) {
+	srv, db := mediaAuthServer(t, signMediaSchema, gateway.Options{URLSigner: testSigner()})
+	seedUser(t, db, "root@x.com", "pw-root-12345", "admin")
+	admin := login(t, srv.URL, "root@x.com", "pw-root-12345")
+	_, up := uploadFileAs(t, srv.URL+"/__media", admin, "v.mp4", "video/mp4", []byte("ORIGINAL"))
+	base := srv.URL + "/__media/" + recordID(t, up)
+
+	for _, p := range []string{"x.html", "x.svg", "x.xml", "x.js", "noext"} {
+		if code := putRaw(t, base+"/files/"+p, admin, "image/png", []byte("<script>alert(1)</script>")); code != http.StatusUnsupportedMediaType {
+			t.Errorf("derived PUT %s declared image/png: got %d, want 415", p, code)
+		}
+	}
+
+	// An allowlisted file is served by its extension's type, with the safety headers,
+	// whatever the uploader declared.
+	if code := putRaw(t, base+"/files/hls/index.m3u8", admin, "text/html", []byte("#EXTM3U")); code != http.StatusCreated {
+		t.Fatalf("put playlist: got %d", code)
+	}
+	_, signed := doAs(t, http.MethodPost, base+"/sign", admin, `{"scope":"hls/","path":"hls/index.m3u8"}`)
+	resp, err := http.Get(srv.URL + dataStr(signed, "url"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if ct := resp.Header.Get("Content-Type"); ct != "application/vnd.apple.mpegurl" {
+		t.Errorf("playlist Content-Type = %q, want the extension's type", ct)
+	}
+	if resp.Header.Get("X-Content-Type-Options") != "nosniff" || !strings.Contains(resp.Header.Get("Content-Security-Policy"), "sandbox") {
+		t.Errorf("signed response missing safety headers: %v", resp.Header)
+	}
+
+	for _, body := range []string{
+		`{not json`,                     // malformed → never a whole-asset token
+		`{"scope":"hls"}`,               // no trailing slash would also cover hls-private/
+		`{"scope":"hls/\n9999999999/"}`, // newline is the token payload separator
+		`{"scope":"../"}`,
+		`{"scope":"hls/","path":"other/x.ts"}`, // path outside scope
+	} {
+		if st, _ := doAs(t, http.MethodPost, base+"/sign", admin, body); st < 400 || st >= 500 {
+			t.Errorf("sign %s: got %d, want 4xx", body, st)
+		}
+	}
+}
+
 // Derived files count against the asset owner's storage quota (ADR-0037): a derived
 // PUT that would push the owner over the limit is refused, and the running total is
 // correct on overwrite.
@@ -224,15 +273,15 @@ func TestSignedMedia_DerivedFilesCountAgainstQuota(t *testing.T) {
 
 	// 8 (primary) + 20 (derived) = 28 > 20 → refused. Without derived accounting this
 	// would wrongly pass, since the primary alone is under the limit.
-	if code := putRaw(t, base+"/files/big.bin", admin, "application/octet-stream", bytes.Repeat([]byte("x"), 20)); code != http.StatusRequestEntityTooLarge {
+	if code := putRaw(t, base+"/files/big.ts", admin, "video/mp2t", bytes.Repeat([]byte("x"), 20)); code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("over-quota derived PUT: got %d, want 413", code)
 	}
 	// 8 + 5 = 13 ≤ 20 → allowed.
-	if code := putRaw(t, base+"/files/ok.bin", admin, "application/octet-stream", []byte("12345")); code != http.StatusCreated {
+	if code := putRaw(t, base+"/files/ok.ts", admin, "video/mp2t", []byte("12345")); code != http.StatusCreated {
 		t.Fatalf("within-quota derived PUT: got %d, want 201", code)
 	}
-	// Overwriting ok.bin (5B) with 7B costs only the +2 delta: 13 + 2 = 15 ≤ 20.
-	if code := putRaw(t, base+"/files/ok.bin", admin, "application/octet-stream", []byte("1234567")); code != http.StatusCreated {
+	// Overwriting ok.ts (5B) with 7B costs only the +2 delta: 13 + 2 = 15 ≤ 20.
+	if code := putRaw(t, base+"/files/ok.ts", admin, "video/mp2t", []byte("1234567")); code != http.StatusCreated {
 		t.Fatalf("overwrite within quota: got %d, want 201 (delta accounting)", code)
 	}
 }

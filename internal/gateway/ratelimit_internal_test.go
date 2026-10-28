@@ -113,6 +113,15 @@ func TestClientIP(t *testing.T) {
 		t.Fatalf("proxy(2 hops): got %q, want len-2 entry", got)
 	}
 
+	// A proxy that adds its own header line (HAProxy) instead of appending: the
+	// client-supplied first line must not win.
+	lines := httptest.NewRequest(http.MethodGet, "/x", nil)
+	lines.Header.Add("X-Forwarded-For", "6.6.6.6")
+	lines.Header.Add("X-Forwarded-For", "203.0.113.7")
+	if got := clientIP(lines, true, 1); got != "203.0.113.7" {
+		t.Fatalf("multi-line XFF: got %q, want the proxy's line", got)
+	}
+
 	// Fewer entries than configured hops → clamp to the left-most available.
 	short := httptest.NewRequest(http.MethodGet, "/x", nil)
 	short.Header.Set("X-Forwarded-For", "203.0.113.7")

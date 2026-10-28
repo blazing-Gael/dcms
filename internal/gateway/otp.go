@@ -42,6 +42,9 @@ func (s *Server) otpMaxAttempts() int {
 // whether or not the email maps to an active account, so it can't be used to
 // enumerate users. A code is minted and emailed only for a real, active user.
 func (s *Server) handleOTPRequest(w http.ResponseWriter, r *http.Request) {
+	// Pad to a fixed floor so a real account (code writes + mail enqueue) and an
+	// unknown email (one lookup) answer in the same time (GHSA-38cf-62wh-v3g3).
+	defer s.padMailResponse(r.Context(), time.Now())
 	data, err := decodeBody(r)
 	if err != nil {
 		writeDecodeError(w, err)

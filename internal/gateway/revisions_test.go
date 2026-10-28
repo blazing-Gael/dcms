@@ -95,12 +95,24 @@ func TestRevisions_HiddenStateNotLeakedWithoutToken(t *testing.T) {
 		t.Fatalf("preview-token GET of draft history: got %d, want 200", st)
 	}
 
-	// Publish, then soft-delete (trash) it. A trashed record is hidden again, so its
-	// history must close back up for an anonymous caller.
+	// Edit the draft, then publish. The record is now public, but v1 still holds the
+	// draft-era body, so with a preview token configured (and no preview rule) the
+	// history stays token-gated — publishing must not expose earlier snapshots.
+	do(t, http.MethodPatch, api+"/"+id, `{"body":"clean public body"}`)
 	do(t, http.MethodPost, api+"/"+id+"/publish", "")
-	if st, _ := getJSON(t, api+"/"+id+"/revisions", ""); st != http.StatusOK {
-		t.Fatalf("anonymous history of a published record should be readable: got %d", st)
+	if st, _ := getJSON(t, api+"/"+id, ""); st != http.StatusOK {
+		t.Fatalf("anonymous get-one of a published record: got %d, want 200", st)
 	}
+	for _, path := range []string{"/revisions", "/revisions/1"} {
+		if st, body := getJSON(t, api+"/"+id+path, ""); st != http.StatusNotFound {
+			t.Fatalf("anonymous GET %s of a published record (token configured): got %d, want 404 (%v)", path, st, body)
+		}
+	}
+	if st, _ := getJSON(t, api+"/"+id+"/revisions/1", previewTok); st != http.StatusOK {
+		t.Fatalf("preview-token GET of published history: got %d, want 200", st)
+	}
+
+	// Soft-delete (trash) it: hidden again, so history stays closed.
 	if st, _ := do(t, http.MethodDelete, api+"/"+id, ""); st != http.StatusNoContent && st != http.StatusOK {
 		t.Fatalf("soft delete: %d", st)
 	}

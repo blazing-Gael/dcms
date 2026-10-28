@@ -270,16 +270,15 @@ func validateCustomBlock(typ string, node map[string]any) string {
 // and protocol-relative ("//host") navigations.
 //
 // It normalizes the value the way a browser does before deciding, because the
-// browser — not the raw string — is what navigates. Leading C0 control bytes and
-// spaces are stripped (browsers ignore them), and backslashes are treated as
-// forward slashes (browsers do this for the authority of special-scheme URLs), so
-// `" //evil"`, `"\t//evil"`, `"/\\evil"` and `"\\\\evil"` cannot slip past the
-// `//` check as "relative" links and then navigate cross-origin.
+// browser — not the raw string — is what navigates. C0 control bytes and spaces
+// are trimmed from both ends, tab/LF/CR are removed everywhere (the WHATWG URL
+// parser does both), and backslashes are treated as forward slashes (browsers do
+// this for special-scheme URLs), so `" //evil"`, `"/\t/evil"`, `"/\\evil"` and
+// `"\\\\evil"` cannot slip past the `//` check as "relative" links and then
+// navigate cross-origin.
 func SafeHref(href string) bool {
-	// Strip leading C0 controls (incl. tab/newline/CR) and spaces, matching the
-	// WHATWG URL parser, which removes them before parsing.
-	href = strings.TrimLeft(href, "\x00\x01\x02\x03\x04\x05\x06\a\b\t\n\v\f\r\x0e\x0f"+
-		"\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1a\x1b\x1c\x1d\x1e\x1f ")
+	href = strings.Trim(href, c0AndSpace)
+	href = tabNewlineStripper.Replace(href)
 
 	// Determine the scheme on the raw (non-slash-normalized) prefix: a scheme is
 	// text up to the first ':' that contains no '/' or '\'. Backslash counts as a
@@ -300,6 +299,14 @@ func SafeHref(href string) bool {
 	}
 	return true
 }
+
+// c0AndSpace is the set the WHATWG URL parser trims from both ends of a URL.
+const c0AndSpace = "\x00\x01\x02\x03\x04\x05\x06\a\b\t\n\v\f\r\x0e\x0f" +
+	"\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1a\x1b\x1c\x1d\x1e\x1f "
+
+// tabNewlineStripper removes ASCII tab, LF and CR, which the URL parser drops from
+// anywhere in the input.
+var tabNewlineStripper = strings.NewReplacer("\t", "", "\n", "", "\r", "")
 
 // safeHref is the unexported alias kept for internal callers in this package.
 func safeHref(href string) bool { return SafeHref(href) }

@@ -160,6 +160,11 @@ type AuthMail struct {
 	// PerRecipientPerDay caps account email to one address per day (a mailbomb
 	// degrades to this). 0 ⇒ the engine default (10); negative ⇒ no cap.
 	PerRecipientPerDay int `yaml:"per_recipient_per_day"`
+	// MinResponseMS is the minimum response time, in milliseconds, of the endpoints
+	// that may send account email (/auth/forgot, /auth/otp/request), so timing can't
+	// tell a real account from an unknown email. 0 ⇒ the engine default (250);
+	// negative ⇒ no padding.
+	MinResponseMS int `yaml:"min_response_ms"`
 }
 
 // SMTP configures outbound mail. Credentials are env-only (secrets rule).

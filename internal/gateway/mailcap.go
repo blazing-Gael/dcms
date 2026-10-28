@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"context"
 	"sync"
 	"time"
 )
@@ -219,4 +220,30 @@ func (s *Server) allowAccountMail(recipient, kind string) bool {
 		s.logger.Warn("account email suppressed by rate cap", "kind", kind, "reason", reason)
 	}
 	return ok
+}
+
+// defaultMailMinResponse is the response-time floor of the account-mail endpoints.
+// Well above the few milliseconds the real-account path costs (token writes + an
+// outbox enqueue), so both paths finish at the floor.
+const defaultMailMinResponse = 250 * time.Millisecond
+
+// padMailResponse holds an account-mail response until the floor has passed since
+// start, so an unknown email (one lookup) and a real one (lookup, token writes,
+// mail enqueue) take the same time (GHSA-38cf-62wh-v3g3). It returns early if the
+// client goes away.
+func (s *Server) padMailResponse(ctx context.Context, start time.Time) {
+	floor := s.opts.MailMinResponse
+	if floor == 0 {
+		floor = defaultMailMinResponse
+	}
+	wait := floor - time.Since(start)
+	if wait <= 0 {
+		return
+	}
+	t := time.NewTimer(wait)
+	defer t.Stop()
+	select {
+	case <-t.C:
+	case <-ctx.Done():
+	}
 }

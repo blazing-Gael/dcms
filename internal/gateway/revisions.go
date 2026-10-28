@@ -205,15 +205,12 @@ func (s *Server) updateAndRevise(ctx context.Context, collection string, data st
 //     leak where open history exposed unpublished/trashed bodies to anyone.
 //   - With a `preview` rule, history then follows it record-level (a writer sees
 //     their own draft's history, an editor diffs a submission).
+//   - Without one, a configured preview token gates history (the pre-existing
+//     behaviour); with no token either, history is open to the record's readers.
 //
-// For a record that *is* visible in its current state, history reads are gated by
-// the collection's read rule (the caller ANDs authorizeRecordRead, so an
-// owner-scoped boundary is never widened) and each snapshot is field-masked like a
-// live read (handleRevisionGet → maskReadFields). We deliberately do NOT further
-// restrict visible-record history to writers only: a snapshot is a whole record
-// that already carries the same field mask a reader would get, so a reader of a
-// published record may read its history minus masked fields — the documented
-// contract (TestRevisions_SnapshotAppliesFieldMasking). A missing record is denied.
+// The caller also ANDs the read rule (authorizeRecordRead, so an owner-scoped
+// boundary is never widened) and each snapshot is field-masked like a live read
+// (handleRevisionGet → maskReadFields). A missing record is denied.
 func (s *Server) revisionHistoryDenied(r *http.Request, collection, id string) bool {
 	ctx := r.Context()
 	if visibilityFromContext(ctx).tokenPreview {
@@ -229,7 +226,10 @@ func (s *Server) revisionHistoryDenied(r *http.Request, collection, id string) b
 	if _, ok := s.collections[collection].PreviewRule(); ok {
 		return !s.previewEligible(ctx, collection, rec)
 	}
-	return false
+	// No preview rule: a configured preview token still gates history, as it did
+	// before. Old snapshots can hold draft-era content the published record no
+	// longer shows, so opening history to every reader would leak it.
+	return s.opts.PreviewToken != ""
 }
 
 // handleRevisionList returns a record's version history, newest first, without the

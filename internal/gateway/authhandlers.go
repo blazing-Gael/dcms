@@ -45,6 +45,9 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	userID, _ := user["id"].(string)
 	if userID != "" {
 		if locked, _ := s.credFailures.locked(userID); locked {
+			// Only real accounts can lock, so a fast 401 here would reveal the account
+			// exists: pay the same bcrypt as every other failure (GHSA-38cf-62wh-v3g3).
+			checkPassword("", req.Password)
 			writeError(w, http.StatusUnauthorized, apiError{Code: "UNAUTHORIZED", Message: "invalid email or password"})
 			return
 		}
