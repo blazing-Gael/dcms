@@ -150,6 +150,7 @@ func (s *Server) beforeWrite(ctx context.Context, tx store.DB, collection string
 		return rec, nil
 	}
 	hc := HookContext{Principal: principalFromContext(ctx), Collection: collection, Event: event, Store: tx}
+	ctx = context.WithValue(ctx, inWriteHookKey{}, true)
 	for i, fn := range hooks {
 		next, err := fn(ctx, hc, rec)
 		if err != nil {
@@ -172,6 +173,7 @@ func (s *Server) afterWrite(ctx context.Context, tx store.DB, collection string,
 		return nil
 	}
 	hc := HookContext{Principal: principalFromContext(ctx), Collection: collection, Event: event, Store: tx}
+	ctx = context.WithValue(ctx, inWriteHookKey{}, true)
 	for _, fn := range hooks {
 		if _, err := fn(ctx, hc, rec); err != nil {
 			return err

@@ -73,7 +73,10 @@ func embedServer(t *testing.T, src string, opts gateway.Options) (*gateway.Serve
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
-	db, err := sqlite.New(sqlite.Config{Path: ":memory:"})
+	// A file database, not :memory: — each pooled connection to :memory: is a separate
+	// empty database, which would hide what a second connection (e.g. a read from
+	// inside a hook's transaction) really sees.
+	db, err := sqlite.New(sqlite.Config{Path: t.TempDir() + "/embed.db"})
 	if err != nil {
 		t.Fatalf("sqlite.New: %v", err)
 	}

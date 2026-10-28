@@ -99,6 +99,7 @@ var (
 	ErrVersionConflict   = gateway.ErrVersionConflict // IfVersion precondition failed (412)
 	ErrReferenced        = gateway.ErrReferenced      // hard delete of a still-referenced record (409)
 	ErrUnknownCollection = gateway.ErrUnknownCollection
+	ErrInWriteHook       = gateway.ErrInWriteHook // an As(p)/PutFile write from inside a write hook; use hc.Store
 
 	ErrMediaUnavailable     = gateway.ErrMediaUnavailable
 	ErrSigningDisabled      = gateway.ErrSigningDisabled
