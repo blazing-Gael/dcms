@@ -283,6 +283,7 @@ func New(s *schema.SchemaDefinition, db store.Adapter, logger *slog.Logger, opts
 		o = opts[0]
 	}
 	srv := &Server{schema: s, db: db, collections: cols, logger: logger, opts: o}
+	srv.applyMediaWriteDefaults()
 	// Account-email + credential caps are always on (issue #50): password reset
 	// exists regardless of OTP, and the credential-failure budget guards login too.
 	recipDay := o.MailPerRecipientPerDay

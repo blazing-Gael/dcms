@@ -29,11 +29,43 @@ import (
 
 // _media is a collection like any other as far as authorization goes: these
 // handlers run the same access rules the collection API runs (ADR-0016), against
-// the _media collection. With no `access:` block declared on it, the engine
-// default applies — public read, authenticated write — so serving an image stays
-// open while upload, replace, edit and delete require a principal.
+// the _media collection. Undeclared rules default to: public read, authenticated
+// upload, and owner-or-admin update/delete (issue #70) — so serving an image stays
+// open, any principal may upload, but only the uploader or an admin may replace,
+// edit, delete or add derived files to it.
 
 func (s *Server) mediaEnabled() bool { return s.opts.Blob != nil }
+
+// applyMediaWriteDefaults fills the `_media` update/delete rules the schema left
+// unset with `any: [<admin roles>, owner]` (issue #70). The generic default
+// (authenticated) would let any signed-in user replace or delete anyone's upload.
+// It lives here, not in the schema compiler, because admin roles are gateway
+// config. Only the gateway's own copy changes; s.schema (and /__schema) keeps the
+// rules as declared.
+func (s *Server) applyMediaWriteDefaults() {
+	cd, ok := s.collections[schema.MediaCollection]
+	if !ok {
+		return
+	}
+	var acc schema.AccessRules
+	if cd.Access != nil {
+		acc = *cd.Access
+	}
+	def := schema.Rule{Kind: schema.RuleAny, Any: []schema.Rule{
+		{Kind: schema.RuleRoles, Roles: s.adminRoles()},
+		{Kind: schema.RuleOwner},
+	}}
+	if acc.Update == nil {
+		r := def
+		acc.Update = &r
+	}
+	if acc.Delete == nil {
+		r := def
+		acc.Delete = &r
+	}
+	cd.Access = &acc
+	s.collections[schema.MediaCollection] = cd
+}
 
 // mediaNotFound is the response for a media record the caller may not read: a
 // 404, never a 403, so an owner boundary does not leak (ADR-0016).

@@ -106,6 +106,11 @@ Fixes seven advisories. **Read "Upgrading" below — several defaults change.**
 - **Richtext link bypass (GHSA-xv66-6jwx-6v3x, low).** `//host` links hidden behind
   whitespace, tabs/newlines or backslashes are rejected; the admin renderer uses the
   same check.
+- **Any signed-in user could change anyone's media (issue #70).** With no `_media`
+  write rules declared, replace, metadata `PATCH`, `DELETE` and derived-file `PUT`
+  (and `app.Media().PutFile`) fell back to "authenticated". They now default to the
+  **uploader or an admin** (`auth.admin_roles`). Upload stays open to any signed-in
+  user and read is unchanged; a declared `_media.access.update`/`delete` still wins.
 
 ### Upgrading
 - **Behind a proxy:** with `trust_proxy: true`, forwarded headers now count only from
@@ -128,6 +133,11 @@ Fixes seven advisories. **Read "Upgrading" below — several defaults change.**
   `req.Store.List(ctx, q)` (as the caller) or `req.System.Find(ctx, q)` (privileged).
   Hooks are unchanged. Registering a hook or route after `Serve` or the first
   `Can`/`As`/`Media` call now panics instead of silently never running.
+- **Media writes are owner-or-admin by default (#70).** A team that shares one media
+  library (editors fixing each other's images) must say so, e.g.
+  `_media: { access: { update: [admin, editor], delete: [admin, editor] } }`, or
+  `authenticated` for the old behaviour. Assets with no recorded uploader (created
+  by hooks or imports) become admin-only to change.
 
 ## [0.1.0-beta.4] - 2026-09-24
 
