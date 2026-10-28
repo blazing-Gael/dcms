@@ -49,8 +49,8 @@ Typed outcomes, mapped to HTTP exactly as today:
 `internal/app` builds the gateway once — at `Serve`, or at the first API call if that
 comes earlier — and `engine.Serve` uses that instance. Library calls and HTTP requests
 therefore share hooks, signer, quota, and rate-limit state. Building it freezes
-registration: `On`/`Route` after that point return an error instead of being silently
-ignored.
+registration: `On`/`Route` after that point panic (they return `*App` for chaining, and
+a hook that silently never runs is worse — the same stance as `http.ServeMux` misuse).
 
 ### 3. Public API (`package dcms`)
 

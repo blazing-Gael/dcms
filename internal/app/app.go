@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"sync"
 
 	"github.com/blazing-Gael/dcms/internal/config"
 	"github.com/blazing-Gael/dcms/internal/engine"
@@ -42,6 +43,10 @@ type Server struct {
 	autoMigrate bool
 	dev         bool
 	label       string
+
+	gwMu sync.Mutex
+	gw   *gateway.Server // built once by Gateway; serves HTTP and the Go API alike
+	tls  engine.TLSConfig
 }
 
 // Load reads the schema and config, opens the store, and returns a Server. It does
@@ -104,6 +109,25 @@ func (s *Server) Logger() *slog.Logger { return s.logger }
 // Close releases the store.
 func (s *Server) Close() error { return s.db.Close() }
 
+// Gateway returns the server's gateway, building it on the first call with these
+// hooks and routes; later calls return the same instance and ignore their
+// arguments. One instance serves HTTP and the in-process Go API (ADR-0038), so both
+// share hooks, signer, quota, and limiter state. Building has no DB side effects.
+func (s *Server) Gateway(ctx context.Context, hooks *gateway.HookRegistry, routes []gateway.CustomRoute) (*gateway.Server, error) {
+	s.gwMu.Lock()
+	defer s.gwMu.Unlock()
+	if s.gw != nil {
+		return s.gw, nil
+	}
+	opts, tlsCfg, err := s.GatewayOptions(ctx, hooks, routes)
+	if err != nil {
+		return nil, err
+	}
+	s.gw = gateway.New(s.def, s.db, s.logger, opts)
+	s.tls = tlsCfg
+	return s.gw, nil
+}
+
 // Serve applies or checks migrations, seeds the bootstrap admin, and serves until
 // ctx is cancelled, with the given hooks and custom routes wired in. It is the same
 // orchestration the `dcms` binary and the library App both run.
@@ -131,10 +155,11 @@ func (s *Server) Serve(ctx context.Context, hooks *gateway.HookRegistry, routes 
 		return err
 	}
 
-	opts, tlsCfg, err := s.GatewayOptions(ctx, hooks, routes)
+	gw, err := s.Gateway(ctx, hooks, routes)
 	if err != nil {
 		return err
 	}
+	tlsCfg := s.tls
 	scheme := "http"
 	if tlsCfg.CertFile != "" && tlsCfg.KeyFile != "" {
 		scheme = "https"
@@ -145,7 +170,7 @@ func (s *Server) Serve(ctx context.Context, hooks *gateway.HookRegistry, routes 
 	}
 	fmt.Printf("%s — %d collection(s) from %s\n", name, len(s.def.Collections), s.cfg.Schema)
 	fmt.Printf("listening on %s://localhost:%d  (Ctrl+C to stop)\n", scheme, s.cfg.Server.Port)
-	return engine.Serve(ctx, s.def, s.db, fmt.Sprintf(":%d", s.cfg.Server.Port), s.logger, opts, tlsCfg)
+	return engine.ServeGateway(ctx, gw, fmt.Sprintf(":%d", s.cfg.Server.Port), s.logger, tlsCfg)
 }
 
 // configPath returns p, or the default config path when p is empty.

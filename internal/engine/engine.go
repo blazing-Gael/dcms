@@ -81,7 +81,12 @@ func (t TLSConfig) enabled() bool { return t.CertFile != "" && t.KeyFile != "" }
 // then shuts down gracefully (draining in-flight requests). opts tunes gateway
 // behavior; tls, when both files are set, makes the server terminate TLS itself.
 func Serve(ctx context.Context, def *schema.SchemaDefinition, db store.Adapter, addr string, logger *slog.Logger, opts gateway.Options, tls TLSConfig) error {
-	gw := gateway.New(def, db, logger, opts)
+	return ServeGateway(ctx, gateway.New(def, db, logger, opts), addr, logger, tls)
+}
+
+// ServeGateway is Serve for an already-built gateway — so an embedding App can use
+// the same instance in-process (ADR-0038) that serves HTTP.
+func ServeGateway(ctx context.Context, gw *gateway.Server, addr string, logger *slog.Logger, tls TLSConfig) error {
 	srv := &http.Server{
 		Addr:    addr,
 		Handler: gw.Handler(),

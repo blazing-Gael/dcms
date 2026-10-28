@@ -82,18 +82,103 @@ apply. The handler gets a `*dcms.Request`:
 
 ```go
 func checkout(req *dcms.Request) {
-	if !req.Principal.Authenticated {
-		http.Error(req.W, "sign in first", http.StatusUnauthorized)
+	ctx := req.R.Context()
+	// As the caller: the cart must be theirs, by the schema's own rules.
+	cart, err := req.Store.Get(ctx, "carts", req.R.URL.Query().Get("cart"))
+	if errors.Is(err, dcms.ErrNotFound) {
+		http.Error(req.W, "no such cart", http.StatusNotFound)
 		return
 	}
-	cart, err := req.Store.Find(req.R.Context(), /* … */)
-	// … write an order, charge, respond …
+	// System work the caller couldn't do directly: decrement stock.
+	_, err = req.System.Update(ctx, dcms.WriteInput{ /* … */ })
+	// … charge, respond …
 }
 ```
 
-`req.Principal` is the verified caller, `req.Store` is the app's store handle. Unlike
-a hook, a custom route is not already in a transaction — use `req.Store` for reads
-and autonomous writes. Register routes last; they never shadow a built-in path.
+| Field | What it is |
+|---|---|
+| `req.Principal` | the verified caller (zero value = anonymous) |
+| `req.Store` | a `ScopedStore` **acting as the caller** — the same rules as the HTTP API |
+| `req.System` | the privileged store: no access rules. Use it only for system work |
+| `req.Can(action, collection, id)` | "may the caller do this?" — same answer as the HTTP API |
+| `req.Param(name)` | a path parameter from the route pattern (`/lessons/{id}`) |
+
+Unlike a hook, a custom route is not already in a transaction — open one via
+`req.System` if you need atomic multi-writes. Register routes last; they never
+shadow a built-in path.
+
+> **Changed (ADR-0038):** `req.Store` used to be the privileged store. It is now
+> scoped to the caller; the privileged one is `req.System`.
+
+## Authorization from Go
+
+The rule engine is available in-process, so a custom route never re-implements
+authorization (ADR-0038). Everything here runs the **same code** as the HTTP API.
+
+```go
+// May p read this lesson? (the schema's `exists` enrollment rule decides)
+ok, err := app.Can(ctx, p, dcms.ActionRead, "lessons", id)
+
+// Read and write as p: read rules, published-only view, field masks,
+// write-field rules, validation, hooks, events, revisions.
+lesson, err := app.As(p).Get(ctx, "lessons", id)
+page, err := app.As(p).List(ctx, dcms.Query{Collection: "lessons"})
+note, err := app.As(p).Create(ctx, "notes", dcms.Record{"body": "…"})
+_, err = app.As(p).Update(ctx, "notes", id, dcms.Record{"body": "…"}, dcms.IfVersion(3))
+err = app.As(p).Delete(ctx, "notes", id) // soft-delete collections: trash; dcms.Purge() to hard-delete
+
+// Filters confining your own (privileged) query to what p may read.
+filters, ok, err := app.ReadFilters(ctx, p, "lessons")
+```
+
+- **`Can`** actions: `ActionRead`, `ActionCreate` (id ignored), `ActionUpdate`,
+  `ActionDelete`, `ActionPublish`, `ActionHistory`. `false` means "not allowed" *or*
+  "not found / not visible" — the same 404 policy as HTTP; `err` is a real failure.
+- **Errors** (test with `errors.Is`): `ErrNotFound` (absent or hidden), `ErrForbidden`,
+  `ErrUnauthenticated`, `*ValidationError`, `ErrVersionConflict`, `ErrReferenced`,
+  `*HookError`, `ErrUnknownCollection` (engine collections like `_users` aren't reachable).
+- `As(p).List` rejects a filter or sort on a field p can't read (`*ValidationError`,
+  "unknown field") and refuses subquery filters, exactly as the HTTP list does.
+
+### Media
+
+```go
+// Write a derived file (HLS segment, thumbnail) as p: update rights on the asset,
+// extension allowlist, size cap, the owner's quota — as PUT /__media/{id}/files/{path}.
+n, err := app.Media().PutFile(ctx, p, assetID, "hls/720p/seg1.m4s", r)
+
+// A signed, credential-free URL after checking p may read the asset (as POST /sign).
+u, err := app.Media().SignedURLAs(ctx, p, assetID, "hls/", "hls/master.m3u8", 2*time.Hour)
+
+// System use (e.g. a job emailing a certificate link): no access check.
+u, err = app.Media().SignedURL(ctx, assetID, "", "", 24*time.Hour)
+```
+
+Signed URLs are path-relative — prefix your public origin.
+
+### Example: an enrollment-gated lesson page
+
+```go
+app.Route("GET", "/learn/lessons/{id}", func(req *dcms.Request) {
+	ctx := req.R.Context()
+	lesson, err := req.Store.Get(ctx, "lessons", req.Param("id")) // not enrolled → ErrNotFound
+	if err != nil {
+		http.NotFound(req.W, req.R)
+		return
+	}
+	video, _ := lesson["video"].(string)
+	playlist, err := app.Media().SignedURLAs(ctx, req.Principal, video, "hls/", "hls/master.m3u8", 2*time.Hour)
+	// … render the page with lesson + playlist …
+})
+```
+
+No enrollment query anywhere: the schema's `exists` rule on `lessons` decides.
+
+### Ordering
+
+The App builds its gateway once — at `Serve`, or at the first `Can`/`As`/`Media`
+call — and HTTP and the Go API share it. Register every hook and route before that:
+`On`/`Route` afterwards panic rather than silently never running.
 
 ## When you'd fork instead
 
