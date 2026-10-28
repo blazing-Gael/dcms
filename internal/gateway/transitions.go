@@ -111,21 +111,18 @@ func (s *Server) applyTransition(w http.ResponseWriter, r *http.Request, collect
 	// A record the caller may not preview does not exist for them (ADR-0023) — this
 	// is what lets an owner restore their own trashed record while it stays hidden
 	// from others.
-	if s.writeHidden(r.Context(), collection, id) {
-		s.recordNotFound(w)
-		return
-	}
 	// A publishing transition (publish/unpublish/archive) is gated by the `publish`
 	// rule when the collection declares one, so going live can require more than
 	// editing (issue #23); it falls back to the update rule otherwise. restore is
 	// not a publishing transition — it stays an update.
-	rule := s.collections[collection].AccessRule(schema.ActionUpdate)
+	var authErr error
 	if publishTransition(operation) {
-		if pr, ok := s.collections[collection].PublishRule(); ok {
-			rule = pr
-		}
+		authErr = s.authzPublish(r.Context(), collection, id)
+	} else {
+		authErr = s.authzRecordWrite(r.Context(), collection, id, schema.ActionUpdate)
 	}
-	if !s.authorizeWriteRule(w, r, collection, id, rule) {
+	if authErr != nil {
+		writeStoreError(w, s.logger, r, authErr)
 		return
 	}
 	// Optimistic concurrency (issue #26): a transition is a write, so a stale

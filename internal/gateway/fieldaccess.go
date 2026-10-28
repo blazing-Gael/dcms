@@ -2,7 +2,6 @@ package gateway
 
 import (
 	"context"
-	"errors"
 	"net/http"
 
 	"github.com/blazing-Gael/dcms/internal/schema"
@@ -61,21 +60,15 @@ func (e *fieldForbiddenError) Error() string {
 	return "field " + e.field + ": transition not permitted"
 }
 
+// Is makes a forbidden transition match ErrForbidden for Go callers (ADR-0038).
+func (e *fieldForbiddenError) Is(target error) bool { return target == ErrForbidden }
+
 // writeFieldWriteError renders a field-write error, or reports false if err is nil.
-// A forbidden transition (issue #27) is a 403 naming the field; any other error is
-// an internal fault. Callers use it to short-circuit a write.
+// A forbidden transition (issue #27) is a 403 naming the field (writeStoreError);
+// any other error is an internal fault. Callers use it to short-circuit a write.
 func (s *Server) writeFieldWriteError(w http.ResponseWriter, r *http.Request, err error) bool {
 	if err == nil {
 		return false
-	}
-	var fe *fieldForbiddenError
-	if errors.As(err, &fe) {
-		writeError(w, http.StatusForbidden, apiError{
-			Code:    "FORBIDDEN",
-			Message: "you may not set '" + fe.field + "' to that value",
-			Fields:  map[string]string{fe.field: "transition not permitted"},
-		})
-		return true
 	}
 	writeStoreError(w, s.logger, r, err)
 	return true

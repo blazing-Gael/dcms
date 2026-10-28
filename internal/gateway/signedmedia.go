@@ -255,22 +255,10 @@ func safeSignScope(scope string) bool {
 // players and hooks that need a credential-free URL (e.g. an HLS playlist). Body:
 // {"scope": "hls/", "path": "hls/index.m3u8", "ttl_seconds": 3600}.
 func (s *Server) handleMediaSign(w http.ResponseWriter, r *http.Request) {
-	if !s.mediaEnabled() {
-		s.mediaUnavailable(w)
-		return
-	}
-	if s.opts.URLSigner == nil {
-		writeError(w, http.StatusNotImplemented, apiError{Code: "NOT_IMPLEMENTED", Message: "media URL signing is not configured"})
-		return
-	}
 	id := chi.URLParam(r, "id")
-	rec, err := s.db.FindOne(r.Context(), schema.MediaCollection, id)
-	if err != nil {
+	// Access check first, so an unreadable asset is a 404 before any body error.
+	if err := s.authzSign(r.Context(), id); err != nil {
 		writeStoreError(w, s.logger, r, err)
-		return
-	}
-	if !s.mediaReadable(r.Context(), rec) {
-		s.mediaNotFound(w)
 		return
 	}
 	var body struct {
@@ -292,94 +280,133 @@ func (s *Server) handleMediaSign(w http.ResponseWriter, r *http.Request) {
 			body.TTLSeconds = int(v)
 		}
 	}
-	if body.Path != "" && !safeFilePath(body.Path) {
-		writeError(w, http.StatusUnprocessableEntity, apiError{Code: "VALIDATION_ERROR", Message: "invalid file path"})
+	url, err := s.signURL(id, body.Scope, body.Path, time.Duration(body.TTLSeconds)*time.Second)
+	if err != nil {
+		writeStoreError(w, s.logger, r, err)
 		return
 	}
-	if !safeSignScope(body.Scope) {
-		writeError(w, http.StatusUnprocessableEntity, apiError{Code: "VALIDATION_ERROR", Message: `scope must be empty or a directory prefix ending in "/"`})
-		return
-	}
-	if body.Scope != "" && body.Path != "" && !strings.HasPrefix(body.Path, body.Scope) {
-		writeError(w, http.StatusUnprocessableEntity, apiError{Code: "VALIDATION_ERROR", Message: "path must be under scope"})
-		return
-	}
-	url := s.opts.URLSigner.SignedURL(id, body.Scope, body.Path, time.Duration(body.TTLSeconds)*time.Second, "")
 	writeData(w, http.StatusOK, store.Record{"url": url})
+}
+
+// authzSign authorizes minting a signed URL for asset id: media and signing must be
+// configured, and the caller must be able to read the asset (else not found).
+func (s *Server) authzSign(ctx context.Context, id string) error {
+	if !s.mediaEnabled() {
+		return errMediaUnavailable
+	}
+	if s.opts.URLSigner == nil {
+		return errSigningDisabled
+	}
+	rec, err := s.db.FindOne(ctx, schema.MediaCollection, id)
+	if err != nil {
+		return err
+	}
+	if !s.mediaReadable(ctx, rec) {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+// signURL validates a sign request and mints the URL. It does no access check —
+// authzSign does — so system code can sign without a principal (ADR-0038).
+func (s *Server) signURL(id, scope, filePath string, ttl time.Duration) (string, error) {
+	if s.opts.URLSigner == nil {
+		return "", errSigningDisabled
+	}
+	if filePath != "" && !safeFilePath(filePath) {
+		return "", errInvalidFilePath
+	}
+	if !safeSignScope(scope) {
+		return "", &MediaError{Status: http.StatusUnprocessableEntity, Code: "VALIDATION_ERROR",
+			Message: `scope must be empty or a directory prefix ending in "/"`, kind: store.ErrInvalidInput}
+	}
+	if scope != "" && filePath != "" && !strings.HasPrefix(filePath, scope) {
+		return "", &MediaError{Status: http.StatusUnprocessableEntity, Code: "VALIDATION_ERROR",
+			Message: "path must be under scope", kind: store.ErrInvalidInput}
+	}
+	return s.opts.URLSigner.SignedURL(id, scope, filePath, ttl, ""), nil
 }
 
 // handleMediaFilePut adds a derived file under an asset (ADR-0037): PUT
 // /__media/{id}/files/{path}. Authorized like replacing the asset's bytes (update),
 // size/type-capped, and quota-checked against the asset owner.
 func (s *Server) handleMediaFilePut(w http.ResponseWriter, r *http.Request) {
-	if !s.mediaEnabled() {
-		s.mediaUnavailable(w)
-		return
-	}
-	id := chi.URLParam(r, "id")
 	filePath := chi.URLParam(r, "*")
-	if !safeFilePath(filePath) {
-		writeError(w, http.StatusUnprocessableEntity, apiError{Code: "VALIDATION_ERROR", Message: "invalid file path"})
-		return
-	}
-	if !s.authorizeRecordWrite(w, r, schema.MediaCollection, id, schema.ActionUpdate) {
-		return
-	}
-	rec, err := s.db.FindOne(r.Context(), schema.MediaCollection, id)
+	r.Body = http.MaxBytesReader(w, r.Body, s.maxUpload())
+	size, err := s.putDerivedFile(r.Context(), chi.URLParam(r, "id"), filePath, r.Body)
 	if err != nil {
 		writeStoreError(w, s.logger, r, err)
 		return
+	}
+	writeData(w, http.StatusCreated, store.Record{"path": filePath, "size": size})
+}
+
+// putDerivedFile writes a derived file under asset id as the caller (ADR-0037):
+// authorized like replacing the asset's bytes (update), the type taken from an
+// allowlisted extension, size-capped, and counted against the asset owner's quota.
+// Returns the stored size.
+func (s *Server) putDerivedFile(ctx context.Context, id, filePath string, body io.Reader) (int64, error) {
+	if !s.mediaEnabled() {
+		return 0, errMediaUnavailable
+	}
+	if !safeFilePath(filePath) {
+		return 0, errInvalidFilePath
+	}
+	if err := s.authzRecordWrite(ctx, schema.MediaCollection, id, schema.ActionUpdate); err != nil {
+		return 0, err
+	}
+	rec, err := s.db.FindOne(ctx, schema.MediaCollection, id)
+	if err != nil {
+		return 0, err
 	}
 
 	// The type comes from the extension alone, which must be on the derived-file
 	// allowlist; the declared Content-Type is ignored. Checking the declared header but
 	// serving by extension let `x.html` sent as image/png through (GHSA-74xf-v9pf-rhj4).
 	if _, ok := derivedTypes[strings.ToLower(path.Ext(filePath))]; !ok {
-		writeError(w, http.StatusUnsupportedMediaType, apiError{Code: "UNSUPPORTED_MEDIA_TYPE", Message: "derived files must be one of: " + derivedExtList()})
-		return
+		return 0, &MediaError{Status: http.StatusUnsupportedMediaType, Code: "UNSUPPORTED_MEDIA_TYPE",
+			Message: "derived files must be one of: " + derivedExtList(), kind: ErrUnsupportedMediaType}
 	}
 	contentType := derivedContentType(filePath)
 	if !s.contentTypeAllowed(contentType) {
-		writeError(w, http.StatusUnsupportedMediaType, apiError{Code: "UNSUPPORTED_MEDIA_TYPE", Message: "content type " + contentType + " is not allowed"})
-		return
+		return 0, &MediaError{Status: http.StatusUnsupportedMediaType, Code: "UNSUPPORTED_MEDIA_TYPE",
+			Message: "content type " + contentType + " is not allowed", kind: ErrUnsupportedMediaType}
 	}
 
-	// Cap the body and buffer it once, so we know the true size (for quota + blob Put)
-	// even when Content-Length is absent. bytes.NewReader below reuses this buffer —
-	// no second copy.
-	r.Body = http.MaxBytesReader(w, r.Body, s.maxUpload())
-	data, err := io.ReadAll(r.Body)
+	// Buffer the body once (capped), so we know the true size for quota + blob Put
+	// even without a Content-Length. bytes.NewReader below reuses this buffer.
+	limit := s.maxUpload()
+	data, err := io.ReadAll(io.LimitReader(body, limit+1))
+	var tooLarge *http.MaxBytesError
+	if errors.As(err, &tooLarge) || int64(len(data)) > limit {
+		return 0, &MediaError{Status: http.StatusRequestEntityTooLarge, Code: "TOO_LARGE",
+			Message: fmt.Sprintf("upload exceeds the %d-byte limit", limit), kind: ErrTooLarge}
+	}
 	if err != nil {
-		var tooLarge *http.MaxBytesError
-		if errors.As(err, &tooLarge) {
-			writeError(w, http.StatusRequestEntityTooLarge, apiError{Code: "TOO_LARGE", Message: fmt.Sprintf("upload exceeds the %d-byte limit", s.maxUpload())})
-			return
-		}
-		writeError(w, http.StatusBadRequest, apiError{Code: "BAD_REQUEST", Message: "could not read request body"})
-		return
+		return 0, &MediaError{Status: http.StatusBadRequest, Code: "BAD_REQUEST",
+			Message: "could not read request body", kind: store.ErrInvalidInput}
 	}
 	newSize := int64(len(data))
 
 	key := id + "/" + filePath
 	// Net byte delta: overwriting an existing derived file only costs the difference,
 	// so repeated segment uploads don't over-count against the quota.
-	oldSize, _, err := s.opts.Blob.Stat(r.Context(), key)
+	oldSize, _, err := s.opts.Blob.Stat(ctx, key)
 	if err != nil {
-		writeStoreError(w, s.logger, r, err)
-		return
+		return 0, err
 	}
 	delta := newSize - oldSize
 
 	// Derived bytes count against the asset owner's budget (ADR-0028/0037).
 	owner, _ := rec[createdByField].(string)
-	limit := int64(-1) // -1 = no quota / unlimited
+	quota := int64(-1) // -1 = no quota / unlimited
 	if q := s.opts.MediaQuota; q != nil && owner != "" {
-		p := principalFromContext(r.Context())
+		p := principalFromContext(ctx)
 		roles := p.Roles
 		if owner != p.ID {
 			roles = nil // the owner's quota, evaluated at its default tier
 		}
-		limit = q.quotaFor(roles)
+		quota = q.quotaFor(roles)
 	}
 
 	// Check the quota and reserve the bytes (bump derived_size) in ONE transaction, so
@@ -388,20 +415,18 @@ func (s *Server) handleMediaFilePut(w http.ResponseWriter, r *http.Request) {
 	// before the blob write; if the write then fails we compensate. A crash in that gap
 	// over-counts for a growing file (fail safe) or slightly under-counts for a smaller
 	// overwrite (delta < 0) — harmless either way, self-corrected by the next write.
-	if err := s.reserveDerivedSize(r.Context(), rec, owner, delta, limit); err != nil {
+	if err := s.reserveDerivedSize(ctx, rec, owner, delta, quota); err != nil {
 		if errors.Is(err, errMediaQuota) {
-			writeError(w, http.StatusRequestEntityTooLarge, apiError{Code: "QUOTA_EXCEEDED", Message: "storage quota exceeded"})
-			return
+			return 0, &MediaError{Status: http.StatusRequestEntityTooLarge, Code: "QUOTA_EXCEEDED",
+				Message: "storage quota exceeded", kind: ErrQuotaExceeded}
 		}
-		writeStoreError(w, s.logger, r, err)
-		return
+		return 0, err
 	}
-	if err := s.opts.Blob.Put(r.Context(), key, bytes.NewReader(data), newSize, contentType); err != nil {
-		_ = s.addDerivedSize(r.Context(), rec, -delta) // best-effort rollback of the reservation
-		writeStoreError(w, s.logger, r, err)
-		return
+	if err := s.opts.Blob.Put(ctx, key, bytes.NewReader(data), newSize, contentType); err != nil {
+		_ = s.addDerivedSize(ctx, rec, -delta) // best-effort rollback of the reservation
+		return 0, err
 	}
-	writeData(w, http.StatusCreated, store.Record{"path": filePath, "size": newSize})
+	return newSize, nil
 }
 
 // errMediaQuota signals that a derived-file write would exceed the owner's storage
