@@ -248,7 +248,11 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 			schema.UserStatus: schema.UserStatusActive,
 		}})
 	case err == ErrUserExists:
-		// Enumeration-safe: fall through to the same success response.
+		// Enumeration-safe: fall through to the same success response. CreateUser
+		// returns before hashing when the email is taken, so burn one bcrypt here
+		// to match the new-account path's timing — otherwise a fast response would
+		// reveal the email already exists (GHSA-38cf-62wh-v3g3).
+		_, _ = hashPassword(password)
 	default:
 		writeStoreError(w, s.logger, r, err)
 		return

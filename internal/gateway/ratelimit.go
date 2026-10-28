@@ -173,12 +173,12 @@ func (s *Server) rateLimit(l RateLimiter, key func(*http.Request) string) func(h
 // authenticated callers (issue #34); every other request uses the general API tier
 // keyed per principal (IP fallback). Runs after withPrincipal, so the identity is
 // known.
-func (s *Server) rateLimitAPI(api, anonWrite RateLimiter, trust bool) func(http.Handler) http.Handler {
+func (s *Server) rateLimitAPI(api, anonWrite RateLimiter, trust bool, hops int) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			limiter, key := api, s.apiRateKey(r, trust)
+			limiter, key := api, s.apiRateKey(r, trust, hops)
 			if isWriteMethod(r.Method) && !principalFromContext(r.Context()).Authenticated {
-				limiter, key = anonWrite, "aw:"+clientIP(r, trust)
+				limiter, key = anonWrite, "aw:"+clientIP(r, trust, hops)
 			}
 			if ok, retry := limiter.Allow(key); !ok {
 				denyRateLimited(w, retry)
@@ -202,23 +202,40 @@ func isWriteMethod(method string) bool {
 
 // apiRateKey keys the general API limiter: an authenticated caller gets their own
 // bucket (fair across shared IPs), everyone else falls back to their client IP.
-func (s *Server) apiRateKey(r *http.Request, trustProxy bool) string {
+func (s *Server) apiRateKey(r *http.Request, trustProxy bool, hops int) string {
 	if p := principalFromContext(r.Context()); p.Authenticated && p.ID != "" {
 		return "u:" + p.ID
 	}
-	return "ip:" + clientIP(r, trustProxy)
+	return "ip:" + clientIP(r, trustProxy, hops)
 }
 
-// clientIP extracts the request's client IP for keying. With trustProxy it honors
-// the left-most X-Forwarded-For entry (the original client as seen by a trusted
-// proxy); otherwise it uses the socket peer, which cannot be spoofed.
-func clientIP(r *http.Request, trustProxy bool) string {
+// clientIP extracts the request's client IP for rate-limit keying.
+//
+// Without trustProxy it uses the socket peer, which cannot be spoofed.
+//
+// With trustProxy it reads X-Forwarded-For from the RIGHT, not the left. Common
+// proxies (nginx's $proxy_add_x_forwarded_for, Cloudflare, most load balancers)
+// *append* the peer they saw to any client-supplied header, so the left-most
+// entries are attacker-controlled and the trustworthy client address is near the
+// end. hops is the number of trusted proxies in front of DCMS (server.
+// trusted_proxy_hops, default 1): the real client sits at index len-hops, with
+// the hops right-most entries being the addresses our own proxies appended. This
+// closes the per-IP rate-limit bypass where a rotating fake XFF minted a fresh
+// budget per request (GHSA-f8wf-92mm-pw4g).
+func clientIP(r *http.Request, trustProxy bool, hops int) string {
 	if trustProxy {
 		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-			if i := strings.IndexByte(xff, ','); i >= 0 {
-				return strings.TrimSpace(xff[:i])
+			parts := strings.Split(xff, ",")
+			if hops < 1 {
+				hops = 1
 			}
-			return strings.TrimSpace(xff)
+			idx := len(parts) - hops
+			if idx < 0 {
+				idx = 0 // fewer entries than configured hops: take the left-most we have
+			}
+			if ip := strings.TrimSpace(parts[idx]); ip != "" {
+				return ip
+			}
 		}
 	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)

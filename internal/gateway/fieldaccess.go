@@ -198,6 +198,40 @@ func inSetOrAny(set []string, v string) bool {
 	return false
 }
 
+// fieldReadQueryable reports whether a caller may reference a field in a list
+// query — i.e. filter or sort on it. Field read rules (ADR-0016 M2) are otherwise
+// applied only when *serializing* a record, so a caller who can't read a field
+// could still recover its value by filtering or sorting on it and observing which
+// rows (or in what order) come back — a per-field oracle (GHSA-x4q6-jjx6-rwxm).
+//
+// A field with no read rule is queryable. A field with a read rule is queryable
+// only if the caller satisfies it unconditionally (`allow`): a record-scoped rule
+// (owner/owner_field/exists) would let a filter leak values across rows the caller
+// can't read, and a role the caller lacks is a flat deny. A name that isn't a
+// declared field (managed columns like id/created_at) has no field rule and stays
+// queryable. Callers turn a false into an "unknown field" error — never "forbidden"
+// — so a masked field's existence isn't confirmed.
+func (s *Server) fieldReadQueryable(collection, field string, p principal) bool {
+	if !s.authEnabled() {
+		return true
+	}
+	cd, ok := s.collections[collection]
+	if !ok || !cd.HasFieldAccess() {
+		return true
+	}
+	for _, f := range cd.Fields {
+		if f.Name != field {
+			continue
+		}
+		if f.Access == nil || f.Access.Read == nil {
+			return true
+		}
+		d, _ := evalRule(*f.Access.Read, p)
+		return d == allow
+	}
+	return true
+}
+
 // fieldPermitted evaluates a field read rule against a specific record. A scoped
 // rule (owner / owner_field / membership) is tested against the record via
 // recordInScope — simple owner checks stay in-Go; a membership field rule costs one

@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -324,6 +325,14 @@ type Server struct {
 	// the session cookie's Secure flag when TLS is terminated at the proxy. Enable
 	// ONLY behind a proxy you control — otherwise a client can spoof these.
 	TrustProxy bool `yaml:"trust_proxy"`
+	// TrustedProxyHops is how many trusted reverse proxies sit in front of DCMS.
+	// With trust_proxy on, the client IP for rate-limiting is read from the right
+	// of X-Forwarded-For (proxies append), skipping this many trusted hops. Default
+	// 1 (a single fronting proxy such as nginx/Caddy/Cloudflare). Set it to your
+	// real proxy depth: too low keys on a proxy's address (everyone shares a
+	// bucket), too high trusts a client-supplied entry (spoofable). Env:
+	// DCMS_TRUSTED_PROXY_HOPS.
+	TrustedProxyHops int `yaml:"trusted_proxy_hops"`
 	// Introspection gates the schema/docs routes (/__schema, /__openapi, /__docs):
 	// "public" (default) exposes them, "admin" requires an admin principal, "off"
 	// returns 404. Those routes are always marked noindex. Env: DCMS_INTROSPECTION.
@@ -406,7 +415,8 @@ func Default() Config {
 			Path:   "./dcms.db",
 		},
 		Server: Server{
-			Port: 3000,
+			Port:             3000,
+			TrustedProxyHops: 1,
 		},
 		Media: Media{
 			Driver: "local",
@@ -502,6 +512,13 @@ func (c *Config) ApplyEnv() error {
 			return fmt.Errorf("DCMS_TRUST_PROXY %q: not a bool", v)
 		}
 		c.Server.TrustProxy = b
+	}
+	if v, ok := os.LookupEnv("DCMS_TRUSTED_PROXY_HOPS"); ok {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return fmt.Errorf("DCMS_TRUSTED_PROXY_HOPS %q: not a number", v)
+		}
+		c.Server.TrustedProxyHops = n
 	}
 	if v, ok := os.LookupEnv("DCMS_CORS_ALLOWED_ORIGINS"); ok {
 		c.Server.CORS.AllowedOrigins = splitList(v)
@@ -608,6 +625,12 @@ func (c *Config) ApplyEnv() error {
 		if name := c.Events.Webhooks[i].SecretEnv; name != "" {
 			c.Events.Webhooks[i].Secret = os.Getenv(name)
 		}
+	}
+	// A wildcard origin with credentials is a reflect-any-origin-with-cookies
+	// policy the browser spec itself forbids on a credentialed response. We reject
+	// it at load instead of silently echoing every origin (GHSA-4wwm-mw23-6ch2).
+	if c.Server.CORS.AllowCredentials && slices.Contains(c.Server.CORS.AllowedOrigins, "*") {
+		return fmt.Errorf("server.cors: allowed_origins \"*\" cannot be combined with allow_credentials: true — a wildcard origin is invalid on a credentialed response; list the exact origins that may send credentials")
 	}
 	return nil
 }

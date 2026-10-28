@@ -66,6 +66,51 @@ func TestRevisions_HistoryCapturedAcrossWrites(t *testing.T) {
 	}
 }
 
+// TestRevisions_HiddenStateNotLeakedWithoutToken pins GHSA-8rpx-5wj5-c6jp: on a
+// collection with revisions + publishing + soft_delete and a public read rule,
+// the full snapshot of a record hidden in its lifecycle state (draft, trashed)
+// must not be readable by a caller who lacks the preview token. History visibility
+// must match get-one, not fall open just because no preview rule is configured.
+func TestRevisions_HiddenStateNotLeakedWithoutToken(t *testing.T) {
+	def, db := newDB(t, revisionsSchema)
+	srv := mount(t, def, db, gateway.Options{PreviewToken: previewTok, ValidateResponses: true})
+	api := srv.URL + "/api/v1/pages"
+
+	// A never-published draft.
+	_, b := do(t, http.MethodPost, api, `{"title":"Secret","body":"unpublished body"}`)
+	id := dataObj(t, b)["id"].(string)
+
+	// get-one hides the draft from an anonymous caller...
+	if st, _ := getJSON(t, api+"/"+id, ""); st != http.StatusNotFound {
+		t.Fatalf("anonymous get-one of a draft: got %d, want 404", st)
+	}
+	// ...and so must its history and snapshots (the leak).
+	for _, path := range []string{"/revisions", "/revisions/1"} {
+		if st, body := getJSON(t, api+"/"+id+path, ""); st != http.StatusNotFound {
+			t.Fatalf("anonymous GET %s of a draft: got %d, want 404 (%v)", path, st, body)
+		}
+	}
+	// The preview token still reaches the draft's history (operator bypass).
+	if st, _ := getJSON(t, api+"/"+id+"/revisions/1", previewTok); st != http.StatusOK {
+		t.Fatalf("preview-token GET of draft history: got %d, want 200", st)
+	}
+
+	// Publish, then soft-delete (trash) it. A trashed record is hidden again, so its
+	// history must close back up for an anonymous caller.
+	do(t, http.MethodPost, api+"/"+id+"/publish", "")
+	if st, _ := getJSON(t, api+"/"+id+"/revisions", ""); st != http.StatusOK {
+		t.Fatalf("anonymous history of a published record should be readable: got %d", st)
+	}
+	if st, _ := do(t, http.MethodDelete, api+"/"+id, ""); st != http.StatusNoContent && st != http.StatusOK {
+		t.Fatalf("soft delete: %d", st)
+	}
+	for _, path := range []string{"/revisions", "/revisions/1"} {
+		if st, _ := getJSON(t, api+"/"+id+path, ""); st != http.StatusNotFound {
+			t.Fatalf("anonymous GET %s of a trashed record: got %d, want 404", path, st)
+		}
+	}
+}
+
 func TestRevisions_RestoreIsContentOnly(t *testing.T) {
 	def, db := newDB(t, revisionsSchema)
 	srv := mount(t, def, db, gateway.Options{PreviewToken: previewTok, ValidateResponses: true})

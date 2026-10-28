@@ -81,17 +81,42 @@ func TestClientIP(t *testing.T) {
 	base := httptest.NewRequest(http.MethodGet, "/x", nil)
 	base.RemoteAddr = "203.0.113.7:54321"
 
-	if got := clientIP(base, false); got != "203.0.113.7" {
+	if got := clientIP(base, false, 1); got != "203.0.113.7" {
 		t.Fatalf("no-proxy: got %q, want the socket IP", got)
 	}
 
 	// trustProxy off: X-Forwarded-For is ignored (unspoofable keying).
 	base.Header.Set("X-Forwarded-For", "198.51.100.9, 203.0.113.7")
-	if got := clientIP(base, false); got != "203.0.113.7" {
+	if got := clientIP(base, false, 1); got != "203.0.113.7" {
 		t.Fatalf("no-proxy should ignore XFF, got %q", got)
 	}
-	// trustProxy on: the left-most XFF entry (original client) is used.
-	if got := clientIP(base, true); got != "198.51.100.9" {
-		t.Fatalf("proxy: got %q, want the left-most XFF entry", got)
+	// trustProxy on, one hop: the client is read from the RIGHT (proxies append),
+	// so the proxy-added right-most entry is the real client — not the left-most,
+	// which is client-supplied and spoofable (GHSA-f8wf-92mm-pw4g).
+	if got := clientIP(base, true, 1); got != "203.0.113.7" {
+		t.Fatalf("proxy(1 hop): got %q, want the right-most XFF entry", got)
+	}
+
+	// Spoof attempt: attacker prepends a fake entry. Behind one appending proxy the
+	// header becomes "<fake>, <real peer>"; the real peer is still right-most.
+	spoof := httptest.NewRequest(http.MethodGet, "/x", nil)
+	spoof.RemoteAddr = "10.0.0.1:1234" // the proxy
+	spoof.Header.Set("X-Forwarded-For", "1.2.3.4, 203.0.113.7")
+	if got := clientIP(spoof, true, 1); got != "203.0.113.7" {
+		t.Fatalf("spoofed XFF: got %q, want the proxy-appended right-most entry", got)
+	}
+
+	// Two trusted proxies: client is second from the right.
+	two := httptest.NewRequest(http.MethodGet, "/x", nil)
+	two.Header.Set("X-Forwarded-For", "1.2.3.4, 203.0.113.7, 10.0.0.2")
+	if got := clientIP(two, true, 2); got != "203.0.113.7" {
+		t.Fatalf("proxy(2 hops): got %q, want len-2 entry", got)
+	}
+
+	// Fewer entries than configured hops → clamp to the left-most available.
+	short := httptest.NewRequest(http.MethodGet, "/x", nil)
+	short.Header.Set("X-Forwarded-For", "203.0.113.7")
+	if got := clientIP(short, true, 3); got != "203.0.113.7" {
+		t.Fatalf("short XFF: got %q, want the left-most entry", got)
 	}
 }

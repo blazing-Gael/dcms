@@ -187,6 +187,7 @@ func (s *Server) GatewayOptions(ctx context.Context, hooks *gateway.HookRegistry
 		RateLimit:              rateLimit,
 		Idempotency:            idempotency,
 		TrustProxy:             cfg.Server.TrustProxy,
+		TrustedProxyHops:       cfg.Server.TrustedProxyHops,
 		CORS:                   cors,
 		AdminRoles:             adminRoles,
 		Registration:           registration,

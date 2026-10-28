@@ -89,7 +89,7 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	q, err := s.parseListQuery(r.URL.Query(), collection)
+	q, err := s.parseListQuery(r.Context(), r.URL.Query(), collection)
 	if err != nil {
 		writeStoreError(w, s.logger, r, err)
 		return

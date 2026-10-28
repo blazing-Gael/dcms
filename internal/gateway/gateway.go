@@ -123,6 +123,13 @@ type Options struct {
 	// enable only behind a proxy you control, or these become client-spoofable.
 	TrustProxy bool
 
+	// TrustedProxyHops is how many trusted reverse proxies sit in front of DCMS.
+	// It decides which X-Forwarded-For entry is the real client when TrustProxy is
+	// on: the client is read from the right (proxies append), at index len-hops.
+	// Defaults to 1 (a single fronting proxy) when zero. Set it to your actual
+	// proxy depth, or a spoofed XFF can forge the rate-limit key.
+	TrustedProxyHops int
+
 	// CORS enables cross-origin access when non-nil (and its AllowedOrigins is
 	// non-empty). Nil ⇒ no CORS headers (same-origin only), the safe default.
 	CORS *CORSOptions
@@ -304,9 +311,10 @@ func (s *Server) Handler() http.Handler {
 		authLimiter := newMemoryLimiter(c.AuthPerMinute, c.AuthBurst)
 		anonWriteLimiter := newMemoryLimiter(c.AnonWritePerMinute, c.AnonWriteBurst)
 		trust := s.opts.TrustProxy
+		hops := s.opts.TrustedProxyHops
 		// Anonymous collection writes get their own tight per-IP tier (issue #34).
-		apiLimit = s.rateLimitAPI(apiLimiter, anonWriteLimiter, trust)
-		authLimit = s.rateLimit(authLimiter, func(r *http.Request) string { return "ip:" + clientIP(r, trust) })
+		apiLimit = s.rateLimitAPI(apiLimiter, anonWriteLimiter, trust, hops)
+		authLimit = s.rateLimit(authLimiter, func(r *http.Request) string { return "ip:" + clientIP(r, trust, hops) })
 	}
 
 	r.NotFound(s.handleNotFound)
