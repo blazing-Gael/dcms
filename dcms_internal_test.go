@@ -247,6 +247,108 @@ func TestApp_AuthorizationAPI(t *testing.T) {
 	app.Route("GET", "/late", func(*Request) {})
 }
 
+// A signed-in caller's route Store sees exactly their rows (owner rule), while
+// System sees everything; and the gateway that serves HTTP is the one the Go API
+// uses (a hook registered before either fires for both).
+func TestApp_RouteStoreActsAsSignedInCaller(t *testing.T) {
+	app, alice, bob := newAuthTestApp(t)
+	ctx := context.Background()
+
+	var hookRuns int
+	app.On("notes", BeforeCreate, func(ctx context.Context, hc HookContext, rec Record) (Record, error) {
+		hookRuns++
+		return rec, nil
+	})
+	var scoped, system int
+	app.Route("GET", "/count", func(req *Request) {
+		page, err := req.Store.List(req.R.Context(), Query{Collection: "notes"})
+		if err != nil {
+			req.W.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		all, _ := req.System.Find(req.R.Context(), store.Query{Collection: "notes"})
+		scoped, system = len(page.Data), len(all.Data)
+	})
+	srv := httptest.NewServer(app.handler(t))
+	defer srv.Close()
+
+	// One note through the Go API, one over HTTP as bob: the hook fires for both.
+	if _, err := app.As(alice).Create(ctx, "notes", Record{"body": "a"}); err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.Post(srv.URL+"/auth/login", "application/json", strings.NewReader(`{"email":"bob@x.com","password":"pw-long-enough-1"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var login map[string]any
+	_ = json.NewDecoder(resp.Body).Decode(&login)
+	resp.Body.Close()
+	token, _ := login["token"].(string)
+	if token == "" {
+		t.Fatalf("login failed: %v", login)
+	}
+	authed := func(method, path, body string) *http.Response {
+		req, _ := http.NewRequest(method, srv.URL+path, strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Content-Type", "application/json")
+		r, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		r.Body.Close()
+		return r
+	}
+	if r := authed(http.MethodPost, "/api/v1/notes", `{"body":"b"}`); r.StatusCode != http.StatusCreated {
+		t.Fatalf("bob create over HTTP: %d", r.StatusCode)
+	}
+	if hookRuns != 2 {
+		t.Errorf("hook ran %d times, want 2 (Go API + HTTP share one gateway)", hookRuns)
+	}
+
+	authed(http.MethodGet, "/count", "")
+	if scoped != 1 || system != 2 {
+		t.Errorf("bob's route: Store saw %d, System saw %d; want 1 (his own) and 2", scoped, system)
+	}
+	_ = bob
+
+	g1, _ := app.gateway(ctx)
+	g2, _ := app.srv.Gateway(ctx, nil, nil)
+	if g1 != g2 {
+		t.Error("the App and Serve must share one gateway instance")
+	}
+}
+
+// Concurrent first use builds exactly one gateway (run with -race).
+func TestApp_ConcurrentFirstUseBuildsOneGateway(t *testing.T) {
+	app, alice, _ := newAuthTestApp(t)
+	ctx := context.Background()
+	const n = 16
+	gws := make(chan any, n)
+	errs := make(chan error, n)
+	start := make(chan struct{})
+	for i := 0; i < n; i++ {
+		go func() {
+			<-start
+			if _, err := app.Can(ctx, alice, ActionCreate, "notes", ""); err != nil {
+				errs <- err
+			}
+			gw, _ := app.gateway(ctx)
+			gws <- gw
+		}()
+	}
+	close(start)
+	first := <-gws
+	for i := 1; i < n; i++ {
+		if gw := <-gws; gw != first {
+			t.Fatal("concurrent first use built more than one gateway")
+		}
+	}
+	close(errs)
+	for err := range errs {
+		t.Errorf("Can: %v", err)
+	}
+}
+
 func TestApp_MissingExplicitConfigIsError(t *testing.T) {
 	if _, err := New(Options{ConfigPath: "does-not-exist.yaml", ConfigRequired: true}); err == nil {
 		t.Fatal("an explicit missing config should error")

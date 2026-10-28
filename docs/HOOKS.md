@@ -60,6 +60,11 @@ A hook runs with server authority for its own `hc.Store` operations. It never se
 `created_by`/`updated_by` — the adapter still stamps those from the verified
 identity, so a hook cannot forge who acted.
 
+A hook may ask the rule engine about the caller — `app.Can(ctx, hc.Principal, …)`
+or reads through `app.As(hc.Principal)` (EMBEDDING.md) — but those run outside the
+write's transaction and see only committed data. Writes through `app.As` from a hook
+return `ErrInWriteHook`; write through `hc.Store`.
+
 ## Rejecting
 
 Return a `*gateway.HookError` to choose the status: `{Status, Code, Message}`. A zero

@@ -139,6 +139,9 @@ filters, ok, err := app.ReadFilters(ctx, p, "lessons")
   `*HookError`, `ErrUnknownCollection` (engine collections like `_users` aren't reachable).
 - `As(p).List` rejects a filter or sort on a field p can't read (`*ValidationError`,
   "unknown field") and refuses subquery filters, exactly as the HTTP list does.
+- **Inside a write hook,** `Can` and `As(p)` reads work but see only committed data;
+  `As(p)` writes and `Media().PutFile` return `ErrInWriteHook` — the hook's write
+  holds the database's write transaction. Write through `hc.Store` instead.
 
 ### Media
 

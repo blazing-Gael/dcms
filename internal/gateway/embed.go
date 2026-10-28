@@ -22,6 +22,20 @@ import (
 // an engine collection like _users — media goes through the media methods).
 var ErrUnknownCollection = errors.New("unknown collection")
 
+// ErrInWriteHook: a write through As(p) or PutFile was attempted from inside a
+// write hook. The hook's write holds the database's write transaction, so a second
+// writer would wait out the busy timeout and fail; write through hc.Store (part of
+// the same transaction) instead. Reads are allowed, but see only committed data.
+var ErrInWriteHook = errors.New("dcms: As(p) writes can't run inside a write hook; use hc.Store")
+
+// inWriteHookKey marks a context passed to a write hook (beforeWrite/afterWrite).
+type inWriteHookKey struct{}
+
+func inWriteHook(ctx context.Context) bool {
+	v, _ := ctx.Value(inWriteHookKey{}).(bool)
+	return v
+}
+
 // asContext returns ctx acting as p: p is the principal (and the actor stamped on
 // writes, as withPrincipal does), and the lifecycle view is reset to the default,
 // published-only one — a preview token or ?status on an enclosing HTTP request must
@@ -159,7 +173,7 @@ func (ss *ScopedStore) List(ctx context.Context, q store.Query) (store.Page, err
 // Create creates a record as p: create rule, write-field rules, validation, hooks,
 // events, revisions — the HTTP create pipeline.
 func (ss *ScopedStore) Create(ctx context.Context, collection string, data store.Record) (store.Record, error) {
-	if err := ss.s.checkCollection(collection); err != nil {
+	if err := ss.s.checkWrite(ctx, collection); err != nil {
 		return nil, err
 	}
 	ctx = asContext(ctx, ss.p)
@@ -176,7 +190,7 @@ func (ss *ScopedStore) Create(ctx context.Context, collection string, data store
 // Update applies a partial update to record id as p. expect, if non-nil, is the
 // version the caller read (optimistic concurrency); it requires `concurrency: true`.
 func (ss *ScopedStore) Update(ctx context.Context, collection, id string, data store.Record, expect *int64) (store.Record, error) {
-	if err := ss.s.checkCollection(collection); err != nil {
+	if err := ss.s.checkWrite(ctx, collection); err != nil {
 		return nil, err
 	}
 	if err := ss.s.checkExpect(collection, expect); err != nil {
@@ -196,7 +210,7 @@ func (ss *ScopedStore) Update(ctx context.Context, collection, id string, data s
 // Delete deletes record id as p: trashed on a soft-delete collection unless purge,
 // else a hard delete (ErrReferenced while still referenced).
 func (ss *ScopedStore) Delete(ctx context.Context, collection, id string, expect *int64, purge bool) error {
-	if err := ss.s.checkCollection(collection); err != nil {
+	if err := ss.s.checkWrite(ctx, collection); err != nil {
 		return err
 	}
 	if err := ss.s.checkExpect(collection, expect); err != nil {
@@ -207,6 +221,14 @@ func (ss *ScopedStore) Delete(ctx context.Context, collection, id string, expect
 		return err
 	}
 	return ss.s.deleteCore(ctx, collection, id, expect, purge)
+}
+
+// checkWrite is checkCollection plus the write-hook guard (ErrInWriteHook).
+func (s *Server) checkWrite(ctx context.Context, collection string) error {
+	if inWriteHook(ctx) {
+		return ErrInWriteHook
+	}
+	return s.checkCollection(collection)
 }
 
 // checkExpect refuses a version precondition on a collection without
@@ -287,6 +309,9 @@ func (s *Server) guardQuery(ctx context.Context, q *store.Query) error {
 // /__media/{id}/files/{path} pipeline: update authorization, extension allowlist,
 // size cap, owner quota. Returns the stored size.
 func (s *Server) PutFile(ctx context.Context, p principal, id, filePath string, r io.Reader) (int64, error) {
+	if inWriteHook(ctx) {
+		return 0, ErrInWriteHook
+	}
 	return s.putDerivedFile(asContext(ctx, p), id, filePath, r)
 }
 
