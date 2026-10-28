@@ -198,38 +198,45 @@ func inSetOrAny(set []string, v string) bool {
 	return false
 }
 
-// fieldReadQueryable reports whether a caller may reference a field in a list
-// query — i.e. filter or sort on it. Field read rules (ADR-0016 M2) are otherwise
-// applied only when *serializing* a record, so a caller who can't read a field
-// could still recover its value by filtering or sorting on it and observing which
-// rows (or in what order) come back — a per-field oracle (GHSA-x4q6-jjx6-rwxm).
+// fieldQueryAccess decides whether a caller may reference a field in a list query.
+// Field read rules (ADR-0016 M2) are otherwise applied only when *serializing* a
+// record, so a caller who can't read a field could still recover its value by
+// filtering or sorting on it and watching which rows (or in what order) come back —
+// a per-field oracle (GHSA-x4q6-jjx6-rwxm).
 //
-// A field with no read rule is queryable. A field with a read rule is queryable
-// only if the caller satisfies it unconditionally (`allow`): a record-scoped rule
-// (owner/owner_field/exists) would let a filter leak values across rows the caller
-// can't read, and a role the caller lacks is a flat deny. A name that isn't a
-// declared field (managed columns like id/created_at) has no field rule and stays
-// queryable. Callers turn a false into an "unknown field" error — never "forbidden"
-// — so a masked field's existence isn't confirmed.
-func (s *Server) fieldReadQueryable(collection, field string, p principal) bool {
+//   - No read rule, or one the caller satisfies outright (`allow`): queryable,
+//     scope nil. Undeclared names (id, created_at, …) have no rule.
+//   - A record-scoped rule (owner/owner_field/exists): ok with that rule's scope
+//     filters, which a filter on the field must be ANDed with — it then only ever
+//     matches rows where the caller could read the value (the owner can filter on
+//     their own email). Sort can't be confined that way, so it requires scope nil.
+//   - Deny: not queryable. Callers report "unknown field", never "forbidden", so a
+//     masked field's existence isn't confirmed.
+func (s *Server) fieldQueryAccess(collection, field string, p principal) (ok bool, scopeFilters []store.Filter) {
 	if !s.authEnabled() {
-		return true
+		return true, nil
 	}
-	cd, ok := s.collections[collection]
-	if !ok || !cd.HasFieldAccess() {
-		return true
+	cd, found := s.collections[collection]
+	if !found || !cd.HasFieldAccess() {
+		return true, nil
 	}
 	for _, f := range cd.Fields {
 		if f.Name != field {
 			continue
 		}
 		if f.Access == nil || f.Access.Read == nil {
-			return true
+			return true, nil
 		}
-		d, _ := evalRule(*f.Access.Read, p)
-		return d == allow
+		switch d, filters := evalRule(*f.Access.Read, p); d {
+		case allow:
+			return true, nil
+		case scope:
+			return true, filters
+		default:
+			return false, nil
+		}
 	}
-	return true
+	return true, nil
 }
 
 // fieldPermitted evaluates a field read rule against a specific record. A scoped

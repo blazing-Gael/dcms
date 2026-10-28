@@ -7,9 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"net/url"
-	"strconv"
 	"strings"
 	"time"
 
@@ -182,18 +182,33 @@ func (s *Server) contentTypeAllowed(ct string) bool {
 func setMediaSafetyHeaders(w http.ResponseWriter, contentType, filename string) {
 	h := w.Header()
 	h.Set("X-Content-Type-Options", "nosniff")
-	h.Set("Content-Security-Policy", "default-src 'none'; sandbox")
+	// A PDF is rendered by the browser's own viewer, isolated from the page origin;
+	// a sandboxing CSP can stop that viewer from loading, so PDFs keep nosniff only.
+	if mediaBaseType(contentType) != "application/pdf" {
+		h.Set("Content-Security-Policy", "default-src 'none'; sandbox")
+	}
 	disposition := "attachment"
 	if safeInlineContentType(contentType) {
 		disposition = "inline"
 	}
-	if filename != "" {
-		// strconv.Quote escapes control characters, so a crafted filename can't inject
-		// a header line or break out of the quoted-string.
-		h.Set("Content-Disposition", disposition+"; filename="+strconv.Quote(filename))
+	// FormatMediaType quotes/escapes the name and switches to RFC 2231 encoding
+	// (filename*=utf-8''…) for non-ASCII names, so a crafted filename can't inject
+	// a header and a Bangla filename survives. It returns "" for a name it can't
+	// encode; then the disposition goes out without one.
+	if v := mime.FormatMediaType(disposition, map[string]string{"filename": filename}); filename != "" && v != "" {
+		h.Set("Content-Disposition", v)
 	} else {
 		h.Set("Content-Disposition", disposition)
 	}
+}
+
+// mediaBaseType lower-cases a content type and drops any parameters.
+func mediaBaseType(ct string) string {
+	ct = strings.ToLower(strings.TrimSpace(ct))
+	if i := strings.IndexByte(ct, ';'); i >= 0 {
+		ct = strings.TrimSpace(ct[:i])
+	}
+	return ct
 }
 
 // safeInlineContentType reports whether a media content type may be rendered
@@ -203,10 +218,7 @@ func setMediaSafetyHeaders(w http.ResponseWriter, contentType, filename string) 
 // — notably text/html, image/svg+xml, application/xhtml+xml and any XML or
 // unknown type — is withheld from inline rendering and downloaded instead.
 func safeInlineContentType(ct string) bool {
-	ct = strings.ToLower(strings.TrimSpace(ct))
-	if i := strings.IndexByte(ct, ';'); i >= 0 {
-		ct = strings.TrimSpace(ct[:i]) // drop any ;charset=… parameter
-	}
+	ct = mediaBaseType(ct)
 	if ct == "image/svg+xml" {
 		return false // an SVG renders with inline script — never inline
 	}
@@ -245,9 +257,12 @@ func (s *Server) addMediaURL(rec store.Record) {
 	}
 	ver := mediaVersion(rec)
 	// A world-readable library takes the direct/public URL (or the plain proxy): the
-	// bytes aren't secret, so no token is needed and a CDN can cache freely.
+	// bytes aren't secret, so no token is needed and a CDN can cache freely. Only a
+	// type that's safe inline goes direct — the bucket serves the uploader's type
+	// without DCMS's safety headers, so anything else goes through /raw.
+	ct, _ := rec[schema.MediaContentType].(string)
 	if !s.mediaReadGated() {
-		if u := s.opts.Blob.URL(key); u != "" {
+		if u := s.opts.Blob.URL(key); u != "" && safeInlineContentType(ct) {
 			rec["url"] = withVersion(u, ver)
 			return
 		}
@@ -525,10 +540,14 @@ func (s *Server) handleMediaRaw(w http.ResponseWriter, r *http.Request) {
 	// object URL would hand an authorized caller a link anyone can follow, past the
 	// read rule. Only a world-readable library takes the direct-URL fast path.
 	gated := s.mediaReadGated()
+	// Only safe-inline types redirect: the bucket would serve anything else (HTML,
+	// SVG) without the safety headers below (GHSA-74xf-v9pf-rhj4).
 	if !gated {
-		if u := s.opts.Blob.URL(key); u != "" {
-			http.Redirect(w, r, u, http.StatusFound)
-			return
+		if ct, _ := rec[schema.MediaContentType].(string); safeInlineContentType(ct) {
+			if u := s.opts.Blob.URL(key); u != "" {
+				http.Redirect(w, r, u, http.StatusFound)
+				return
+			}
 		}
 	}
 	body, err := s.opts.Blob.Get(r.Context(), key)

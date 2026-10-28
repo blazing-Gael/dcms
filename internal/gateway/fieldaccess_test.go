@@ -202,6 +202,63 @@ func TestFieldAccess_NoFilterSortOracle(t *testing.T) {
 	}
 }
 
+// TestFieldAccess_ScopedFieldFilter: a field readable only by its owner can be
+// filtered by the owner, but the filter is confined to their own rows — another
+// user's value never matches, so it can't be probed. Sort on it stays rejected,
+// and a caller the rule denies outright (anonymous) gets "unknown field".
+func TestFieldAccess_ScopedFieldFilter(t *testing.T) {
+	const src = `
+version: "1"
+auth:
+  session:
+    ttl: 1h
+collections:
+  contacts:
+    fields:
+      name:  { type: string, required: true }
+      phone:
+        type: string
+        access:
+          read: owner
+    access:
+      read:   public
+      create: authenticated
+`
+	srv, db := newServerWith(t, src)
+	seedUser(t, db, "a@x.com", "pw-alice-1234")
+	seedUser(t, db, "b@x.com", "pw-bob-123456")
+	alice := login(t, srv.URL, "a@x.com", "pw-alice-1234")
+	bob := login(t, srv.URL, "b@x.com", "pw-bob-123456")
+	base := srv.URL + "/api/v1/contacts"
+	doAs(t, http.MethodPost, base, alice, `{"name":"A","phone":"111"}`)
+	doAs(t, http.MethodPost, base, bob, `{"name":"B","phone":"222"}`)
+
+	count := func(token, q string) (int, int) {
+		st, body := doAs(t, http.MethodGet, base+q, token, "")
+		rows, _ := body["data"].([]any)
+		return st, len(rows)
+	}
+	if st, n := count(alice, "?filter[phone]=111"); st != http.StatusOK || n != 1 {
+		t.Errorf("owner filter on own value: got %d/%d rows, want 200/1", st, n)
+	}
+	if st, n := count(alice, "?filter[phone]=222"); st != http.StatusOK || n != 0 {
+		t.Errorf("owner filter on another user's value: got %d/%d rows, want 200/0 (no oracle)", st, n)
+	}
+	if st, n := count(alice, "?filter[phone][ne]=x"); st != http.StatusOK || n != 1 {
+		t.Errorf("negated filter must stay confined to own rows: got %d/%d, want 200/1", st, n)
+	}
+	if st, _ := count(alice, "?sort=phone"); st != http.StatusUnprocessableEntity {
+		t.Errorf("sort on owner-scoped field: got %d, want 422", st)
+	}
+	if st, _ := count("", "?filter[phone]=111"); st != http.StatusUnprocessableEntity {
+		t.Errorf("anonymous filter on owner-scoped field: got %d, want 422", st)
+	}
+	// Without a filter on phone, the list is unaffected.
+	if st, n := count(alice, ""); st != http.StatusOK || n != 2 {
+		t.Errorf("plain list: got %d/%d rows, want 200/2", st, n)
+	}
+}
+
 func TestFieldAccess_WriteStripping_RoleRule(t *testing.T) {
 	srv, db := newServerWith(t, fieldAccessSchema)
 	seedUser(t, db, "boss@x.com", "pw-boss-1234", "admin")

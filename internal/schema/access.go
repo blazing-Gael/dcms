@@ -23,6 +23,11 @@ const (
 	// separately from update (issue #23). No default; falls back to update when
 	// unset — see CollectionDef.PublishRule.
 	ActionPublish AccessAction = "publish"
+	// ActionHistory gates reading a record's revision history (GHSA-8rpx-5wj5-c6jp).
+	// Old snapshots can hold content the current record no longer shows, so history
+	// is not readable just because the record is: unset, it falls back to the
+	// preview rule if one is declared, else to update — see CollectionDef.HistoryRule.
+	ActionHistory AccessAction = "history"
 )
 
 // RuleKind is the parsed shape of a single access rule value (ADR-0016).
@@ -228,7 +233,7 @@ func (s *SchemaDefinition) validateExistsRules(rule Rule, col CollectionDef) []s
 func (c CollectionDef) allRules() []Rule {
 	var out []Rule
 	if c.Access != nil {
-		for _, r := range []*Rule{c.Access.Read, c.Access.Create, c.Access.Update, c.Access.Delete, c.Access.Preview, c.Access.Publish} {
+		for _, r := range []*Rule{c.Access.Read, c.Access.Create, c.Access.Update, c.Access.Delete, c.Access.Preview, c.Access.Publish, c.Access.History} {
 			if r != nil {
 				out = append(out, *r)
 			}
@@ -301,6 +306,10 @@ type AccessRules struct {
 	// to the update rule (today's behaviour), so a collection tightens who may go
 	// live without also tightening who may edit.
 	Publish *Rule `json:"publish,omitempty"`
+	// History gates revision-history reads (GHSA-8rpx-5wj5-c6jp). Unset ⇒ the
+	// preview rule if declared, else update (writers), so a reader of a published
+	// record doesn't also get its draft-era snapshots unless the schema says so.
+	History *Rule `json:"history,omitempty"`
 }
 
 // defaultRule is the effective policy for an action with no explicit rule.
@@ -353,6 +362,21 @@ func (c CollectionDef) PublishRule() (Rule, bool) {
 		return *c.Access.Publish, true
 	}
 	return Rule{}, false
+}
+
+// HistoryRule returns the rule that gates reading a record's revision history
+// (GHSA-8rpx-5wj5-c6jp): the declared `history` rule, else the `preview` rule
+// (issue #24: history follows preview), else update. Never the read rule alone —
+// earlier snapshots can hold draft-era content a reader shouldn't see; a schema
+// that wants reader-visible history says `history: public` (or any rule).
+func (c CollectionDef) HistoryRule() Rule {
+	if c.Access != nil && c.Access.History != nil {
+		return *c.Access.History
+	}
+	if r, ok := c.PreviewRule(); ok {
+		return r
+	}
+	return c.AccessRule(ActionUpdate)
 }
 
 // mentionsPublic reports whether the rule tree contains a `public` gate anywhere.
@@ -632,8 +656,10 @@ func parseAccess(node *yaml.Node) (*AccessRules, error) {
 			ar.Preview = rule
 		case ActionPublish:
 			ar.Publish = rule
+		case ActionHistory:
+			ar.History = rule
 		default:
-			return nil, fmt.Errorf("unknown access action %q (want read, create, update, delete, preview, or publish)", e.Key)
+			return nil, fmt.Errorf("unknown access action %q (want read, create, update, delete, preview, publish, or history)", e.Key)
 		}
 	}
 	return ar, nil

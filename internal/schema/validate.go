@@ -413,6 +413,7 @@ func (s *SchemaDefinition) Validate() error {
 				ActionUpdate: col.Access.Update, ActionDelete: col.Access.Delete,
 				ActionPreview: col.Access.Preview,
 				ActionPublish: col.Access.Publish,
+				ActionHistory: col.Access.History,
 			} {
 				if rule == nil {
 					continue
@@ -454,6 +455,10 @@ func (s *SchemaDefinition) Validate() error {
 				if pub.mentionsPublic() {
 					add("%s.access.publish: `public` is not allowed — anyone could publish", cpath)
 				}
+			}
+			// history gates revision reads — meaningless without revisions.
+			if col.Access.History != nil && !col.Revisions {
+				add("%s.access.history: only valid on a collection with revisions (no history to gate otherwise)", cpath)
 			}
 		}
 

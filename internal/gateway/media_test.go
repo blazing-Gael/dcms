@@ -185,6 +185,71 @@ func TestMedia_RawServedSafely(t *testing.T) {
 	}
 }
 
+// bucketURLStore wraps a local store but reports a direct object URL, standing in
+// for a public S3/R2 bucket.
+type bucketURLStore struct{ blob.Store }
+
+func (bucketURLStore) URL(key string) string { return "https://bucket.example/" + key }
+
+// TestMedia_DirectURLsOnlyForSafeTypes pins GHSA-74xf-v9pf-rhj4 on direct-URL
+// backends: a bucket serves the uploader's type with none of DCMS's headers, so
+// only safe-inline types may be handed out (or redirected to) directly; HTML/SVG
+// stay on /raw. Also: PDFs keep nosniff without the sandbox CSP, and a non-ASCII
+// filename is RFC 2231 encoded.
+func TestMedia_DirectURLsOnlyForSafeTypes(t *testing.T) {
+	def, db := newDB(t, mediaProductSchema)
+	local, err := blob.New(blob.Config{Driver: "local", Dir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("blob.New: %v", err)
+	}
+	srv := mount(t, def, db, gateway.Options{Blob: bucketURLStore{local}})
+	media := srv.URL + "/__media"
+	noFollow := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+
+	for _, tc := range []struct {
+		filename, ct string
+		direct       bool
+	}{
+		{"logo.png", "image/png", true},
+		{"x.html", "text/html", false},
+		{"x.svg", "image/svg+xml", false},
+	} {
+		_, body := uploadFile(t, media, "file", tc.filename, tc.ct, []byte("data"))
+		rec := dataObj(t, body)
+		u, _ := rec["url"].(string)
+		if got := strings.HasPrefix(u, "https://bucket.example/"); got != tc.direct {
+			t.Errorf("%s url = %q, direct=%v want %v", tc.ct, u, got, tc.direct)
+		}
+		resp, err := noFollow.Get(media + "/" + rec["id"].(string) + "/raw")
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if redirected := resp.StatusCode == http.StatusFound; redirected != tc.direct {
+			t.Errorf("%s /raw status %d, redirect=%v want %v", tc.ct, resp.StatusCode, redirected, tc.direct)
+		}
+		if !tc.direct && resp.Header.Get("X-Content-Type-Options") != "nosniff" {
+			t.Errorf("%s served without nosniff", tc.ct)
+		}
+	}
+
+	// PDF (served by DCMS itself, no bucket): inline, nosniff, no sandbox CSP; a
+	// non-ASCII name survives encoded.
+	plain := mediaServer(t, mediaProductSchema) + "/__media"
+	_, body := uploadFile(t, plain, "file", "নোট.pdf", "application/pdf", []byte("%PDF-1.4"))
+	resp, err := http.Get(plain + "/" + dataObj(t, body)["id"].(string) + "/raw")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.Header.Get("Content-Security-Policy") != "" || resp.Header.Get("X-Content-Type-Options") != "nosniff" {
+		t.Errorf("pdf headers: CSP=%q nosniff=%q", resp.Header.Get("Content-Security-Policy"), resp.Header.Get("X-Content-Type-Options"))
+	}
+	if d := resp.Header.Get("Content-Disposition"); !strings.HasPrefix(d, "inline") || !strings.Contains(d, "filename*=utf-8''") {
+		t.Errorf("pdf Content-Disposition = %q, want inline with an RFC 2231 filename", d)
+	}
+}
+
 func TestMedia_ReplaceKeepsIdAndReferences(t *testing.T) {
 	root := mediaServer(t, mediaProductSchema)
 	media := root + "/__media"
