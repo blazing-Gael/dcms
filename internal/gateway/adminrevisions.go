@@ -37,10 +37,12 @@ func (s *Server) adminRevisions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// The admin panel is the privileged editor surface: like the edit page, it
-	// shows records regardless of lifecycle state (drafts included), so history is
-	// gated by the collection's read rule — which still scopes an owner-only editor
-	// to their own records — rather than the API's lifecycle/preview gate (#24).
-	if !s.adminCanRecord(r, cd.Name, id, schema.ActionRead) {
+	// shows records regardless of lifecycle state (drafts included), so the API's
+	// lifecycle gate doesn't apply. History still needs the read rule (scoping an
+	// owner-only editor to their own records) AND the history rule, as in the API
+	// (GHSA-8rpx-5wj5-c6jp) — a read-only panel user doesn't get past snapshots.
+	if !s.adminCanRecord(r, cd.Name, id, schema.ActionRead) ||
+		!s.adminCanRule(r, cd.Name, id, cd.HistoryRule()) {
 		s.adminForbidden(w, r)
 		return
 	}

@@ -41,6 +41,41 @@ collections:
 	}
 }
 
+// The history rule (GHSA-8rpx-5wj5-c6jp): declared wins, else preview, else update;
+// and it needs revisions to gate.
+func TestHistoryRule_FallbackAndValidation(t *testing.T) {
+	editor := Rule{Kind: RuleRoles, Roles: []string{"editor"}}
+	owner := Rule{Kind: RuleOwner}
+	cases := []struct {
+		name   string
+		access *AccessRules
+		want   RuleKind
+	}{
+		{"declared", &AccessRules{History: &Rule{Kind: RulePublic}, Preview: &owner, Update: &editor}, RulePublic},
+		{"preview fallback", &AccessRules{Preview: &owner, Update: &editor}, RuleOwner},
+		{"update fallback", &AccessRules{Update: &editor}, RuleRoles},
+		{"engine default", nil, RuleAuthenticated},
+	}
+	for _, tc := range cases {
+		if got := (CollectionDef{Access: tc.access}).HistoryRule().Kind; got != tc.want {
+			t.Errorf("%s: HistoryRule kind = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+
+	_, err := Parse([]byte(`
+version: "1"
+collections:
+  notes:
+    fields:
+      body: { type: string }
+    access:
+      history: public
+`))
+	if err == nil || !strings.Contains(err.Error(), "access.history: only valid on a collection with revisions") {
+		t.Fatalf("history without revisions: got %v", err)
+	}
+}
+
 func TestPublish_ValidationErrors(t *testing.T) {
 	cases := []struct{ name, src, want string }{
 		{

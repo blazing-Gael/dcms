@@ -59,7 +59,12 @@ func (s *Server) parseListQuery(ctx context.Context, values url.Values, collecti
 		field := strings.TrimPrefix(raw, "-")
 		// A field the caller can't read is reported as unknown, not forbidden: sorting
 		// on a masked field orders rows by its value and leaks it (GHSA-x4q6-jjx6-rwxm).
-		if !s.hasColumn(collection, field) || !s.fieldReadQueryable(collection, field, p) {
+		// A record-scoped field rule can't confine an ordering, so sort needs an
+		// unconditional read (fieldQueryAccess returns no scope).
+		if !s.hasColumn(collection, field) {
+			return q, badRequest("sort", fmt.Sprintf("unknown field %q", field))
+		}
+		if ok, scoped := s.fieldQueryAccess(collection, field, p); !ok || scoped != nil {
 			return q, badRequest("sort", fmt.Sprintf("unknown field %q", field))
 		}
 		q.Sort = raw
@@ -87,6 +92,10 @@ func (s *Server) parseListQuery(ctx context.Context, values url.Values, collecti
 func (s *Server) parseFilters(ctx context.Context, values url.Values, collection string) ([]store.Filter, error) {
 	p := principalFromContext(ctx)
 	var filters []store.Filter
+	// Scope filters of record-scoped field rules, ANDed in once per field so a filter
+	// on such a field only matches rows where the caller may read it.
+	var fieldScopes []store.Filter
+	scopedFields := map[string]bool{}
 	for key, vals := range values {
 		m := filterKeyRe.FindStringSubmatch(key)
 		if m == nil {
@@ -107,9 +116,15 @@ func (s *Server) parseFilters(ctx context.Context, values url.Values, collection
 		// Filtering on a field the caller can't read turns the list into an oracle:
 		// `filter[masked][eq]=X` returns the row iff the value is X, and ordering/range
 		// filters binary-search a numeric secret. Report it as unknown (not forbidden)
-		// so a masked field's existence isn't confirmed (GHSA-x4q6-jjx6-rwxm).
-		if !s.fieldReadQueryable(collection, field, p) {
+		// so a masked field's existence isn't confirmed (GHSA-x4q6-jjx6-rwxm). A
+		// record-scoped rule instead confines the filter to the caller's rows.
+		ok, scoped := s.fieldQueryAccess(collection, field, p)
+		if !ok {
 			return nil, badRequest(key, fmt.Sprintf("unknown field %q", field))
+		}
+		if scoped != nil && !scopedFields[field] {
+			scopedFields[field] = true
+			fieldScopes = append(fieldScopes, scoped...)
 		}
 
 		// A decimal filter value is coerced to int64 minor units at the field's
@@ -148,7 +163,7 @@ func (s *Server) parseFilters(ctx context.Context, values url.Values, collection
 
 		filters = append(filters, store.Filter{Field: field, Operator: op, Value: value})
 	}
-	return filters, nil
+	return append(filters, fieldScopes...), nil
 }
 
 // coerceList applies a fallible per-value coercion to a filter value, splitting

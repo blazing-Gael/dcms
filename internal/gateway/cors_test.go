@@ -84,8 +84,10 @@ func TestCORS_DisallowedOriginGetsNoHeaders(t *testing.T) {
 	}
 }
 
-// A wildcard config without credentials answers with "*"; with credentials it
-// must echo the specific origin instead (a wildcard is invalid there).
+// A wildcard config answers "*" without credentials. With credentials on, only an
+// explicitly listed origin gets the echoed origin + allow-credentials; one admitted
+// by "*" alone still gets "*" and no credentials (GHSA-4wwm-mw23-6ch2) — never a
+// credentialed reflect-any-origin policy.
 func TestCORS_WildcardVsCredentials(t *testing.T) {
 	// Wildcard, no credentials → "*".
 	api := corsServer(t, gateway.CORSOptions{AllowedOrigins: []string{"*"}})
@@ -97,16 +99,31 @@ func TestCORS_WildcardVsCredentials(t *testing.T) {
 		t.Fatalf("wildcard without credentials should be *, got %q", got)
 	}
 
-	// Wildcard + credentials → echo the origin, set allow-credentials.
-	api2 := corsServer(t, gateway.CORSOptions{AllowedOrigins: []string{"*"}, AllowCredentials: true})
-	req2, _ := http.NewRequest(http.MethodGet, api2, nil)
-	req2.Header.Set("Origin", "https://anything.example")
-	resp2, _ := http.DefaultClient.Do(req2)
-	resp2.Body.Close()
-	if got := resp2.Header.Get("Access-Control-Allow-Origin"); got != "https://anything.example" {
-		t.Fatalf("wildcard+credentials must echo the origin, got %q", got)
+	// Wildcard + a listed origin + credentials (options built in code, bypassing
+	// config validation).
+	api2 := corsServer(t, gateway.CORSOptions{AllowedOrigins: []string{"*", "https://app.example"}, AllowCredentials: true})
+	get := func(origin string) *http.Response {
+		req, _ := http.NewRequest(http.MethodGet, api2, nil)
+		req.Header.Set("Origin", origin)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		return resp
 	}
-	if resp2.Header.Get("Access-Control-Allow-Credentials") != "true" {
-		t.Fatal("credentials mode should set allow-credentials: true")
+	wild := get("https://anything.example")
+	if got := wild.Header.Get("Access-Control-Allow-Origin"); got != "*" {
+		t.Fatalf("origin admitted only by * must get *, got %q", got)
+	}
+	if wild.Header.Get("Access-Control-Allow-Credentials") != "" {
+		t.Fatal("origin admitted only by * must not get credentials")
+	}
+	listed := get("https://app.example")
+	if got := listed.Header.Get("Access-Control-Allow-Origin"); got != "https://app.example" {
+		t.Fatalf("listed origin must be echoed, got %q", got)
+	}
+	if listed.Header.Get("Access-Control-Allow-Credentials") != "true" {
+		t.Fatal("listed origin should get allow-credentials: true")
 	}
 }

@@ -53,9 +53,9 @@ func (o CORSOptions) withDefaults() CORSOptions {
 	return o
 }
 
-// wildcard reports whether any origin is allowed. A wildcard is honored only for
-// non-credentialed requests; with credentials the matched origin is echoed
-// instead (a wildcard is invalid on a credentialed response).
+// wildcard reports whether any origin is allowed. An origin admitted only by the
+// wildcard is answered with "*" and no credentials; credentials need the origin
+// listed explicitly (originListed).
 func (o CORSOptions) wildcard() bool {
 	for _, x := range o.AllowedOrigins {
 		if x == "*" {
@@ -66,11 +66,14 @@ func (o CORSOptions) wildcard() bool {
 }
 
 func (o CORSOptions) originAllowed(origin string) bool {
-	if o.wildcard() {
-		return true
-	}
+	return o.wildcard() || o.originListed(origin)
+}
+
+// originListed reports whether origin is named explicitly (not via "*"). Only a
+// listed origin is ever granted credentials (GHSA-4wwm-mw23-6ch2).
+func (o CORSOptions) originListed(origin string) bool {
 	for _, x := range o.AllowedOrigins {
-		if strings.EqualFold(x, origin) {
+		if x != "*" && strings.EqualFold(x, origin) {
 			return true
 		}
 	}
@@ -105,16 +108,23 @@ func (o CORSOptions) middleware() func(http.Handler) http.Handler {
 				return
 			}
 
+			// Credentials go only to an explicitly listed origin, never to one admitted
+			// by "*" — even when config validation was bypassed (gateway.Options built
+			// in code), "*" never becomes a credentialed reflect-any-origin policy.
+			credentialed := o.AllowCredentials && o.originListed(origin)
 			h := w.Header()
-			if o.wildcard() && !o.AllowCredentials {
+			if o.wildcard() && !credentialed {
 				h.Set("Access-Control-Allow-Origin", "*")
+				if o.AllowCredentials {
+					h.Add("Vary", "Origin") // a listed origin gets a different response
+				}
 			} else {
 				// Echo the specific origin (required with credentials) and vary on
 				// it so caches don't serve one origin's response to another.
 				h.Set("Access-Control-Allow-Origin", origin)
 				h.Add("Vary", "Origin")
 			}
-			if o.AllowCredentials {
+			if credentialed {
 				h.Set("Access-Control-Allow-Credentials", "true")
 			}
 			if len(o.ExposedHeaders) > 0 {

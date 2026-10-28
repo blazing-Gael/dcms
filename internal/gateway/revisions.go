@@ -195,18 +195,18 @@ func (s *Server) updateAndRevise(ctx context.Context, collection string, data st
 // revisionHistoryDenied decides whether a record's history is hidden from the
 // caller (issue #24, GHSA-8rpx-5wj5-c6jp). Returns true (→ 404) when denied.
 //
-// History must never reveal a record the caller cannot see in its current
-// lifecycle state (the leak this fixes), and must match the live read's audience:
+// Old snapshots can hold content the current record no longer shows (a draft-era
+// body, a since-removed paragraph), so being able to read the record is not enough:
 //
 //   - The shared preview token is a full bypass (operators diffing any record).
 //   - The record must be lifecycle-visible to the caller (recordPreviewVisible):
-//     a draft/scheduled/archived/trashed snapshot is hidden unless the caller is
-//     preview-eligible, exactly as get-one hides the live record. This closes the
-//     leak where open history exposed unpublished/trashed bodies to anyone.
-//   - With a `preview` rule, history then follows it record-level (a writer sees
-//     their own draft's history, an editor diffs a submission).
-//   - Without one, a configured preview token gates history (the pre-existing
-//     behaviour); with no token either, history is open to the record's readers.
+//     a draft/scheduled/archived/trashed record's history is hidden unless the
+//     caller is preview-eligible, exactly as get-one hides the live record.
+//   - Then the collection's history rule decides, per record (HistoryRule: the
+//     `history` rule, else `preview`, else update — writers). A schema opts into
+//     reader-visible history with e.g. `history: public`.
+//   - With auth disabled there are no identities to gate by, so the preview token
+//     stays the only gate: history is open unless a token is configured.
 //
 // The caller also ANDs the read rule (authorizeRecordRead, so an owner-scoped
 // boundary is never widened) and each snapshot is field-masked like a live read
@@ -223,13 +223,24 @@ func (s *Server) revisionHistoryDenied(r *http.Request, collection, id string) b
 	if !s.recordPreviewVisible(ctx, collection, rec) {
 		return true // hidden in its lifecycle state and caller not preview-eligible
 	}
-	if _, ok := s.collections[collection].PreviewRule(); ok {
-		return !s.previewEligible(ctx, collection, rec)
+	if !s.authEnabled() {
+		return s.opts.PreviewToken != ""
 	}
-	// No preview rule: a configured preview token still gates history, as it did
-	// before. Old snapshots can hold draft-era content the published record no
-	// longer shows, so opening history to every reader would leak it.
-	return s.opts.PreviewToken != ""
+	return !s.recordPassesRule(ctx, collection, s.collections[collection].HistoryRule(), rec)
+}
+
+// recordPassesRule reports whether a fetched record satisfies an arbitrary access
+// rule for the caller: a flat allow/deny, or for a scoped rule (owner, owner_field,
+// exists) whether this record is in the caller's scope.
+func (s *Server) recordPassesRule(ctx context.Context, collection string, rule schema.Rule, rec store.Record) bool {
+	switch d, filters := evalRule(rule, principalFromContext(ctx)); d {
+	case allow:
+		return true
+	case scope:
+		return s.recordInScope(ctx, collection, rec, filters)
+	default:
+		return false
+	}
 }
 
 // handleRevisionList returns a record's version history, newest first, without the

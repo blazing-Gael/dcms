@@ -175,9 +175,10 @@ collections:
           read:  [admin]
           write: [admin]
     access:
-      read:   public
-      create: [admin]
-      update: [admin]
+      read:    public
+      create:  [admin]
+      update:  [admin]
+      history: public # opt in: readers may see past versions (masked)
 `
 
 // History is a read of the record, so an owner rule gates it the same way — and
@@ -251,6 +252,53 @@ func TestRevisions_SnapshotAppliesFieldMasking(t *testing.T) {
 	snap, _ := dataObj(t, body)["data"].(map[string]any)
 	if snap["salary"] == nil {
 		t.Fatalf("admin should still see salary in the snapshot, got %#v", snap)
+	}
+}
+
+// TestRevisions_HistoryDefaultsToWriters pins GHSA-8rpx-5wj5-c6jp: with auth on and
+// no `history` (or `preview`) rule, history follows update — a reader of the record
+// can't page back to earlier snapshots, a writer can.
+func TestRevisions_HistoryDefaultsToWriters(t *testing.T) {
+	const src = `
+version: "1"
+auth:
+  roles:
+    admin: { label: Administrator }
+  session:
+    ttl: 1h
+collections:
+  docs:
+    revisions: true
+    fields:
+      body: { type: string, required: true }
+    access:
+      read:   public
+      create: [admin]
+      update: [admin]
+`
+	srv, db := newServerWith(t, src)
+	seedUser(t, db, "boss@x.com", "pw-boss-1234", "admin")
+	seedUser(t, db, "reader@x.com", "pw-reader-12")
+	boss := login(t, srv.URL, "boss@x.com", "pw-boss-1234")
+	reader := login(t, srv.URL, "reader@x.com", "pw-reader-12")
+	base := srv.URL + "/api/v1/docs"
+
+	_, body := doAs(t, http.MethodPost, base, boss, `{"body":"first draft, never meant for readers"}`)
+	id := dataObj(t, body)["id"].(string)
+	doAs(t, http.MethodPatch, base+"/"+id, boss, `{"body":"final"}`)
+
+	for _, tc := range []struct{ name, token string }{{"anonymous", ""}, {"reader", reader}} {
+		if st, _ := doAs(t, http.MethodGet, base+"/"+id, tc.token, ""); st != http.StatusOK {
+			t.Fatalf("%s can't read the record itself: %d", tc.name, st)
+		}
+		for _, p := range []string{"/revisions", "/revisions/1"} {
+			if st, _ := doAs(t, http.MethodGet, base+"/"+id+p, tc.token, ""); st != http.StatusNotFound {
+				t.Errorf("%s GET %s: got %d, want 404", tc.name, p, st)
+			}
+		}
+	}
+	if st, _ := doAs(t, http.MethodGet, base+"/"+id+"/revisions/1", boss, ""); st != http.StatusOK {
+		t.Fatalf("writer GET revisions/1: got %d, want 200", st)
 	}
 }
 

@@ -569,13 +569,17 @@ revisions: true            # or: revisions: { max: 50 }  — cap retained versio
 # lifecycle columns (_status/_published_at/_deleted_at) as they are, and is itself
 # recorded as a new revision (history is append-only).
 #
-# History reads follow the collection's `preview` rule when it declares one (issue
-# #24): a record's history is visible to whoever may preview that record — so a
-# writer sees their own draft's history and an editor diffs a submission, per
-# record, 404 otherwise. With no `preview` rule, history stays gated by the shared
-# preview token (a request without it gets 404). `restore` is a write and obeys the
-# `update`/`preview` rules like any transition. Snapshots live in an engine-managed
-# `_revisions` collection that is added only when at least one collection opts in.
+# Who may read history is the `history` access rule (below). Old snapshots can hold
+# content the current record no longer shows, so being able to read a record does
+# NOT by itself grant its history: unset, `history` falls back to the `preview` rule
+# (issue #24 — whoever may preview a record sees its history), else to `update`
+# (writers). A record hidden in its lifecycle state (draft, trashed) 404s exactly as
+# get-one does, the read rule is still required, and snapshots are field-masked like
+# a live read. The shared preview token bypasses all of it. With auth disabled the
+# token is the only gate (history is open unless one is configured). `restore` is a
+# write and obeys the `update`/`preview` rules like any transition. Snapshots live
+# in an engine-managed `_revisions` collection that is added only when at least one
+# collection opts in.
 ```
 
 ---
@@ -665,7 +669,7 @@ lessons:
 - **Single hop.** The record's referenced entity must join directly to a membership
   table keyed by the caller. (A chain through an intermediate entity is reserved for
   a future additive `through:`.)
-- Works in every rule slot (`read`/`create`/`update`/`delete`/`preview`/`publish`,
+- Works in every rule slot (`read`/`create`/`update`/`delete`/`preview`/`publish`/`history`,
   field rules, transition `who`). On a list read it filters; on a single read a
   non-member gets `404`; an anonymous caller never matches.
 - When `in` is a **soft-delete** collection, trashed membership rows are excluded
@@ -744,6 +748,26 @@ stories:
   `publishing` (there are no go-live transitions to gate otherwise) — both are
   schema-compile errors.
 
+**History — who may read past versions.** A seventh rule, `history`, gates
+`GET …/:id/revisions` and `…/revisions/:version` (and the admin panel's history
+page) on a collection with `revisions`:
+
+```yaml
+docs:
+  revisions: true
+  access:
+    read:    public
+    update:  [editor]
+    history: public     # opt in: anyone who can read a doc may see its past versions
+```
+
+- **Unset ⇒ the `preview` rule if declared, else `update`.** Readers of a published
+  record don't get its earlier (possibly draft-era) snapshots unless the schema
+  opts in.
+- Evaluated per record like every other rule, and ANDed with `read` (history never
+  widens the record's own boundary). Snapshots are field-masked.
+- Requires `revisions` (a schema-compile error otherwise).
+
 Field-level access (LIVE — ADR-0016):
 
 ```yaml
@@ -760,6 +784,12 @@ fields:
   direction is `public` (the collection rule is the real gate).
 - **`read` is a mask, not a gate:** an unauthorized reader still receives the
   record — just without that field (in single, list, and `?expand`ed responses).
+- **A masked field can't be queried around.** A caller the `read` rule denies gets
+  `422 unknown field` for `filter[<field>]` or `sort=<field>` (never "forbidden",
+  so the field's existence isn't confirmed). With a record-scoped rule (`owner`,
+  `owner_field`, `exists`) the filter is allowed but only matches rows where the
+  caller may read the field — an owner can filter on their own value, never probe
+  someone else's. `sort` needs an unconditional read.
 - **`write` is a filter, not a rejection:** an unauthorized writer's value for the
   field is silently dropped, so a client that round-trips a record it read never
   gets a `4xx` for a field it was never allowed to see. On **create**, an `owner`
