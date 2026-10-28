@@ -169,6 +169,12 @@ type Options struct {
 	// MailPerRecipientPerDay caps account email to one address per day (a mailbomb
 	// degrades to this). 0 ⇒ the engine default (10); negative ⇒ no cap.
 	MailPerRecipientPerDay int
+	// MailMinResponse is the minimum response time of the account-mail endpoints
+	// (/auth/forgot, /auth/otp/request). A real account costs token writes and a
+	// mail enqueue, an unknown email only a lookup; padding both to this floor keeps
+	// timing from revealing which (GHSA-38cf-62wh-v3g3). 0 ⇒ the engine default
+	// (250ms); negative ⇒ no padding.
+	MailMinResponse time.Duration
 
 	// Webhooks configures signed webhook delivery of change events (ADR-0021 M-B
 	// phase 2). Nil ⇒ no delivery worker runs; the change feed still works. Only

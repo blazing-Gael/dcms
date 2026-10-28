@@ -224,7 +224,10 @@ func (s *Server) apiRateKey(r *http.Request, trustProxy bool, hops int) string {
 // budget per request (GHSA-f8wf-92mm-pw4g).
 func clientIP(r *http.Request, trustProxy bool, hops int) string {
 	if trustProxy {
-		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		// Join every header line: some proxies (HAProxy's `option forwardfor`) add
+		// their own X-Forwarded-For line instead of appending to the client's, and
+		// Header.Get would return only the first — the client-supplied one.
+		if xff := strings.Join(r.Header.Values("X-Forwarded-For"), ","); xff != "" {
 			parts := strings.Split(xff, ",")
 			if hops < 1 {
 				hops = 1

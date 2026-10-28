@@ -6,9 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"mime"
 	"net/http"
 	"path"
+	"slices"
 	"strings"
 	"time"
 
@@ -90,9 +90,13 @@ func (h *hmacURLSigner) Verify(id, filePath, token string) (bool, time.Duration)
 
 // safeFilePath reports whether a derived-file path is safe to splice into a blob key:
 // a relative, multi-segment path with no empty, "." or ".." segments. The blob layer
-// validates again, but rejecting early gives a clean 422.
+// validates again, but rejecting early gives a clean 422. Control characters are
+// refused too: "\n" is the signed-token payload separator.
 func safeFilePath(p string) bool {
 	if p == "" || strings.HasPrefix(p, "/") || strings.Contains(p, "\\") {
+		return false
+	}
+	if strings.IndexFunc(p, func(r rune) bool { return r < 0x20 || r == 0x7f }) >= 0 {
 		return false
 	}
 	for _, seg := range strings.Split(p, "/") {
@@ -103,21 +107,42 @@ func safeFilePath(p string) bool {
 	return true
 }
 
-// derivedContentType infers a content type from a derived file's extension, adding the
-// HLS types Go's mime table omits. Used on the signed per-segment path, which must stay
-// DB-free — the type comes from the path, not a stored row.
-func derivedContentType(p string) string {
-	switch strings.ToLower(path.Ext(p)) {
-	case ".m3u8":
-		return "application/vnd.apple.mpegurl"
-	case ".ts":
-		return "video/mp2t"
-	case ".m4s", ".mp4":
-		return "video/mp4"
-	case ".vtt":
-		return "text/vtt"
+// derivedTypes is the fixed set of derived-file extensions and the type each is
+// served as (GHSA-74xf-v9pf-rhj4). The type comes only from the extension — never
+// from the uploader — and every entry is safe to render inline, so a derived file
+// can't be HTML/SVG/XML on the DCMS origin.
+var derivedTypes = map[string]string{
+	".m3u8": "application/vnd.apple.mpegurl",
+	".mpd":  "application/dash+xml",
+	".m4s":  "video/mp4",
+	".mp4":  "video/mp4",
+	".m4a":  "audio/mp4",
+	".ts":   "video/mp2t",
+	".aac":  "audio/aac",
+	".vtt":  "text/vtt",
+	".jpg":  "image/jpeg",
+	".jpeg": "image/jpeg",
+	".png":  "image/png",
+	".webp": "image/webp",
+	".avif": "image/avif",
+}
+
+// derivedExtList is the sorted allowlist, for error messages.
+func derivedExtList() string {
+	exts := make([]string, 0, len(derivedTypes))
+	for e := range derivedTypes {
+		exts = append(exts, e)
 	}
-	if ct := mime.TypeByExtension(path.Ext(p)); ct != "" {
+	slices.Sort(exts)
+	return strings.Join(exts, ", ")
+}
+
+// derivedContentType returns the type a derived file is served as, from its
+// extension. Used on the signed per-segment path, which must stay DB-free. An
+// extension outside derivedTypes (only possible for files stored before the
+// allowlist) is served as an opaque download.
+func derivedContentType(p string) string {
+	if ct, ok := derivedTypes[strings.ToLower(path.Ext(p))]; ok {
 		return ct
 	}
 	return "application/octet-stream"
@@ -125,7 +150,9 @@ func derivedContentType(p string) string {
 
 // serveBlobBytes streams a blob key with Range/ETag support (http.ServeContent). It is
 // the shared tail of /raw, the authorized derived-file read, and the signed path.
-func (s *Server) serveBlobBytes(w http.ResponseWriter, r *http.Request, key, contentType, etag, cacheControl string) {
+// Every response carries the media safety headers (setMediaSafetyHeaders); filename
+// names the download when the type isn't safe to render inline.
+func (s *Server) serveBlobBytes(w http.ResponseWriter, r *http.Request, key, contentType, filename, etag, cacheControl string) {
 	body, err := s.opts.Blob.Get(r.Context(), key)
 	if errors.Is(err, blob.ErrNotFound) {
 		writeError(w, http.StatusNotFound, apiError{Code: "NOT_FOUND", Message: "file bytes are missing"})
@@ -136,9 +163,11 @@ func (s *Server) serveBlobBytes(w http.ResponseWriter, r *http.Request, key, con
 		return
 	}
 	defer body.Close()
-	if contentType != "" {
-		w.Header().Set("Content-Type", contentType)
+	if contentType == "" {
+		contentType = "application/octet-stream"
 	}
+	w.Header().Set("Content-Type", contentType)
+	setMediaSafetyHeaders(w, contentType, filename)
 	if etag != "" {
 		w.Header().Set("ETag", `"`+etag+`"`)
 	}
@@ -178,7 +207,8 @@ func (s *Server) handleMediaSignedRaw(w http.ResponseWriter, r *http.Request) {
 		}
 		ct, _ := rec[schema.MediaContentType].(string)
 		ck, _ := rec[schema.MediaChecksum].(string)
-		s.serveBlobBytes(w, r, id, ct, ck, derivedCacheControl(filePath, remaining))
+		filename, _ := rec[schema.MediaFilename].(string)
+		s.serveBlobBytes(w, r, id, ct, filename, ck, derivedCacheControl(filePath, remaining))
 		return
 	}
 	if !safeFilePath(filePath) {
@@ -186,7 +216,7 @@ func (s *Server) handleMediaSignedRaw(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Derived file: type from the path, no DB.
-	s.serveBlobBytes(w, r, id+"/"+filePath, derivedContentType(filePath), "", derivedCacheControl(filePath, remaining))
+	s.serveBlobBytes(w, r, id+"/"+filePath, derivedContentType(filePath), path.Base(filePath), "", derivedCacheControl(filePath, remaining))
 }
 
 // URLSignerVerify guards a nil signer (signing disabled) and returns the verify result.
@@ -208,6 +238,17 @@ func derivedCacheControl(filePath string, remaining time.Duration) string {
 		return "no-cache"
 	}
 	return fmt.Sprintf("public, max-age=%d, immutable", secs)
+}
+
+// safeSignScope reports whether a sign scope is valid: empty (the whole asset) or a
+// safe directory prefix ending in "/". The trailing slash keeps "hls" from also
+// covering "hls-private/", and safeFilePath rules out "\n" (the token payload's
+// separator), "..", and absolute paths.
+func safeSignScope(scope string) bool {
+	if scope == "" {
+		return true
+	}
+	return strings.HasSuffix(scope, "/") && safeFilePath(strings.TrimSuffix(scope, "/"))
 }
 
 // handleMediaSign issues a signed URL for an asset after the normal access check — for
@@ -238,16 +279,29 @@ func (s *Server) handleMediaSign(w http.ResponseWriter, r *http.Request) {
 		TTLSeconds int    `json:"ttl_seconds"`
 	}
 	if r.ContentLength != 0 {
-		if data, err := decodeBody(r); err == nil {
-			body.Scope, _ = data["scope"].(string)
-			body.Path, _ = data["path"].(string)
-			if v, ok := data["ttl_seconds"].(float64); ok {
-				body.TTLSeconds = int(v)
-			}
+		// A malformed body is an error, not "no body": falling through would mint an
+		// empty-scope token covering every file of the asset.
+		data, err := decodeBody(r)
+		if err != nil {
+			writeDecodeError(w, err)
+			return
+		}
+		body.Scope, _ = data["scope"].(string)
+		body.Path, _ = data["path"].(string)
+		if v, ok := data["ttl_seconds"].(float64); ok {
+			body.TTLSeconds = int(v)
 		}
 	}
 	if body.Path != "" && !safeFilePath(body.Path) {
 		writeError(w, http.StatusUnprocessableEntity, apiError{Code: "VALIDATION_ERROR", Message: "invalid file path"})
+		return
+	}
+	if !safeSignScope(body.Scope) {
+		writeError(w, http.StatusUnprocessableEntity, apiError{Code: "VALIDATION_ERROR", Message: `scope must be empty or a directory prefix ending in "/"`})
+		return
+	}
+	if body.Scope != "" && body.Path != "" && !strings.HasPrefix(body.Path, body.Scope) {
+		writeError(w, http.StatusUnprocessableEntity, apiError{Code: "VALIDATION_ERROR", Message: "path must be under scope"})
 		return
 	}
 	url := s.opts.URLSigner.SignedURL(id, body.Scope, body.Path, time.Duration(body.TTLSeconds)*time.Second, "")
@@ -277,10 +331,14 @@ func (s *Server) handleMediaFilePut(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	contentType := r.Header.Get("Content-Type")
-	if contentType == "" {
-		contentType = derivedContentType(filePath)
+	// The type comes from the extension alone, which must be on the derived-file
+	// allowlist; the declared Content-Type is ignored. Checking the declared header but
+	// serving by extension let `x.html` sent as image/png through (GHSA-74xf-v9pf-rhj4).
+	if _, ok := derivedTypes[strings.ToLower(path.Ext(filePath))]; !ok {
+		writeError(w, http.StatusUnsupportedMediaType, apiError{Code: "UNSUPPORTED_MEDIA_TYPE", Message: "derived files must be one of: " + derivedExtList()})
+		return
 	}
+	contentType := derivedContentType(filePath)
 	if !s.contentTypeAllowed(contentType) {
 		writeError(w, http.StatusUnsupportedMediaType, apiError{Code: "UNSUPPORTED_MEDIA_TYPE", Message: "content type " + contentType + " is not allowed"})
 		return

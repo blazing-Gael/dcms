@@ -235,6 +235,8 @@ auth:
   # mail:
   #   max_per_day: 90            # instance-wide daily ceiling (0 = no ceiling)
   #   per_recipient_per_day: 10  # per-address daily cap (0 = default 10; -1 = none)
+  #   min_response_ms: 250       # forgot/OTP-request answer no faster than this, so timing
+  #                              # can't reveal whether an email has an account (-1 = off)
   #
   # Mailer for account emails. Omit (no host) to use a dev-log mailer that prints
   # the reset link to the console — handy for local testing. SMTP credentials are

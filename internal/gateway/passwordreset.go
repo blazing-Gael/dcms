@@ -67,6 +67,8 @@ func (s *Server) resetLink(rawToken, returnTo string) string {
 // enumerate accounts. A token is minted and delivered only for a real, active
 // user (ADR-0019).
 func (s *Server) handleForgotPassword(w http.ResponseWriter, r *http.Request) {
+	// Same response-time floor as the OTP request (GHSA-38cf-62wh-v3g3).
+	defer s.padMailResponse(r.Context(), time.Now())
 	data, err := decodeBody(r)
 	if err != nil {
 		writeDecodeError(w, err)

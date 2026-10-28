@@ -115,6 +115,11 @@ func TestRichText_SafeHrefVariants(t *testing.T) {
 		"\\\\evil.example":    false, // both backslashes → "//evil"
 		"\\/evil.example":     false, // mixed → "//evil"
 		"java\tscript:x":      false, // tab inside scheme is not a relative path
+		"/\t/evil.example":    false, // tab removed anywhere → "//evil"
+		"/\n/evil.example":    false,
+		"/\r/evil.example":    false,
+		"//evil.example \x00": false, // trailing C0/space trimmed
+		"/ok\tpath":           true,  // tab elsewhere is harmless
 	}
 	for href, want := range cases {
 		if got := safeHref(href); got != want {
