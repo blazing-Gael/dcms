@@ -222,7 +222,27 @@ func writeError(w http.ResponseWriter, status int, e apiError) {
 func writeStoreError(w http.ResponseWriter, logger *slog.Logger, r *http.Request, err error) {
 	var ve *store.ValidationError
 	var he *HookError
+	var fe *fieldForbiddenError
+	var me *MediaError
 	switch {
+	case errors.As(err, &me):
+		// A media failure carries its own status (ADR-0037/0038) — checked first, as
+		// some match store.ErrInvalidInput too.
+		writeError(w, me.Status, apiError{Code: me.Code, Message: me.Message})
+	case errors.As(err, &fe):
+		// A disallowed value-scoped transition (issue #27): a 403 naming the field.
+		writeError(w, http.StatusForbidden, apiError{
+			Code:    "FORBIDDEN",
+			Message: "you may not set '" + fe.field + "' to that value",
+			Fields:  map[string]string{fe.field: "transition not permitted"},
+		})
+	case errors.Is(err, ErrUnauthenticated):
+		writeError(w, http.StatusUnauthorized, apiError{Code: "UNAUTHORIZED", Message: "authentication required"})
+	case errors.Is(err, ErrForbidden):
+		writeError(w, http.StatusForbidden, apiError{Code: "FORBIDDEN", Message: "you do not have permission to perform this action"})
+	case errors.Is(err, ErrReferenced):
+		// The RESTRICT default (ADR-0010) on a hard delete: a client-facing conflict.
+		writeError(w, http.StatusConflict, apiError{Code: "CONFLICT", Message: "record is still referenced by other records"})
 	case errors.As(err, &he):
 		// A hook rejected the write (ADR-0031): render the status it chose (default
 		// 422). This is a business-rule refusal by trusted code, not a server fault.

@@ -211,8 +211,7 @@ func (s *Server) updateAndRevise(ctx context.Context, collection string, data st
 // The caller also ANDs the read rule (authorizeRecordRead, so an owner-scoped
 // boundary is never widened) and each snapshot is field-masked like a live read
 // (handleRevisionGet → maskReadFields). A missing record is denied.
-func (s *Server) revisionHistoryDenied(r *http.Request, collection, id string) bool {
-	ctx := r.Context()
+func (s *Server) revisionHistoryDenied(ctx context.Context, collection, id string) bool {
 	if visibilityFromContext(ctx).tokenPreview {
 		return false // shared token: full bypass, as before
 	}
@@ -227,6 +226,13 @@ func (s *Server) revisionHistoryDenied(r *http.Request, collection, id string) b
 		return s.opts.PreviewToken != ""
 	}
 	return !s.recordPassesRule(ctx, collection, s.collections[collection].HistoryRule(), rec)
+}
+
+// historyReadable reports whether the caller may read record id's history: the
+// history gate and the record's read rule (so history never widens the record's
+// own boundary). False is a 404 over HTTP.
+func (s *Server) historyReadable(ctx context.Context, collection, id string) bool {
+	return !s.revisionHistoryDenied(ctx, collection, id) && s.authorizeRecordRead(ctx, collection, id)
 }
 
 // recordPassesRule reports whether a fetched record satisfies an arbitrary access
@@ -251,7 +257,7 @@ func (s *Server) handleRevisionList(w http.ResponseWriter, r *http.Request) {
 		s.handleNotFound(w, r)
 		return
 	}
-	if s.revisionHistoryDenied(r, collection, chi.URLParam(r, "id")) || !s.authorizeRecordRead(r.Context(), collection, chi.URLParam(r, "id")) {
+	if !s.historyReadable(r.Context(), collection, chi.URLParam(r, "id")) {
 		s.handleNotFound(w, r)
 		return
 	}
@@ -282,7 +288,7 @@ func (s *Server) handleRevisionGet(w http.ResponseWriter, r *http.Request) {
 		s.handleNotFound(w, r)
 		return
 	}
-	if s.revisionHistoryDenied(r, collection, chi.URLParam(r, "id")) || !s.authorizeRecordRead(r.Context(), collection, chi.URLParam(r, "id")) {
+	if !s.historyReadable(r.Context(), collection, chi.URLParam(r, "id")) {
 		s.handleNotFound(w, r)
 		return
 	}

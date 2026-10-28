@@ -222,37 +222,15 @@ func (s *Server) scopedExists(ctx context.Context, collection, id string, filter
 	return len(page.Data) > 0, nil
 }
 
-// denyWrite writes the 403 for a forbidden write (create/update/delete/transition).
-// The route exists; the caller may not act on it (ADR-0016). An anonymous caller
-// gets 401 so a client knows to authenticate rather than give up.
-func (s *Server) denyWrite(w http.ResponseWriter, p principal) {
-	if !p.Authenticated {
-		writeError(w, http.StatusUnauthorized, apiError{Code: "UNAUTHORIZED", Message: "authentication required"})
-		return
-	}
-	writeError(w, http.StatusForbidden, apiError{Code: "FORBIDDEN", Message: "you do not have permission to perform this action"})
-}
-
 // authorizeCreate authorizes a create. `owner` collapses to "authenticated" — you
 // become the owner of what you create. Returns false (and writes the error) when
 // denied.
 func (s *Server) authorizeCreate(w http.ResponseWriter, r *http.Request, collection string) bool {
-	if !s.authEnabled() {
-		return true
-	}
-	p := principalFromContext(r.Context())
-	rule := s.collections[collection].AccessRule(schema.ActionCreate)
-	// On create there is no record yet, so a scoped rule (owner / owner_field /
-	// exists) collapses to "authenticated" — every scope leaf already requires a
-	// principal, so `scope` implies authenticated. You become the owner of what you
-	// create; membership is enforced on later reads/writes.
-	switch d, _ := evalRule(rule, p); d {
-	case allow, scope:
-		return true
-	default:
-		s.denyWrite(w, p)
+	if err := s.authzCreate(r.Context(), collection); err != nil {
+		writeStoreError(w, s.logger, r, err)
 		return false
 	}
+	return true
 }
 
 // listReadFilters authorizes a list read and returns any owner-scoping filters to
@@ -260,20 +238,12 @@ func (s *Server) authorizeCreate(w http.ResponseWriter, r *http.Request, collect
 // which 404s — a list endpoint's existence is not a secret). `owner` narrows the
 // query to the caller's own rows rather than forbidding the endpoint.
 func (s *Server) listReadFilters(w http.ResponseWriter, r *http.Request, collection string) ([]store.Filter, bool) {
-	if !s.authEnabled() {
-		return nil, true
-	}
-	p := principalFromContext(r.Context())
-	rule := s.collections[collection].AccessRule(schema.ActionRead)
-	switch d, filters := evalRule(rule, p); d {
-	case allow:
-		return nil, true
-	case scope:
-		return filters, true
-	default:
-		s.denyWrite(w, p)
+	filters, err := s.readScope(r.Context(), collection)
+	if err != nil {
+		writeStoreError(w, s.logger, r, err)
 		return nil, false
 	}
+	return filters, true
 }
 
 // recordReadable reports whether a fetched record passes the read rule. For a
@@ -338,29 +308,9 @@ func (s *Server) authorizeRecordWrite(w http.ResponseWriter, r *http.Request, co
 // path can authorize against a rule other than the CRUD default — e.g. a
 // transition against the `publish` rule (issue #23).
 func (s *Server) authorizeWriteRule(w http.ResponseWriter, r *http.Request, collection, id string, rule schema.Rule) bool {
-	if !s.authEnabled() {
-		return true
-	}
-	p := principalFromContext(r.Context())
-	switch d, filters := evalRule(rule, p); d {
-	case allow:
-		return true
-	case scope:
-		// Load the record so a genuinely missing one is a 404, then test it against
-		// the scope. This preserves the 404-vs-403 split: the record does not exist →
-		// not found; it exists but the caller is not in scope → forbidden.
-		rec, err := s.db.FindOne(r.Context(), collection, id)
-		if err != nil {
-			writeStoreError(w, s.logger, r, err)
-			return false
-		}
-		if s.recordInScope(r.Context(), collection, rec, filters) {
-			return true
-		}
-		s.denyWrite(w, p)
-		return false
-	default:
-		s.denyWrite(w, p)
+	if err := s.authzWriteRule(r.Context(), collection, id, rule); err != nil {
+		writeStoreError(w, s.logger, r, err)
 		return false
 	}
+	return true
 }
