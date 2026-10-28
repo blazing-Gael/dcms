@@ -83,7 +83,7 @@ func TestAPIToken_WorksUnderProxyHeaderProvider(t *testing.T) {
 		}
 	}
 	// proxy_header provider wrapped with the API-token layer, exactly as main.go builds it.
-	base := gateway.NewProxyHeaderAuthenticator("X-Auth-User", "X-Auth-Roles", "")
+	base := gateway.NewProxyHeaderAuthenticator("X-Auth-User", "X-Auth-Roles", "", nil)
 	srv := httptest.NewServer(gateway.New(def, db, nil, gateway.Options{
 		Authenticator: gateway.WithAPITokens(db, base),
 	}).Handler())

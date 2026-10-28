@@ -36,11 +36,15 @@ var defaultTrustedProxies = []netip.Prefix{
 
 // trustedProxy reports whether addr is one of the operator's proxies.
 func (s *Server) trustedProxy(addr netip.Addr) bool {
+	return inTrustedRanges(s.opts.TrustedProxies, addr)
+}
+
+// inTrustedRanges reports whether addr falls in ranges (nil ⇒ the defaults).
+func inTrustedRanges(ranges []netip.Prefix, addr netip.Addr) bool {
 	if !addr.IsValid() {
 		return false
 	}
 	addr = addr.Unmap()
-	ranges := s.opts.TrustedProxies
 	if ranges == nil {
 		ranges = defaultTrustedProxies
 	}
