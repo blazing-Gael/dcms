@@ -211,6 +211,36 @@ func TestApplyEnv_BadIntrospectionIsAnError(t *testing.T) {
 	}
 }
 
+func TestTrustedProxies(t *testing.T) {
+	// CIDRs and bare IPs (v4 and v6) parse; a bare IP becomes a single-host range.
+	got, err := ParseTrustedProxies([]string{"173.245.48.0/20", " 10.0.0.5 ", "2400:cb00::/32", "::1"})
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	want := []string{"173.245.48.0/20", "10.0.0.5/32", "2400:cb00::/32", "::1/128"}
+	for i, p := range got {
+		if p.String() != want[i] {
+			t.Errorf("entry %d = %s, want %s", i, p, want[i])
+		}
+	}
+
+	// A typo is a load error, from the file or from env.
+	cfg := Default()
+	cfg.Server.TrustedProxies = []string{"10.0.0.0/33"}
+	if err := cfg.ApplyEnv(); err == nil {
+		t.Fatal("expected an error for an invalid trusted_proxies entry")
+	}
+	cfg = Default()
+	t.Setenv("DCMS_TRUSTED_PROXIES", "127.0.0.1, 173.245.48.0/20")
+	t.Setenv("DCMS_CLIENT_IP_HEADER", " CF-Connecting-IP ")
+	if err := cfg.ApplyEnv(); err != nil {
+		t.Fatalf("ApplyEnv: %v", err)
+	}
+	if len(cfg.Server.TrustedProxies) != 2 || cfg.Server.ClientIPHeader != "CF-Connecting-IP" {
+		t.Fatalf("env not applied: %+v %q", cfg.Server.TrustedProxies, cfg.Server.ClientIPHeader)
+	}
+}
+
 func TestApplyEnv_WildcardCORSWithCredentialsIsAnError(t *testing.T) {
 	cfg := Default()
 	cfg.Server.CORS.AllowedOrigins = []string{"*"}

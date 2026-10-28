@@ -66,17 +66,27 @@ server:
   #   anon_write_burst: 10
   # Trust a fronting reverse proxy's X-Forwarded-* headers: X-Forwarded-For for
   # rate-limit client-IP keying, and X-Forwarded-Proto for the session cookie's
-  # Secure flag when the proxy terminates TLS. Enable ONLY behind a proxy you
-  # control — otherwise a client can spoof these. Env: DCMS_TRUST_PROXY.
+  # Secure flag when the proxy terminates TLS. Enable when DCMS sits behind a
+  # proxy. Env: DCMS_TRUST_PROXY.
   # trust_proxy: false
-  # How many trusted reverse proxies sit in front of DCMS. With trust_proxy on,
-  # the rate-limit client IP is read from the RIGHT of X-Forwarded-For (proxies
-  # append), skipping this many hops. Default 1 (a single fronting proxy such as
-  # nginx with `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;`,
-  # Caddy, or Cloudflare). Set it to your real proxy depth: too low and everyone
-  # shares one proxy's bucket; too high and a client-supplied XFF entry is trusted
-  # and per-IP limits become spoofable. Env: DCMS_TRUSTED_PROXY_HOPS.
-  # trusted_proxy_hops: 1
+  # Your proxies' addresses (CIDR ranges or single IPs). Forwarded headers are read
+  # only on connections from these, and the client IP is the right-most
+  # X-Forwarded-For entry that isn't one of them — so a client can't spoof it by
+  # prepending entries or by connecting to DCMS directly. Default: loopback +
+  # private networks (nginx/Caddy on the same host, Docker, a LAN/VPC load
+  # balancer). Add every proxy hop that isn't on a private network, e.g. behind
+  # Cloudflare add its ranges from https://www.cloudflare.com/ips/ (keep the
+  # loopback/private ones too if nginx sits in between).
+  # Env: DCMS_TRUSTED_PROXIES (comma-separated).
+  # trusted_proxies:
+  #   - 127.0.0.0/8
+  #   - 10.0.0.0/8
+  #   - 173.245.48.0/20     # Cloudflare (one of its ranges)
+  # Optional: a header your trusted proxy sets to the client IP, read instead of
+  # X-Forwarded-For — e.g. CF-Connecting-IP (Cloudflare) or X-Real-IP (nginx).
+  # Ignored unless the request comes from a trusted proxy.
+  # Env: DCMS_CLIENT_IP_HEADER.
+  # client_ip_header: CF-Connecting-IP
   # Schema/docs introspection routes (/__schema, /__openapi, /__docs). "public"
   # (default) exposes them; "admin" requires an admin principal; "off" returns 404.
   # These routes are always sent X-Robots-Tag: noindex so crawlers skip them even

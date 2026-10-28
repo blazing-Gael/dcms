@@ -63,12 +63,13 @@ func principalFromContext(ctx context.Context) principal {
 func (s *Server) authEnabled() bool { return s.opts.Authenticator != nil }
 
 // requestIsSecure reports whether the request reached the client over HTTPS —
-// directly, or (when TrustProxy is set) via a proxy that terminated TLS and set
-// X-Forwarded-Proto. It drives the session cookie's Secure flag, so a
-// proxy-terminated deployment still marks the cookie HTTPS-only.
+// directly, or (when TrustProxy is set and the connection comes from a trusted
+// proxy) via a proxy that terminated TLS and set X-Forwarded-Proto. It drives the
+// session cookie's Secure flag, so a proxy-terminated deployment still marks the
+// cookie HTTPS-only.
 func (s *Server) requestIsSecure(r *http.Request) bool {
 	if r.TLS != nil {
 		return true
 	}
-	return s.opts.TrustProxy && strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
+	return s.forwardedTrusted(r) && strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
 }

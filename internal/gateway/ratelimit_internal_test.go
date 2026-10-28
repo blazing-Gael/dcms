@@ -3,6 +3,7 @@ package gateway
 import (
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"testing"
 	"time"
 )
@@ -77,55 +78,50 @@ func TestMemoryLimiter_SweepsIdleBuckets(t *testing.T) {
 	}
 }
 
+// TestClientIP pins GHSA-f8wf-92mm-pw4g: forwarded headers count only from a
+// trusted proxy, and the client is the right-most X-Forwarded-For entry that isn't
+// one of ours — so a client-supplied entry on the left never becomes the key.
 func TestClientIP(t *testing.T) {
-	base := httptest.NewRequest(http.MethodGet, "/x", nil)
-	base.RemoteAddr = "203.0.113.7:54321"
-
-	if got := clientIP(base, false, 1); got != "203.0.113.7" {
-		t.Fatalf("no-proxy: got %q, want the socket IP", got)
+	cloudflare := []netip.Prefix{netip.MustParsePrefix("173.245.48.0/20")}
+	cases := []struct {
+		name    string
+		opts    Options
+		peer    string
+		xff     []string // one element per header line
+		headers map[string]string
+		want    string
+	}{
+		{name: "trust off ignores XFF", opts: Options{}, peer: "203.0.113.7:1", xff: []string{"6.6.6.6"}, want: "203.0.113.7"},
+		{name: "untrusted peer ignores XFF (direct hit on the port)", opts: Options{TrustProxy: true}, peer: "203.0.113.7:1", xff: []string{"6.6.6.6"}, want: "203.0.113.7"},
+		{name: "nginx on localhost", opts: Options{TrustProxy: true}, peer: "127.0.0.1:1", xff: []string{"203.0.113.7"}, want: "203.0.113.7"},
+		{name: "spoofed left entry skipped", opts: Options{TrustProxy: true}, peer: "127.0.0.1:1", xff: []string{"1.2.3.4, 203.0.113.7"}, want: "203.0.113.7"},
+		{name: "two internal hops", opts: Options{TrustProxy: true}, peer: "10.0.0.3:1", xff: []string{"1.2.3.4, 203.0.113.7, 10.0.0.2"}, want: "203.0.113.7"},
+		{name: "proxy adds its own header line (HAProxy)", opts: Options{TrustProxy: true}, peer: "10.0.0.3:1", xff: []string{"6.6.6.6", "203.0.113.7"}, want: "203.0.113.7"},
+		{name: "cloudflare edge then nginx", opts: Options{TrustProxy: true, TrustedProxies: append([]netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")}, cloudflare...)},
+			peer: "127.0.0.1:1", xff: []string{"6.6.6.6, 203.0.113.7, 173.245.48.9"}, want: "203.0.113.7"},
+		{name: "cloudflare ranges not configured: edge is the client", opts: Options{TrustProxy: true}, peer: "127.0.0.1:1", xff: []string{"203.0.113.7, 173.245.48.9"}, want: "173.245.48.9"},
+		{name: "client_ip_header from trusted peer", opts: Options{TrustProxy: true, ClientIPHeader: "CF-Connecting-IP"}, peer: "127.0.0.1:1",
+			xff: []string{"6.6.6.6"}, headers: map[string]string{"CF-Connecting-IP": "203.0.113.7"}, want: "203.0.113.7"},
+		{name: "client_ip_header from untrusted peer ignored", opts: Options{TrustProxy: true, ClientIPHeader: "CF-Connecting-IP"}, peer: "198.51.100.1:1",
+			headers: map[string]string{"CF-Connecting-IP": "6.6.6.6"}, want: "198.51.100.1"},
+		{name: "every hop internal", opts: Options{TrustProxy: true}, peer: "127.0.0.1:1", xff: []string{"10.1.2.3"}, want: "10.1.2.3"},
+		{name: "garbage entry is not skipped past", opts: Options{TrustProxy: true}, peer: "127.0.0.1:1", xff: []string{"6.6.6.6, garbage"}, want: "garbage"},
+		{name: "ipv4-mapped peer", opts: Options{TrustProxy: true}, peer: "[::ffff:127.0.0.1]:1", xff: []string{"203.0.113.7"}, want: "203.0.113.7"},
 	}
-
-	// trustProxy off: X-Forwarded-For is ignored (unspoofable keying).
-	base.Header.Set("X-Forwarded-For", "198.51.100.9, 203.0.113.7")
-	if got := clientIP(base, false, 1); got != "203.0.113.7" {
-		t.Fatalf("no-proxy should ignore XFF, got %q", got)
-	}
-	// trustProxy on, one hop: the client is read from the RIGHT (proxies append),
-	// so the proxy-added right-most entry is the real client — not the left-most,
-	// which is client-supplied and spoofable (GHSA-f8wf-92mm-pw4g).
-	if got := clientIP(base, true, 1); got != "203.0.113.7" {
-		t.Fatalf("proxy(1 hop): got %q, want the right-most XFF entry", got)
-	}
-
-	// Spoof attempt: attacker prepends a fake entry. Behind one appending proxy the
-	// header becomes "<fake>, <real peer>"; the real peer is still right-most.
-	spoof := httptest.NewRequest(http.MethodGet, "/x", nil)
-	spoof.RemoteAddr = "10.0.0.1:1234" // the proxy
-	spoof.Header.Set("X-Forwarded-For", "1.2.3.4, 203.0.113.7")
-	if got := clientIP(spoof, true, 1); got != "203.0.113.7" {
-		t.Fatalf("spoofed XFF: got %q, want the proxy-appended right-most entry", got)
-	}
-
-	// Two trusted proxies: client is second from the right.
-	two := httptest.NewRequest(http.MethodGet, "/x", nil)
-	two.Header.Set("X-Forwarded-For", "1.2.3.4, 203.0.113.7, 10.0.0.2")
-	if got := clientIP(two, true, 2); got != "203.0.113.7" {
-		t.Fatalf("proxy(2 hops): got %q, want len-2 entry", got)
-	}
-
-	// A proxy that adds its own header line (HAProxy) instead of appending: the
-	// client-supplied first line must not win.
-	lines := httptest.NewRequest(http.MethodGet, "/x", nil)
-	lines.Header.Add("X-Forwarded-For", "6.6.6.6")
-	lines.Header.Add("X-Forwarded-For", "203.0.113.7")
-	if got := clientIP(lines, true, 1); got != "203.0.113.7" {
-		t.Fatalf("multi-line XFF: got %q, want the proxy's line", got)
-	}
-
-	// Fewer entries than configured hops → clamp to the left-most available.
-	short := httptest.NewRequest(http.MethodGet, "/x", nil)
-	short.Header.Set("X-Forwarded-For", "203.0.113.7")
-	if got := clientIP(short, true, 3); got != "203.0.113.7" {
-		t.Fatalf("short XFF: got %q, want the left-most entry", got)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodGet, "/x", nil)
+			r.RemoteAddr = tc.peer
+			for _, line := range tc.xff {
+				r.Header.Add("X-Forwarded-For", line)
+			}
+			for k, v := range tc.headers {
+				r.Header.Set(k, v)
+			}
+			s := &Server{opts: tc.opts}
+			if got := s.clientIP(r); got != tc.want {
+				t.Errorf("clientIP = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }
