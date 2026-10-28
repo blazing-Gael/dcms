@@ -380,8 +380,8 @@ collections:
 `
 
 // The media library defaults to public read (serving an image needs no
-// credential) but authenticated write — anonymous upload, edit and delete are
-// refused.
+// credential) but gated writes — anonymous upload, edit and delete are refused
+// (upload needs a principal; edit/delete the uploader or an admin, issue #70).
 func TestMedia_WritesRequireAuthentication(t *testing.T) {
 	srv, db := authMediaServer(t, mediaAuthzSchema)
 	seedUser(t, db, "boss@x.com", "pw-boss-1234", "admin")

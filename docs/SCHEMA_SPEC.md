@@ -205,10 +205,21 @@ library is browsable, replaceable, and answers "where is this used?" via reverse
 expansion. Do not set `target` on a file field; it is always `_media`.
 
 **Media access.** The `/__media` endpoints run the same `access:` rules as any
-other collection, evaluated against `_media`. The engine default applies when you
-say nothing: **public read, authenticated write** — serving an image needs no
-credential, but uploading, replacing, editing, or deleting one does. To change
-the read side, name `_media` in `collections:` and give it an `access:` block. It
+other collection, evaluated against `_media`. With nothing declared, the defaults are:
+
+| Action | Default | Covers |
+|---|---|---|
+| read | public | `GET /__media`, `/{id}`, `/raw`, `/files/…` |
+| create | authenticated | upload |
+| update | the uploader or an admin | replace, `PATCH` metadata, `PUT …/files/{path}` |
+| delete | the uploader or an admin | `DELETE /__media/{id}` |
+
+"Admin" means the roles in `auth.admin_roles` (default `admin`). An asset with no
+recorded uploader (written by a hook or an import) is admin-only. An upload made
+with an API token is owned by that token.
+
+To change any of these, name `_media` in `collections:` and give it an `access:`
+block; each declared action replaces its default, and undeclared ones keep it. It
 is the one reserved collection a schema may name, and only for this: it takes no
 fields, indexes, or other directives, because its shape stays the engine's.
 
@@ -217,7 +228,12 @@ collections:
   _media:
     access:
       read: [admin]        # a private media library: /__media and /raw both gated
+      update: [admin, editor]   # a shared library editors maintain together
+      delete: [admin, editor]
 ```
+
+`update: authenticated` / `delete: authenticated` restore the pre-#70 behaviour
+(any signed-in user may change any upload).
 
 The rule covers the bytes as well as the metadata, so `/__media/{id}/raw` is never
 a way around it, and a `file` relation pointing at an asset the caller may not

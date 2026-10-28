@@ -382,10 +382,8 @@ func TestEmbed_Media(t *testing.T) {
 	if err != nil {
 		t.Fatalf("blob.New: %v", err)
 	}
-	// Writes to an asset restricted to its owner (the engine default is any
-	// authenticated user).
-	src := strings.Replace(signMediaSchema, "read: inherit", "read: inherit\n      update: { any: [admin, owner] }", 1)
-	gw, base, db := embedServer(t, src, gateway.Options{Blob: bs, URLSigner: testSigner()})
+	// Writes to an asset default to its owner or an admin (issue #70).
+	gw, base, db := embedServer(t, signMediaSchema, gateway.Options{Blob: bs, URLSigner: testSigner()})
 	ctx := context.Background()
 	admin := newCaller(t, base, db, "admin", "admin")
 	bob := newCaller(t, base, db, "bob")
