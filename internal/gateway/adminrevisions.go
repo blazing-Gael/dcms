@@ -36,8 +36,11 @@ func (s *Server) adminRevisions(w http.ResponseWriter, r *http.Request) {
 		s.adminError(w, r, "This collection doesn't keep version history.")
 		return
 	}
-	// History follows the same preview + read gates as the API (#24).
-	if s.revisionHistoryDenied(r, cd.Name, id) || !s.authorizeRecordRead(r.Context(), cd.Name, id) {
+	// The admin panel is the privileged editor surface: like the edit page, it
+	// shows records regardless of lifecycle state (drafts included), so history is
+	// gated by the collection's read rule — which still scopes an owner-only editor
+	// to their own records — rather than the API's lifecycle/preview gate (#24).
+	if !s.adminCanRecord(r, cd.Name, id, schema.ActionRead) {
 		s.adminForbidden(w, r)
 		return
 	}

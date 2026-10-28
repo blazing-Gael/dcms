@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -166,6 +167,64 @@ func (s *Server) contentTypeAllowed(ct string) bool {
 	return false
 }
 
+// setMediaSafetyHeaders hardens a media byte response against stored XSS. Media
+// is served from the DCMS origin with an uploader-controlled content type, so
+// without these headers an uploaded HTML or SVG file would run script same-origin
+// as whoever opens it — including an admin whose session cookie and CSRF token are
+// then reachable (GHSA-74xf-v9pf-rhj4). It:
+//
+//   - forbids MIME sniffing (nosniff), so the browser honours the declared type;
+//   - sets a CSP that denies all subresources and sandboxes the document, so even
+//     if something renders it can't script, navigate or submit;
+//   - serves anything not on the safe-inline list as an attachment (download)
+//     rather than letting the browser render it — in particular text/html,
+//     image/svg+xml, XHTML and XML.
+func setMediaSafetyHeaders(w http.ResponseWriter, contentType, filename string) {
+	h := w.Header()
+	h.Set("X-Content-Type-Options", "nosniff")
+	h.Set("Content-Security-Policy", "default-src 'none'; sandbox")
+	disposition := "attachment"
+	if safeInlineContentType(contentType) {
+		disposition = "inline"
+	}
+	if filename != "" {
+		// strconv.Quote escapes control characters, so a crafted filename can't inject
+		// a header line or break out of the quoted-string.
+		h.Set("Content-Disposition", disposition+"; filename="+strconv.Quote(filename))
+	} else {
+		h.Set("Content-Disposition", disposition)
+	}
+}
+
+// safeInlineContentType reports whether a media content type may be rendered
+// inline without risking script execution on the DCMS origin. Raster images,
+// audio and video are safe; so are a few media sidecar formats (PDF in the
+// browser's sandboxed viewer, WebVTT tracks, HLS/DASH manifests). Everything else
+// — notably text/html, image/svg+xml, application/xhtml+xml and any XML or
+// unknown type — is withheld from inline rendering and downloaded instead.
+func safeInlineContentType(ct string) bool {
+	ct = strings.ToLower(strings.TrimSpace(ct))
+	if i := strings.IndexByte(ct, ';'); i >= 0 {
+		ct = strings.TrimSpace(ct[:i]) // drop any ;charset=… parameter
+	}
+	if ct == "image/svg+xml" {
+		return false // an SVG renders with inline script — never inline
+	}
+	if strings.HasPrefix(ct, "image/") ||
+		strings.HasPrefix(ct, "audio/") ||
+		strings.HasPrefix(ct, "video/") {
+		return true
+	}
+	switch ct {
+	case "application/pdf",
+		"text/vtt",
+		"application/vnd.apple.mpegurl", "application/x-mpegurl",
+		"application/dash+xml":
+		return true
+	}
+	return false
+}
+
 // addMediaURL injects the derived, non-stored `url` onto a media record: the
 // backend's direct URL when it serves bytes itself (S3/R2), else the gateway's
 // proxy route. The URL carries a version token derived from the checksum, so a
@@ -314,7 +373,7 @@ func (s *Server) handleMediaList(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	q, err := s.parseListQuery(r.URL.Query(), schema.MediaCollection)
+	q, err := s.parseListQuery(r.Context(), r.URL.Query(), schema.MediaCollection)
 	if err != nil {
 		writeStoreError(w, s.logger, r, err)
 		return
@@ -483,9 +542,17 @@ func (s *Server) handleMediaRaw(w http.ResponseWriter, r *http.Request) {
 	}
 	defer body.Close()
 
-	if ct, _ := rec[schema.MediaContentType].(string); ct != "" {
-		w.Header().Set("Content-Type", ct)
+	ct, _ := rec[schema.MediaContentType].(string)
+	if ct == "" {
+		ct = "application/octet-stream"
 	}
+	w.Header().Set("Content-Type", ct)
+	filename, _ := rec[schema.MediaFilename].(string)
+	// The content type is uploader-controlled, so the bytes could be HTML/SVG that
+	// would run script on the DCMS origin (same-origin as an admin's session). Serve
+	// every media response with nosniff + a locked-down CSP, and hand anything not
+	// safe to render inline to the browser as a download (GHSA-74xf-v9pf-rhj4).
+	setMediaSafetyHeaders(w, ct, filename)
 	// The checksum is a strong validator → ETag for cheap 304 revalidation.
 	// Versioned URLs (?v=…) address immutable content, so cache them hard; a bare
 	// /raw hit gets a short TTL and revalidates via ETag.
@@ -502,7 +569,6 @@ func (s *Server) handleMediaRaw(w http.ResponseWriter, r *http.Request) {
 	default:
 		w.Header().Set("Cache-Control", "public, max-age=300")
 	}
-	filename, _ := rec[schema.MediaFilename].(string)
 	if rs, ok := body.(io.ReadSeeker); ok {
 		http.ServeContent(w, r, filename, time.Time{}, rs) // Range + If-None-Match aware
 		return

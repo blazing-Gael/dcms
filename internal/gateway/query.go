@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"context"
 	"fmt"
 	"net/url"
 	"regexp"
@@ -30,8 +31,9 @@ func badRequest(param, msg string) error {
 // parseListQuery turns the request's URL query into a store.Query, validating
 // field names against the collection's schema and coercing filter values to the
 // field's type (so filters behave correctly across adapters, not just SQLite).
-func (s *Server) parseListQuery(values url.Values, collection string) (store.Query, error) {
+func (s *Server) parseListQuery(ctx context.Context, values url.Values, collection string) (store.Query, error) {
 	q := store.Query{Collection: collection}
+	p := principalFromContext(ctx)
 
 	if raw := values.Get("limit"); raw != "" {
 		n, err := strconv.Atoi(raw)
@@ -55,7 +57,9 @@ func (s *Server) parseListQuery(values url.Values, collection string) (store.Que
 
 	if raw := values.Get("sort"); raw != "" {
 		field := strings.TrimPrefix(raw, "-")
-		if !s.hasColumn(collection, field) {
+		// A field the caller can't read is reported as unknown, not forbidden: sorting
+		// on a masked field orders rows by its value and leaks it (GHSA-x4q6-jjx6-rwxm).
+		if !s.hasColumn(collection, field) || !s.fieldReadQueryable(collection, field, p) {
 			return q, badRequest("sort", fmt.Sprintf("unknown field %q", field))
 		}
 		q.Sort = raw
@@ -71,7 +75,7 @@ func (s *Server) parseListQuery(values url.Values, collection string) (store.Que
 		}
 	}
 
-	filters, err := s.parseFilters(values, collection)
+	filters, err := s.parseFilters(ctx, values, collection)
 	if err != nil {
 		return q, err
 	}
@@ -80,7 +84,8 @@ func (s *Server) parseListQuery(values url.Values, collection string) (store.Que
 	return q, nil
 }
 
-func (s *Server) parseFilters(values url.Values, collection string) ([]store.Filter, error) {
+func (s *Server) parseFilters(ctx context.Context, values url.Values, collection string) ([]store.Filter, error) {
+	p := principalFromContext(ctx)
 	var filters []store.Filter
 	for key, vals := range values {
 		m := filterKeyRe.FindStringSubmatch(key)
@@ -97,6 +102,13 @@ func (s *Server) parseFilters(values url.Values, collection string) ([]store.Fil
 		}
 		ft, known := s.fieldType(collection, field)
 		if !known {
+			return nil, badRequest(key, fmt.Sprintf("unknown field %q", field))
+		}
+		// Filtering on a field the caller can't read turns the list into an oracle:
+		// `filter[masked][eq]=X` returns the row iff the value is X, and ordering/range
+		// filters binary-search a numeric secret. Report it as unknown (not forbidden)
+		// so a masked field's existence isn't confirmed (GHSA-x4q6-jjx6-rwxm).
+		if !s.fieldReadQueryable(collection, field, p) {
 			return nil, badRequest(key, fmt.Sprintf("unknown field %q", field))
 		}
 

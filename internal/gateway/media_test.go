@@ -127,6 +127,64 @@ func TestMedia_UploadServeReferenceExpand(t *testing.T) {
 	}
 }
 
+// TestMedia_RawServedSafely pins GHSA-74xf-v9pf-rhj4: uploader-controlled bytes
+// must never be rendered as script on the DCMS origin. Every /raw response carries
+// nosniff + a locked-down CSP, and anything not safe to render inline (HTML, SVG,
+// XML, unknown types) is served as an attachment; raster images stay inline.
+func TestMedia_RawServedSafely(t *testing.T) {
+	root := mediaServer(t, mediaProductSchema)
+	media := root + "/__media"
+
+	get := func(id string) *http.Response {
+		resp, err := http.Get(media + "/" + id + "/raw")
+		if err != nil {
+			t.Fatalf("raw: %v", err)
+		}
+		t.Cleanup(func() { resp.Body.Close() })
+		return resp
+	}
+	upload := func(filename, ct string, data []byte) string {
+		st, body := uploadFile(t, media, "file", filename, ct, data)
+		if st != http.StatusCreated {
+			t.Fatalf("upload %s: got %d (%v)", filename, st, body)
+		}
+		return dataObj(t, body)["id"].(string)
+	}
+
+	// Dangerous uploads are downloaded, never rendered.
+	for _, tc := range []struct{ name, filename, ct string }{
+		{"html", "x.html", "text/html"},
+		{"svg", "x.svg", "image/svg+xml"},
+		{"xml", "x.xml", "text/xml"},
+		{"xhtml", "x.xhtml", "application/xhtml+xml"},
+		{"unknown", "x.bin", "application/octet-stream"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			id := upload(tc.filename, tc.ct, []byte(`<script>alert(document.cookie)</script>`))
+			resp := get(id)
+			if got := resp.Header.Get("X-Content-Type-Options"); got != "nosniff" {
+				t.Errorf("X-Content-Type-Options = %q, want nosniff", got)
+			}
+			if csp := resp.Header.Get("Content-Security-Policy"); !strings.Contains(csp, "default-src 'none'") || !strings.Contains(csp, "sandbox") {
+				t.Errorf("CSP = %q, want a locked-down policy", csp)
+			}
+			if disp := resp.Header.Get("Content-Disposition"); !strings.HasPrefix(disp, "attachment") {
+				t.Errorf("Content-Disposition = %q, want attachment", disp)
+			}
+		})
+	}
+
+	// A raster image renders inline (preview must still work) but keeps nosniff.
+	id := upload("logo.png", "image/png", []byte("\x89PNG\r\n\x1a\nfake"))
+	resp := get(id)
+	if disp := resp.Header.Get("Content-Disposition"); !strings.HasPrefix(disp, "inline") {
+		t.Errorf("image Content-Disposition = %q, want inline", disp)
+	}
+	if got := resp.Header.Get("X-Content-Type-Options"); got != "nosniff" {
+		t.Errorf("image X-Content-Type-Options = %q, want nosniff", got)
+	}
+}
+
 func TestMedia_ReplaceKeepsIdAndReferences(t *testing.T) {
 	root := mediaServer(t, mediaProductSchema)
 	media := root + "/__media"

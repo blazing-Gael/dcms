@@ -69,6 +69,14 @@ server:
   # Secure flag when the proxy terminates TLS. Enable ONLY behind a proxy you
   # control — otherwise a client can spoof these. Env: DCMS_TRUST_PROXY.
   # trust_proxy: false
+  # How many trusted reverse proxies sit in front of DCMS. With trust_proxy on,
+  # the rate-limit client IP is read from the RIGHT of X-Forwarded-For (proxies
+  # append), skipping this many hops. Default 1 (a single fronting proxy such as
+  # nginx with `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;`,
+  # Caddy, or Cloudflare). Set it to your real proxy depth: too low and everyone
+  # shares one proxy's bucket; too high and a client-supplied XFF entry is trusted
+  # and per-IP limits become spoofable. Env: DCMS_TRUSTED_PROXY_HOPS.
+  # trusted_proxy_hops: 1
   # Schema/docs introspection routes (/__schema, /__openapi, /__docs). "public"
   # (default) exposes them; "admin" requires an admin principal; "off" returns 404.
   # These routes are always sent X-Robots-Tag: noindex so crawlers skip them even

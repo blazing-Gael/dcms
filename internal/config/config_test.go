@@ -211,6 +211,29 @@ func TestApplyEnv_BadIntrospectionIsAnError(t *testing.T) {
 	}
 }
 
+func TestApplyEnv_WildcardCORSWithCredentialsIsAnError(t *testing.T) {
+	cfg := Default()
+	cfg.Server.CORS.AllowedOrigins = []string{"*"}
+	cfg.Server.CORS.AllowCredentials = true
+	if err := cfg.ApplyEnv(); err == nil {
+		t.Fatal("expected an error for wildcard origin with allow_credentials")
+	}
+
+	// A wildcard without credentials is fine, and explicit origins with
+	// credentials are fine.
+	cfg = Default()
+	cfg.Server.CORS.AllowedOrigins = []string{"*"}
+	if err := cfg.ApplyEnv(); err != nil {
+		t.Fatalf("wildcard without credentials should be allowed: %v", err)
+	}
+	cfg = Default()
+	cfg.Server.CORS.AllowedOrigins = []string{"https://app.example"}
+	cfg.Server.CORS.AllowCredentials = true
+	if err := cfg.ApplyEnv(); err != nil {
+		t.Fatalf("explicit origins with credentials should be allowed: %v", err)
+	}
+}
+
 func TestApplyEnv_BadHardeningNumbersAreErrors(t *testing.T) {
 	for _, v := range []string{"DCMS_MAX_BODY_BYTES", "DCMS_REQUEST_TIMEOUT_SECONDS"} {
 		t.Run(v, func(t *testing.T) {

@@ -265,24 +265,44 @@ func validateCustomBlock(typ string, node map[string]any) string {
 	return ""
 }
 
-// safeHref reports whether a link href is safe to store/render: a relative href
+// SafeHref reports whether a link href is safe to store/render: a relative href
 // (no scheme) or one using an allowlisted scheme. Blocks javascript:/data:/etc.
-func safeHref(href string) bool {
-	// Protocol-relative "//host/path" is a cross-origin navigation that inherits
-	// the page's scheme, not a relative path — reject it so a validated href is
-	// genuinely same-origin or an allowlisted scheme.
-	if strings.HasPrefix(href, "//") {
+// and protocol-relative ("//host") navigations.
+//
+// It normalizes the value the way a browser does before deciding, because the
+// browser — not the raw string — is what navigates. Leading C0 control bytes and
+// spaces are stripped (browsers ignore them), and backslashes are treated as
+// forward slashes (browsers do this for the authority of special-scheme URLs), so
+// `" //evil"`, `"\t//evil"`, `"/\\evil"` and `"\\\\evil"` cannot slip past the
+// `//` check as "relative" links and then navigate cross-origin.
+func SafeHref(href string) bool {
+	// Strip leading C0 controls (incl. tab/newline/CR) and spaces, matching the
+	// WHATWG URL parser, which removes them before parsing.
+	href = strings.TrimLeft(href, "\x00\x01\x02\x03\x04\x05\x06\a\b\t\n\v\f\r\x0e\x0f"+
+		"\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1a\x1b\x1c\x1d\x1e\x1f ")
+
+	// Determine the scheme on the raw (non-slash-normalized) prefix: a scheme is
+	// text up to the first ':' that contains no '/' or '\'. Backslash counts as a
+	// path separator here so "\t" etc. can't masquerade as a scheme.
+	i := strings.IndexByte(href, ':')
+	sep := strings.IndexAny(href, "/\\")
+	if i >= 0 && (sep < 0 || i < sep) {
+		// There is a scheme — it must be allowlisted.
+		return safeLinkSchemes[strings.ToLower(href[:i])]
+	}
+
+	// No scheme: it's a relative reference. Reject protocol-relative "//host"
+	// (and "\\host", "/\host", etc.), which navigates cross-origin. Normalize
+	// backslashes to slashes the way a browser would before the prefix check.
+	norm := strings.ReplaceAll(href, "\\", "/")
+	if strings.HasPrefix(norm, "//") {
 		return false
 	}
-	i := strings.IndexByte(href, ':')
-	slash := strings.IndexByte(href, '/')
-	// No scheme, or the ':' comes after the first '/' (so it's part of a path,
-	// e.g. "/a:b") → relative, allowed.
-	if i < 0 || (slash >= 0 && slash < i) {
-		return true
-	}
-	return safeLinkSchemes[strings.ToLower(href[:i])]
+	return true
 }
+
+// safeHref is the unexported alias kept for internal callers in this package.
+func safeHref(href string) bool { return SafeHref(href) }
 
 // RichTextRef is one in-content reference harvested from a richtext value: the
 // target collection and the referenced record id.

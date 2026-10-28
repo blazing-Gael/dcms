@@ -195,21 +195,16 @@ func renderCustomBlock(node map[string]any) string {
 	return `<p class="muted">[` + html.EscapeString(t) + `]</p>`
 }
 
-// safeHref rejects the script-bearing URL schemes; relative and http(s)/mailto/tel
-// links pass. Defense in depth — the document was already validated on write, and
-// the panel CSP forbids inline script regardless.
+// safeHref reports whether a link href is safe to render in the panel. It defers
+// to the schema validator (the same allowlist + browser-style normalization used
+// on write) so the two can't disagree: an empty href renders no link. Defense in
+// depth — the document was already validated on write, and the panel CSP forbids
+// inline script regardless.
 func safeHref(h string) bool {
-	h = strings.TrimSpace(h)
-	if h == "" {
+	if strings.TrimSpace(h) == "" {
 		return false
 	}
-	l := strings.ToLower(h)
-	for _, bad := range []string{"javascript:", "data:", "vbscript:"} {
-		if strings.HasPrefix(l, bad) {
-			return false
-		}
-	}
-	return true
+	return schema.SafeHref(h)
 }
 
 // ── media (file fields) ────────────────────────────────────────────────────────

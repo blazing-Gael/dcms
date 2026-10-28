@@ -50,10 +50,17 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	hash, _ := user[schema.UserPasswordHash].(string)
+	// Always run the password check, even when the email maps to no account or to
+	// an externally-authenticated one with no local password: checkPassword burns
+	// equivalent bcrypt work against a dummy hash on the empty-hash path, so login
+	// timing can't distinguish "no such account" from "wrong password"
+	// (GHSA-38cf-62wh-v3g3). Must be evaluated before the short-circuit below, or
+	// the nil-user / empty-hash cases would skip bcrypt and return early.
+	passwordOK := checkPassword(hash, req.Password)
 	// Fail closed on all of: no such user, no local password (an
 	// externally-authenticated account — e.g. OIDC — must never be reachable via
 	// the local login path), or a wrong password. All are the same flat 401.
-	if user == nil || hash == "" || !checkPassword(hash, req.Password) {
+	if user == nil || hash == "" || !passwordOK {
 		if userID != "" {
 			s.credFailures.fail(userID) // count only when the email maps to an account
 		}

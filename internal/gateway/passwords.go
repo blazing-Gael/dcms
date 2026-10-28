@@ -1,6 +1,10 @@
 package gateway
 
-import "golang.org/x/crypto/bcrypt"
+import (
+	"sync"
+
+	"golang.org/x/crypto/bcrypt"
+)
 
 // hashPassword returns a bcrypt hash suitable for storage in _users.password_hash.
 // The default cost is used; bcrypt embeds the cost and salt in the output, so
@@ -13,11 +17,32 @@ func hashPassword(plain string) (string, error) {
 	return string(b), nil
 }
 
+// dummyHash is a valid bcrypt hash at the default cost, computed once on first
+// use. It lets checkPassword spend the same work on the no-account / no-local-
+// password path as on a real verification, so an attacker can't tell from
+// response timing whether an email has a local account (GHSA-38cf-62wh-v3g3).
+var dummyHash = sync.OnceValue(func() []byte {
+	// The input is irrelevant — callers never match against it, it only exists to
+	// make CompareHashAndPassword do a full bcrypt round. DefaultCost can't error.
+	b, err := bcrypt.GenerateFromPassword([]byte("dcms constant-time placeholder"), bcrypt.DefaultCost)
+	if err != nil {
+		panic("bcrypt dummy hash: " + err.Error())
+	}
+	return b
+})
+
 // checkPassword reports whether plain matches a stored bcrypt hash. A false is
 // returned for any mismatch or malformed hash — callers must not distinguish the
 // two to a client (both are "invalid credentials").
+//
+// When hash is empty (no such user, or an externally-authenticated account with
+// no local password), it still runs one bcrypt comparison against a dummy hash
+// and returns false, so the verification path takes constant time regardless of
+// whether the account exists. Callers on the auth hot path must therefore call
+// checkPassword unconditionally, not behind a `hash == ""` short-circuit.
 func checkPassword(hash, plain string) bool {
 	if hash == "" {
+		bcrypt.CompareHashAndPassword(dummyHash(), []byte(plain))
 		return false
 	}
 	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(plain)) == nil

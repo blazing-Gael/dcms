@@ -147,6 +147,61 @@ func TestFieldAccess_ListMasking(t *testing.T) {
 	}
 }
 
+// TestFieldAccess_NoFilterSortOracle pins GHSA-x4q6-jjx6-rwxm: a caller who can't
+// read a masked field must not be able to recover its value by filtering or
+// sorting on it. Both are rejected as an unknown field (never "forbidden", so the
+// field's existence isn't confirmed), while an admin who *can* read it may still
+// filter/sort, and a projection of a masked field stays masked rather than leaking.
+func TestFieldAccess_NoFilterSortOracle(t *testing.T) {
+	srv, db := newServerWith(t, fieldAccessSchema)
+	seedUser(t, db, "boss@x.com", "pw-boss-1234", "admin")
+	seedUser(t, db, "worker@x.com", "pw-worker-12", "")
+	boss := login(t, srv.URL, "boss@x.com", "pw-boss-1234")
+	worker := login(t, srv.URL, "worker@x.com", "pw-worker-12")
+
+	doAs(t, http.MethodPost, srv.URL+"/api/v1/profiles", boss, `{"name":"Alice","salary":100}`)
+	doAs(t, http.MethodPost, srv.URL+"/api/v1/profiles", boss, `{"name":"Bob","salary":200}`)
+
+	base := srv.URL + "/api/v1/profiles"
+
+	// Worker (and anonymous) cannot filter or sort on the masked salary field.
+	for _, tc := range []struct{ name, token string }{{"worker", worker}, {"anonymous", ""}} {
+		for _, q := range []string{"?filter[salary][eq]=100", "?filter[salary][gt]=150", "?sort=salary", "?sort=-salary"} {
+			st, _ := doAs(t, http.MethodGet, base+q, tc.token, "")
+			if st != http.StatusUnprocessableEntity {
+				t.Errorf("%s GET %s: got %d, want 422 (masked field must look unknown)", tc.name, q, st)
+			}
+		}
+		// A projection of the masked field still returns it masked, not rejected.
+		st, body := doAs(t, http.MethodGet, base+"?fields=id,salary", tc.token, "")
+		if st != http.StatusOK {
+			t.Errorf("%s fields=id,salary: got %d, want 200", tc.name, st)
+			continue
+		}
+		rows, _ := body["data"].([]any)
+		for _, r := range rows {
+			if row, _ := r.(map[string]any); row != nil {
+				if _, leaked := row["salary"]; leaked {
+					t.Errorf("%s projection leaked salary: %v", tc.name, row)
+				}
+			}
+		}
+	}
+
+	// The admin, who can read salary, may filter and sort on it.
+	if st, body := doAs(t, http.MethodGet, base+"?filter[salary][eq]=100", boss, ""); st != http.StatusOK {
+		t.Fatalf("admin filter on salary: got %d, want 200 (%v)", st, body)
+	}
+	if st, _ := doAs(t, http.MethodGet, base+"?sort=-salary", boss, ""); st != http.StatusOK {
+		t.Fatalf("admin sort on salary: got %d, want 200", st)
+	}
+
+	// A non-masked field stays filterable by everyone.
+	if st, _ := doAs(t, http.MethodGet, base+"?filter[name][eq]=Alice", worker, ""); st != http.StatusOK {
+		t.Fatalf("worker filter on unmasked name: got %d, want 200", st)
+	}
+}
+
 func TestFieldAccess_WriteStripping_RoleRule(t *testing.T) {
 	srv, db := newServerWith(t, fieldAccessSchema)
 	seedUser(t, db, "boss@x.com", "pw-boss-1234", "admin")
