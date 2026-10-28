@@ -54,6 +54,54 @@ While on **0.x**, minor versions may include breaking changes.
   runbook covering money, idempotency, concurrency, field-level access, role-scoped
   transitions, revisions, webhooks and the typed SDK.
 
+### Security
+Fixes seven advisories. **Read "Upgrading" below — several defaults change.**
+
+- **Stored XSS through media (GHSA-74xf-v9pf-rhj4, high).** Media was served from the
+  API origin with the content type the uploader declared, so an uploaded HTML or SVG
+  file ran script as whoever opened it. Every media response (`/raw`, signed URLs,
+  derived files) now carries `X-Content-Type-Options: nosniff` and a sandboxing CSP,
+  and anything not safe to render inline (HTML, SVG, XML, unknown types) is served as
+  a download. Derived files take their type only from an allowlisted extension
+  (`m3u8 mpd m4s mp4 m4a ts aac vtt jpg jpeg png webp avif`). `POST /__media/{id}/sign`
+  rejects a malformed body, a scope that isn't a `/`-terminated prefix, and a path
+  outside its scope. Direct bucket URLs (S3/R2) are used only for safe-inline types.
+- **Field read masks bypassed by filter/sort (GHSA-x4q6-jjx6-rwxm, high).** A caller
+  who couldn't read a field could recover it by filtering or sorting on it. Now such
+  a filter/sort is `422 unknown field`; for an `owner`/`owner_field`/`exists` field
+  rule the filter is allowed but only matches rows where the caller may read the field.
+- **Revision history leaked hidden content (GHSA-8rpx-5wj5-c6jp, medium).** Without a
+  preview rule or token, anyone could read draft and trashed records' snapshots. History
+  now 404s for records hidden in their lifecycle state, and a new **`history` access
+  rule** decides who may read past versions (default: `preview`, else `update`).
+- **Rate limits bypassable via `X-Forwarded-For` (GHSA-f8wf-92mm-pw4g, medium).** The
+  client IP was taken from the left-most (client-controlled) entry. Forwarded headers
+  are now honoured only from **trusted proxies** (`server.trusted_proxies`), and the
+  client is the right-most entry that isn't one of them; `server.client_ip_header`
+  (e.g. `CF-Connecting-IP`) is supported.
+- **Login and account-mail timing revealed accounts (GHSA-38cf-62wh-v3g3, low).**
+  Unknown emails, accounts without a password, and locked accounts all pay one bcrypt;
+  `/auth/forgot` and `/auth/otp/request` answer no faster than
+  `auth.mail.min_response_ms` (default 250).
+- **CORS `*` with credentials (GHSA-4wwm-mw23-6ch2, low).** Rejected at config load,
+  and the middleware never grants credentials to an origin admitted only by `*`.
+- **Richtext link bypass (GHSA-xv66-6jwx-6v3x, low).** `//host` links hidden behind
+  whitespace, tabs/newlines or backslashes are rejected; the admin renderer uses the
+  same check.
+
+### Upgrading
+- **Behind a proxy:** with `trust_proxy: true`, forwarded headers now count only from
+  loopback/private addresses by default. If a hop is on a public address (e.g.
+  Cloudflare in front), add its ranges to `server.trusted_proxies` or set
+  `client_ip_header`, or every client shares that proxy's rate-limit bucket and the
+  session cookie may lose its Secure flag.
+- **Revision history** is now writers-only unless the collection declares a `preview`
+  or `history` rule. Add `history: public` (or any rule) to keep it reader-visible.
+- **Filtering/sorting on a read-masked field** returns `422` for callers who can't read it.
+- **Derived media files** must use an allowlisted extension (`415` otherwise); media
+  that isn't safe to render inline now downloads instead.
+- **CORS:** `allowed_origins: ["*"]` with `allow_credentials: true` is a config error.
+
 ## [0.1.0-beta.4] - 2026-09-24
 
 ### Security

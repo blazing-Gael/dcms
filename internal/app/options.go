@@ -172,6 +172,11 @@ func (s *Server) GatewayOptions(ctx context.Context, hooks *gateway.HookRegistry
 			time.Duration(cfg.Media.Sign.WindowSeconds)*time.Second)
 	}
 
+	trustedProxies, err := config.ParseTrustedProxies(cfg.Server.TrustedProxies)
+	if err != nil {
+		return zero, engine.TLSConfig{}, err
+	}
+
 	opts := gateway.Options{
 		ValidateResponses:      validateResponses,
 		Blob:                   bs,
@@ -187,7 +192,8 @@ func (s *Server) GatewayOptions(ctx context.Context, hooks *gateway.HookRegistry
 		RateLimit:              rateLimit,
 		Idempotency:            idempotency,
 		TrustProxy:             cfg.Server.TrustProxy,
-		TrustedProxyHops:       cfg.Server.TrustedProxyHops,
+		TrustedProxies:         trustedProxies,
+		ClientIPHeader:         cfg.Server.ClientIPHeader,
 		CORS:                   cors,
 		AdminRoles:             adminRoles,
 		Registration:           registration,

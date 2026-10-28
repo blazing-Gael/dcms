@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/netip"
 	"os"
 	"slices"
 	"strconv"
@@ -327,17 +328,21 @@ type Server struct {
 	Idempotency Idempotency `yaml:"idempotency"`
 	// TrustProxy trusts a fronting reverse proxy's X-Forwarded-* headers:
 	// X-Forwarded-For for client-IP rate-limit keying, and X-Forwarded-Proto for
-	// the session cookie's Secure flag when TLS is terminated at the proxy. Enable
-	// ONLY behind a proxy you control — otherwise a client can spoof these.
+	// the session cookie's Secure flag when TLS is terminated at the proxy. The
+	// headers are honoured only on connections from TrustedProxies.
 	TrustProxy bool `yaml:"trust_proxy"`
-	// TrustedProxyHops is how many trusted reverse proxies sit in front of DCMS.
-	// With trust_proxy on, the client IP for rate-limiting is read from the right
-	// of X-Forwarded-For (proxies append), skipping this many trusted hops. Default
-	// 1 (a single fronting proxy such as nginx/Caddy/Cloudflare). Set it to your
-	// real proxy depth: too low keys on a proxy's address (everyone shares a
-	// bucket), too high trusts a client-supplied entry (spoofable). Env:
-	// DCMS_TRUSTED_PROXY_HOPS.
-	TrustedProxyHops int `yaml:"trusted_proxy_hops"`
+	// TrustedProxies lists the addresses of your own proxies, as CIDR ranges or
+	// single IPs. With trust_proxy on, forwarded headers are read only when the
+	// connection comes from one of them, and the client IP is the right-most
+	// X-Forwarded-For entry that isn't one of them. Empty ⇒ loopback + private
+	// networks (nginx/Caddy on the same host, Docker, a LAN/VPC load balancer).
+	// Behind Cloudflare, list Cloudflare's published ranges (or set
+	// client_ip_header). Env: DCMS_TRUSTED_PROXIES (comma-separated).
+	TrustedProxies []string `yaml:"trusted_proxies"`
+	// ClientIPHeader names a header a trusted proxy sets to the client's IP (e.g.
+	// CF-Connecting-IP, X-Real-IP), used instead of walking X-Forwarded-For. Read
+	// only from trusted proxies. Empty ⇒ X-Forwarded-For. Env: DCMS_CLIENT_IP_HEADER.
+	ClientIPHeader string `yaml:"client_ip_header"`
 	// Introspection gates the schema/docs routes (/__schema, /__openapi, /__docs):
 	// "public" (default) exposes them, "admin" requires an admin principal, "off"
 	// returns 404. Those routes are always marked noindex. Env: DCMS_INTROSPECTION.
@@ -420,8 +425,7 @@ func Default() Config {
 			Path:   "./dcms.db",
 		},
 		Server: Server{
-			Port:             3000,
-			TrustedProxyHops: 1,
+			Port: 3000,
 		},
 		Media: Media{
 			Driver: "local",
@@ -518,12 +522,11 @@ func (c *Config) ApplyEnv() error {
 		}
 		c.Server.TrustProxy = b
 	}
-	if v, ok := os.LookupEnv("DCMS_TRUSTED_PROXY_HOPS"); ok {
-		n, err := strconv.Atoi(v)
-		if err != nil {
-			return fmt.Errorf("DCMS_TRUSTED_PROXY_HOPS %q: not a number", v)
-		}
-		c.Server.TrustedProxyHops = n
+	if v, ok := os.LookupEnv("DCMS_TRUSTED_PROXIES"); ok {
+		c.Server.TrustedProxies = splitList(v)
+	}
+	if v, ok := os.LookupEnv("DCMS_CLIENT_IP_HEADER"); ok {
+		c.Server.ClientIPHeader = strings.TrimSpace(v)
 	}
 	if v, ok := os.LookupEnv("DCMS_CORS_ALLOWED_ORIGINS"); ok {
 		c.Server.CORS.AllowedOrigins = splitList(v)
@@ -637,5 +640,29 @@ func (c *Config) ApplyEnv() error {
 	if c.Server.CORS.AllowCredentials && slices.Contains(c.Server.CORS.AllowedOrigins, "*") {
 		return fmt.Errorf("server.cors: allowed_origins \"*\" cannot be combined with allow_credentials: true — a wildcard origin is invalid on a credentialed response; list the exact origins that may send credentials")
 	}
+	if _, err := ParseTrustedProxies(c.Server.TrustedProxies); err != nil {
+		return err
+	}
 	return nil
+}
+
+// ParseTrustedProxies parses server.trusted_proxies: each entry is a CIDR range
+// ("173.245.48.0/20") or a single IP ("10.0.0.5", taken as /32 or /128). A bad
+// entry is a load error, so a typo can't silently trust nothing — or everything.
+func ParseTrustedProxies(entries []string) ([]netip.Prefix, error) {
+	out := make([]netip.Prefix, 0, len(entries))
+	for _, e := range entries {
+		e = strings.TrimSpace(e)
+		if p, err := netip.ParsePrefix(e); err == nil {
+			out = append(out, p.Masked())
+			continue
+		}
+		a, err := netip.ParseAddr(e)
+		if err != nil {
+			return nil, fmt.Errorf("server.trusted_proxies: %q is not an IP or CIDR range", e)
+		}
+		a = a.Unmap()
+		out = append(out, netip.PrefixFrom(a, a.BitLen()))
+	}
+	return out, nil
 }

@@ -12,6 +12,7 @@ import (
 	"html/template"
 	"log/slog"
 	"net/http"
+	"net/netip"
 	"strings"
 	"sync"
 	"time"
@@ -119,16 +120,19 @@ type Options struct {
 
 	// TrustProxy trusts a fronting proxy's X-Forwarded-* headers: X-Forwarded-For
 	// for rate-limit client-IP keying, and X-Forwarded-Proto for the session
-	// cookie's Secure flag when TLS is terminated at the proxy. Off by default —
-	// enable only behind a proxy you control, or these become client-spoofable.
+	// cookie's Secure flag when TLS is terminated at the proxy. Off by default.
+	// Even when on, the headers count only on connections from TrustedProxies.
 	TrustProxy bool
 
-	// TrustedProxyHops is how many trusted reverse proxies sit in front of DCMS.
-	// It decides which X-Forwarded-For entry is the real client when TrustProxy is
-	// on: the client is read from the right (proxies append), at index len-hops.
-	// Defaults to 1 (a single fronting proxy) when zero. Set it to your actual
-	// proxy depth, or a spoofed XFF can forge the rate-limit key.
-	TrustedProxyHops int
+	// TrustedProxies are the address ranges of the operator's own proxies. A
+	// request's forwarded headers are honoured only when its connection comes from
+	// one of them, and the client IP is the right-most X-Forwarded-For entry that
+	// isn't one (GHSA-f8wf-92mm-pw4g). Nil ⇒ loopback + private networks.
+	TrustedProxies []netip.Prefix
+
+	// ClientIPHeader, if set, names a header a trusted proxy sets to the client IP
+	// (CF-Connecting-IP, X-Real-IP), read instead of X-Forwarded-For.
+	ClientIPHeader string
 
 	// CORS enables cross-origin access when non-nil (and its AllowedOrigins is
 	// non-empty). Nil ⇒ no CORS headers (same-origin only), the safe default.
@@ -316,11 +320,9 @@ func (s *Server) Handler() http.Handler {
 		apiLimiter := newMemoryLimiter(c.APIPerMinute, c.APIBurst)
 		authLimiter := newMemoryLimiter(c.AuthPerMinute, c.AuthBurst)
 		anonWriteLimiter := newMemoryLimiter(c.AnonWritePerMinute, c.AnonWriteBurst)
-		trust := s.opts.TrustProxy
-		hops := s.opts.TrustedProxyHops
 		// Anonymous collection writes get their own tight per-IP tier (issue #34).
-		apiLimit = s.rateLimitAPI(apiLimiter, anonWriteLimiter, trust, hops)
-		authLimit = s.rateLimit(authLimiter, func(r *http.Request) string { return "ip:" + clientIP(r, trust, hops) })
+		apiLimit = s.rateLimitAPI(apiLimiter, anonWriteLimiter)
+		authLimit = s.rateLimit(authLimiter, func(r *http.Request) string { return "ip:" + s.clientIP(r) })
 	}
 
 	r.NotFound(s.handleNotFound)

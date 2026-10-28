@@ -66,10 +66,17 @@ func TestRequestIsSecure(t *testing.T) {
 	if s.requestIsSecure(plain) {
 		t.Fatal("without TrustProxy, X-Forwarded-Proto must not be honored")
 	}
-	// Trust: forwarded https counts as secure.
+	// Trust, but the connection isn't from a trusted proxy (httptest's default peer
+	// is a public address): ignored, so a client hitting the port directly can't
+	// claim https.
 	st := &Server{opts: Options{TrustProxy: true}}
+	if st.requestIsSecure(plain) {
+		t.Fatal("X-Forwarded-Proto from an untrusted peer must not be honored")
+	}
+	// Trust + a trusted proxy peer: forwarded https counts as secure.
+	plain.RemoteAddr = "127.0.0.1:5000"
 	if !st.requestIsSecure(plain) {
-		t.Fatal("with TrustProxy, X-Forwarded-Proto: https should be secure")
+		t.Fatal("with TrustProxy, X-Forwarded-Proto: https from a trusted proxy should be secure")
 	}
 	// A plain request with no https signal is not secure.
 	if st.requestIsSecure(httptest.NewRequest(http.MethodGet, "http://x/login", nil)) {
