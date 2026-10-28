@@ -123,6 +123,12 @@ func (s *Server) GatewayOptions(ctx context.Context, hooks *gateway.HookRegistry
 		webhooks = &gateway.WebhookOptions{Endpoints: eps, PollInterval: time.Duration(cfg.Events.WebhookPollSeconds) * time.Second}
 	}
 
+	// Proxy addresses whose forwarded/identity headers are believed (GHSA-f8wf).
+	trustedProxies, err := config.ParseTrustedProxies(cfg.Server.TrustedProxies)
+	if err != nil {
+		return zero, engine.TLSConfig{}, err
+	}
+
 	// Authenticator: built-in sessions, or a proxy_header trust (ADR-0020). API
 	// tokens layer over whichever is selected (issue #8).
 	var authenticator gateway.Authenticator
@@ -134,8 +140,8 @@ func (s *Server) GatewayOptions(ctx context.Context, hooks *gateway.HookRegistry
 			return zero, engine.TLSConfig{}, fmt.Errorf("auth.provider proxy_header requires auth.proxy_header.user_header")
 		}
 		authenticator = gateway.NewProxyHeaderAuthenticator(
-			cfg.Auth.ProxyHeader.UserHeader, cfg.Auth.ProxyHeader.RolesHeader, cfg.Auth.ProxyHeader.RolesSeparator)
-		s.logger.Warn("auth provider is proxy_header — DCMS trusts the identity header verbatim; your proxy MUST strip it from inbound requests",
+			cfg.Auth.ProxyHeader.UserHeader, cfg.Auth.ProxyHeader.RolesHeader, cfg.Auth.ProxyHeader.RolesSeparator, trustedProxies)
+		s.logger.Warn("auth provider is proxy_header — the identity header is trusted from server.trusted_proxies (default: loopback + private networks); your proxy MUST strip it from inbound requests",
 			"user_header", cfg.Auth.ProxyHeader.UserHeader)
 	default:
 		return zero, engine.TLSConfig{}, fmt.Errorf("auth.provider %q is not supported (want session or proxy_header)", cfg.Auth.Provider)
@@ -170,11 +176,6 @@ func (s *Server) GatewayOptions(ctx context.Context, hooks *gateway.HookRegistry
 		urlSigner = gateway.NewHMACURLSigner(sec, prev,
 			time.Duration(cfg.Media.Sign.TTLSeconds)*time.Second,
 			time.Duration(cfg.Media.Sign.WindowSeconds)*time.Second)
-	}
-
-	trustedProxies, err := config.ParseTrustedProxies(cfg.Server.TrustedProxies)
-	if err != nil {
-		return zero, engine.TLSConfig{}, err
 	}
 
 	opts := gateway.Options{

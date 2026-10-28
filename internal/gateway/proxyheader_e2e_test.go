@@ -37,7 +37,7 @@ func TestProxyHeaderAuthenticator_DrivesAuthorization(t *testing.T) {
 	}
 
 	srv := httptest.NewServer(gateway.New(def, db, nil, gateway.Options{
-		Authenticator: gateway.NewProxyHeaderAuthenticator("X-Auth-User", "X-Auth-Roles", ""),
+		Authenticator: gateway.NewProxyHeaderAuthenticator("X-Auth-User", "X-Auth-Roles", "", nil),
 	}).Handler())
 	t.Cleanup(srv.Close)
 

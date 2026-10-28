@@ -78,7 +78,9 @@ Fixes seven advisories. **Read "Upgrading" below — several defaults change.**
   client IP was taken from the left-most (client-controlled) entry. Forwarded headers
   are now honoured only from **trusted proxies** (`server.trusted_proxies`), and the
   client is the right-most entry that isn't one of them; `server.client_ip_header`
-  (e.g. `CF-Connecting-IP`) is supported.
+  (e.g. `CF-Connecting-IP`) is supported. The `proxy_header` auth provider now
+  believes its identity headers only from those trusted proxies too, so a caller
+  reaching the DCMS port directly can no longer impersonate a user.
 - **Login and account-mail timing revealed accounts (GHSA-38cf-62wh-v3g3, low).**
   Unknown emails, accounts without a password, and locked accounts all pay one bcrypt;
   `/auth/forgot` and `/auth/otp/request` answer no faster than
@@ -95,6 +97,9 @@ Fixes seven advisories. **Read "Upgrading" below — several defaults change.**
   Cloudflare in front), add its ranges to `server.trusted_proxies` or set
   `client_ip_header`, or every client shares that proxy's rate-limit bucket and the
   session cookie may lose its Secure flag.
+- **`auth.provider: proxy_header`:** if your auth proxy connects from a public
+  address, add it to `server.trusted_proxies`; otherwise its identity headers are
+  ignored and every request is anonymous.
 - **Revision history** is now writers-only unless the collection declares a `preview`
   or `history` rule. Add `history: public` (or any rule) to keep it reader-visible.
 - **Filtering/sorting on a read-masked field** returns `422` for callers who can't read it.
