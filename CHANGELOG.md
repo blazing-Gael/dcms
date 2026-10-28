@@ -9,6 +9,22 @@ While on **0.x**, minor versions may include breaking changes.
 ## [Unreleased]
 
 ### Added
+- **Authorization from Go — issue #68, ADR-0038.** Custom routes and hooks had only
+  a privileged store, so every route touching user data re-implemented authorization
+  by hand. The rule engine is now available in-process, running the **same code** as
+  the HTTP API (the gateway's authz, CRUD and media logic moved into a
+  transport-free core that both use):
+  - `app.Can(ctx, p, dcms.ActionRead, "lessons", id)` — read/create/update/delete/
+    publish/history; `false` covers "not allowed" and "not found" (the 404 policy).
+  - `app.As(p)` — a `ScopedStore` (`Get`/`List`/`Create`/`Update`/`Delete`) acting as
+    p: read rules, published-only view, field masks, write-field rules, validation,
+    hooks, events, revisions; `dcms.IfVersion` / `dcms.Purge` options.
+  - `app.ReadFilters(ctx, p, collection)` — p's read scope for your own queries.
+  - `app.Media().PutFile` / `SignedURLAs` / `SignedURL` — derived files and signed
+    URLs with the HTTP checks (quota, extension allowlist, read check).
+  - Typed errors (`ErrNotFound`, `ErrForbidden`, `ErrUnauthenticated`,
+    `ErrVersionConflict`, `ErrReferenced`, media errors), `req.Can`, `req.Param`.
+  Parity tests pin the Go answers to the HTTP ones for every rule kind.
 - **Media signed URLs + multi-file assets — issue #65, ADR-0037.** A `_media` asset
   was one object reachable only through `/raw` with the caller's credentials, so
   private media couldn't be used in a cross-origin `<img>`/`<video>`, an email link, or
@@ -106,6 +122,12 @@ Fixes seven advisories. **Read "Upgrading" below — several defaults change.**
 - **Derived media files** must use an allowlisted extension (`415` otherwise); media
   that isn't safe to render inline now downloads instead.
 - **CORS:** `allowed_origins: ["*"]` with `allow_credentials: true` is a config error.
+- **Embedding (ADR-0038): `Request.Store` is now scoped to the caller.** It was the
+  privileged store; code that relied on that (e.g. writing as the system from a
+  custom route) must use `Request.System`. `req.Store.Find(ctx, q)` becomes
+  `req.Store.List(ctx, q)` (as the caller) or `req.System.Find(ctx, q)` (privileged).
+  Hooks are unchanged. Registering a hook or route after `Serve` or the first
+  `Can`/`As`/`Media` call now panics instead of silently never running.
 
 ## [0.1.0-beta.4] - 2026-09-24
 
