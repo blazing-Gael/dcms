@@ -6,25 +6,29 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
+// passwordCost is the bcrypt cost for new hashes. Tests lower it (export_test.go):
+// at the default cost, seeding and logging in users dominates the race-enabled
+// suite and pushed it past the 10-minute test timeout on macOS CI.
+var passwordCost = bcrypt.DefaultCost
+
 // hashPassword returns a bcrypt hash suitable for storage in _users.password_hash.
-// The default cost is used; bcrypt embeds the cost and salt in the output, so
-// verification needs nothing but the stored string.
+// bcrypt embeds the cost and salt in the output, so verification needs nothing
+// but the stored string.
 func hashPassword(plain string) (string, error) {
-	b, err := bcrypt.GenerateFromPassword([]byte(plain), bcrypt.DefaultCost)
+	b, err := bcrypt.GenerateFromPassword([]byte(plain), passwordCost)
 	if err != nil {
 		return "", err
 	}
 	return string(b), nil
 }
 
-// dummyHash is a valid bcrypt hash at the default cost, computed once on first
-// use. It lets checkPassword spend the same work on the no-account / no-local-
+// dummyHash is a valid bcrypt hash at passwordCost, computed once on first use. It lets checkPassword spend the same work on the no-account / no-local-
 // password path as on a real verification, so an attacker can't tell from
 // response timing whether an email has a local account (GHSA-38cf-62wh-v3g3).
 var dummyHash = sync.OnceValue(func() []byte {
 	// The input is irrelevant — callers never match against it, it only exists to
-	// make CompareHashAndPassword do a full bcrypt round. DefaultCost can't error.
-	b, err := bcrypt.GenerateFromPassword([]byte("dcms constant-time placeholder"), bcrypt.DefaultCost)
+	// make CompareHashAndPassword do a full bcrypt round. A valid cost can't error.
+	b, err := bcrypt.GenerateFromPassword([]byte("dcms constant-time placeholder"), passwordCost)
 	if err != nil {
 		panic("bcrypt dummy hash: " + err.Error())
 	}
