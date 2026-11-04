@@ -148,6 +148,7 @@ func TestApplyEnv_OverridesAndValidates(t *testing.T) {
 	t.Setenv("DCMS_AUTH_PROXY_USER_HEADER", "X-Auth-User")
 	t.Setenv("DCMS_AUTH_PROXY_ROLES_HEADER", "X-Auth-Roles")
 	t.Setenv("DCMS_AUTH_PROXY_ROLES_SEPARATOR", "|")
+	t.Setenv("DCMS_TRUSTED_PROXIES", "127.0.0.1") // required by proxy_header
 
 	cfg := Default()
 	if err := cfg.ApplyEnv(); err != nil {
@@ -238,6 +239,33 @@ func TestTrustedProxies(t *testing.T) {
 	}
 	if len(cfg.Server.TrustedProxies) != 2 || cfg.Server.ClientIPHeader != "CF-Connecting-IP" {
 		t.Fatalf("env not applied: %+v %q", cfg.Server.TrustedProxies, cfg.Server.ClientIPHeader)
+	}
+}
+
+// No trusted_proxies must reach the gateway as nil (its loopback+private default),
+// not an empty list that trusts nothing — that silently disabled trust_proxy and
+// made every proxy_header request anonymous.
+func TestTrustedProxies_EmptyIsNil(t *testing.T) {
+	for _, in := range [][]string{nil, {}} {
+		got, err := ParseTrustedProxies(in)
+		if err != nil || got != nil {
+			t.Fatalf("ParseTrustedProxies(%#v) = %#v, %v; want nil, nil", in, got, err)
+		}
+	}
+}
+
+// proxy_header believes identity headers from trusted proxies, so it must name
+// them: the private-network default would trust every host in the cluster/VPC.
+func TestApplyEnv_ProxyHeaderRequiresTrustedProxies(t *testing.T) {
+	cfg := Default()
+	cfg.Auth.Provider = "proxy_header"
+	cfg.Auth.ProxyHeader.UserHeader = "X-Auth-User"
+	if err := cfg.ApplyEnv(); err == nil {
+		t.Fatal("expected an error for proxy_header without server.trusted_proxies")
+	}
+	cfg.Server.TrustedProxies = []string{"127.0.0.1"}
+	if err := cfg.ApplyEnv(); err != nil {
+		t.Fatalf("ApplyEnv with trusted_proxies: %v", err)
 	}
 }
 

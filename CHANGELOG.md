@@ -118,9 +118,10 @@ Fixes seven advisories. **Read "Upgrading" below — several defaults change.**
   Cloudflare in front), add its ranges to `server.trusted_proxies` or set
   `client_ip_header`, or every client shares that proxy's rate-limit bucket and the
   session cookie may lose its Secure flag.
-- **`auth.provider: proxy_header`:** if your auth proxy connects from a public
-  address, add it to `server.trusted_proxies`; otherwise its identity headers are
-  ignored and every request is anonymous.
+- **`auth.provider: proxy_header` now requires `server.trusted_proxies`** (a config
+  load error otherwise). List exactly your auth proxy's address(es) — e.g.
+  `127.0.0.1` for one on the same host. The loopback + private default would let any
+  other host on the network (another pod, a VPC neighbour) set the identity header.
 - **Revision history** is now writers-only unless the collection declares a `preview`
   or `history` rule. Add `history: public` (or any rule) to keep it reader-visible.
 - **Filtering/sorting on a read-masked field** returns `422` for callers who can't read it.

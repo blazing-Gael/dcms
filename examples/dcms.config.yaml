@@ -181,8 +181,9 @@ auth:
   # DCMS_AUTH_PROXY_USER_HEADER, DCMS_AUTH_PROXY_ROLES_HEADER,
   # DCMS_AUTH_PROXY_ROLES_SEPARATOR.
   # SECURITY: the headers are believed only on connections from
-  # server.trusted_proxies (default: loopback + private networks) — list your auth
-  # proxy there if it connects from a public address. The proxy must also STRIP
+  # server.trusted_proxies, which is REQUIRED with this provider (the loopback +
+  # private default would let any host on your network impersonate users) — list
+  # exactly your auth proxy's address(es), e.g. 127.0.0.1 if it runs beside DCMS. The proxy must also STRIP
   # these headers from inbound client requests and re-set them itself, or a client
   # passing through it could set user_header and impersonate anyone.
   # NOTE: under proxy_header the proxy is the identity authority — the local

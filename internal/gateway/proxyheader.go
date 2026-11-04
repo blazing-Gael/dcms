@@ -12,7 +12,7 @@ import (
 // — in front of DCMS with no Go required.
 //
 // SECURITY: the headers are honoured only on connections from a trusted proxy
-// (server.trusted_proxies; default loopback + private networks), so a caller who
+// (server.trusted_proxies, required by config with this provider), so a caller who
 // reaches the DCMS port directly can't set them and impersonate anyone. The proxy
 // must still strip UserHeader/RolesHeader from inbound client requests and re-set
 // them itself. Selecting it is an explicit opt-in (auth.provider: proxy_header).
