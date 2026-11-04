@@ -643,13 +643,24 @@ func (c *Config) ApplyEnv() error {
 	if _, err := ParseTrustedProxies(c.Server.TrustedProxies); err != nil {
 		return err
 	}
+	// proxy_header believes an identity header from any trusted proxy, so the
+	// loopback+private default is too broad for it: in a cluster or VPC every other
+	// pod/host reaches DCMS from a private address and could impersonate any user.
+	// Require the operator to name their auth proxy explicitly.
+	if c.Auth.Provider == "proxy_header" && len(c.Server.TrustedProxies) == 0 {
+		return fmt.Errorf("auth.provider proxy_header requires server.trusted_proxies — list the address(es) of your auth proxy (e.g. 127.0.0.1 for one on the same host); identity headers from any other connection are ignored")
+	}
 	return nil
 }
 
 // ParseTrustedProxies parses server.trusted_proxies: each entry is a CIDR range
 // ("173.245.48.0/20") or a single IP ("10.0.0.5", taken as /32 or /128). A bad
 // entry is a load error, so a typo can't silently trust nothing — or everything.
+// No entries returns nil, which the gateway takes as loopback + private networks.
 func ParseTrustedProxies(entries []string) ([]netip.Prefix, error) {
+	if len(entries) == 0 {
+		return nil, nil // nil, not empty: the gateway reads nil as its loopback+private default
+	}
 	out := make([]netip.Prefix, 0, len(entries))
 	for _, e := range entries {
 		e = strings.TrimSpace(e)

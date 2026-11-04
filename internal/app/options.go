@@ -141,7 +141,7 @@ func (s *Server) GatewayOptions(ctx context.Context, hooks *gateway.HookRegistry
 		}
 		authenticator = gateway.NewProxyHeaderAuthenticator(
 			cfg.Auth.ProxyHeader.UserHeader, cfg.Auth.ProxyHeader.RolesHeader, cfg.Auth.ProxyHeader.RolesSeparator, trustedProxies)
-		s.logger.Warn("auth provider is proxy_header — the identity header is trusted from server.trusted_proxies (default: loopback + private networks); your proxy MUST strip it from inbound requests",
+		s.logger.Warn("auth provider is proxy_header — the identity header is trusted only from server.trusted_proxies; your proxy MUST strip it from inbound requests",
 			"user_header", cfg.Auth.ProxyHeader.UserHeader)
 	default:
 		return zero, engine.TLSConfig{}, fmt.Errorf("auth.provider %q is not supported (want session or proxy_header)", cfg.Auth.Provider)
